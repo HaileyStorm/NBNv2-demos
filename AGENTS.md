@@ -79,7 +79,9 @@
 - Signals produced on tick `N` are visible to compute on tick `N+1`.
 - Input writes are applied on the next tick by IO coordinators; clients do not need to supply tick IDs for normal input/output use.
 - Input scalars and vectors must contain finite floats; `NaN` and infinities are invalid.
+- Input vectors must match `BrainInfo.input_width`.
 - Output vectors are full brain-level vectors ordered by `output_index` and may be assembled from shard-local segments by IO.
+- Output width is fixed for a running brain and is not mutated by observed output events.
 - Reproduction protects neuron counts in regions `0` and `31` by default; explicit manual IO-region add/remove is only legal when reproduction config disables that protection.
 
 ## Full IO contract map
@@ -179,6 +181,70 @@
   - `SetHomeostasisEnabled`
   - `IoCommandAck`
 
+### Field inventory for the main external IO messages
+
+- `BrainInfo`
+  - identity and sizing: `brain_id`, `input_width`, `output_width`
+  - artifact refs: `base_definition`, `last_snapshot`
+  - runtime energy/cost state: `cost_enabled`, `energy_enabled`, `energy_remaining`, `energy_rate_units_per_second`, `last_tick_cost`
+  - runtime plasticity state: `plasticity_enabled`, `plasticity_rate`, `plasticity_probabilistic_updates`, `plasticity_delta`, `plasticity_rebase_threshold`, `plasticity_rebase_threshold_pct`, `plasticity_energy_cost_modulation_enabled`, `plasticity_energy_cost_reference_tick_cost`, `plasticity_energy_cost_response_strength`, `plasticity_energy_cost_min_scale`, `plasticity_energy_cost_max_scale`
+  - runtime homeostasis state: `homeostasis_enabled`, `homeostasis_target_mode`, `homeostasis_update_mode`, `homeostasis_base_probability`, `homeostasis_min_step_codes`, `homeostasis_energy_coupling_enabled`, `homeostasis_energy_target_scale`, `homeostasis_energy_probability_scale`
+  - IO modes: `input_coordinator_mode`, `output_vector_source`
+- `BrainEnergyState`
+  - `energy_remaining`, `energy_rate_units_per_second`
+  - `cost_enabled`, `energy_enabled`
+  - plasticity fields matching the runtime plasticity state above
+  - homeostasis fields matching the runtime homeostasis state above
+- `InputWrite`
+  - `brain_id`, `input_index`, `value`
+- `InputVector`
+  - `brain_id`, `values`
+- `RuntimeNeuronPulse`
+  - `brain_id`, `target_region_id`, `target_neuron_id`, `value`
+- `RuntimeNeuronStateWrite`
+  - `brain_id`, `target_region_id`, `target_neuron_id`
+  - `set_buffer`, `buffer_value`
+  - `set_accumulator`, `accumulator_value`
+- `OutputEvent`
+  - `brain_id`, `output_index`, `value`, `tick_id`
+- `OutputVectorEvent`
+  - `brain_id`, `tick_id`, `values`
+- `OutputVectorSegment`
+  - `brain_id`, `tick_id`, `output_index_start`, `values`
+- `EnergyCredit`
+  - `brain_id`, `amount`
+- `EnergyRate`
+  - `brain_id`, `units_per_second`
+- `SetCostEnergyEnabled`
+  - `brain_id`, `cost_enabled`, `energy_enabled`
+- `SetPlasticityEnabled`
+  - `brain_id`, `plasticity_enabled`, `plasticity_rate`, `probabilistic_updates`
+  - `plasticity_delta`, `plasticity_rebase_threshold`, `plasticity_rebase_threshold_pct`
+  - `plasticity_energy_cost_modulation_enabled`
+  - `plasticity_energy_cost_reference_tick_cost`
+  - `plasticity_energy_cost_response_strength`
+  - `plasticity_energy_cost_min_scale`
+  - `plasticity_energy_cost_max_scale`
+- `SetHomeostasisEnabled`
+  - `brain_id`, `homeostasis_enabled`
+  - `homeostasis_target_mode`, `homeostasis_update_mode`
+  - `homeostasis_base_probability`, `homeostasis_min_step_codes`
+  - `homeostasis_energy_coupling_enabled`
+  - `homeostasis_energy_target_scale`, `homeostasis_energy_probability_scale`
+- `IoCommandAck`
+  - `brain_id`, `command`, `success`, `message`
+  - `has_energy_state`, `energy_state`
+  - `has_configured_plasticity_enabled`, `configured_plasticity_enabled`
+  - `has_effective_plasticity_enabled`, `effective_plasticity_enabled`
+- `RequestSnapshot`
+  - `brain_id`, `has_runtime_state`, `energy_remaining`, `cost_enabled`, `energy_enabled`, `plasticity_enabled`
+- `SnapshotReady`
+  - `brain_id`, `snapshot`
+- `ExportBrainDefinition`
+  - `brain_id`, `rebase_overlays`
+- `BrainDefinitionReady`
+  - `brain_id`, `brain_def`
+
 ### IO reproduction/speciation wrapper contracts (`nbn_io.proto`)
 
 - reproduction wrappers:
@@ -250,14 +316,32 @@
 - Spawn failures are normalized into stable reason codes such as `spawn_unavailable`, `spawn_empty_response`, and `spawn_request_failed`.
 - Coordinator-routed command writes return `IoCommandAck` with command name, success flag, message text, and optionally `BrainEnergyState`.
 - `set_plasticity` acknowledgments may also carry configured-vs-effective enablement snapshots.
+- `BrainInfoRequest` and `BrainInfo` are the first-stop discovery calls for input width, output width, runtime modes, artifact refs, and energy state.
 - Input coordinator modes:
   - `INPUT_COORDINATOR_MODE_DIRTY_ON_CHANGE`
   - `INPUT_COORDINATOR_MODE_REPLAY_LATEST_VECTOR`
 - Output vector sources:
   - `OUTPUT_VECTOR_SOURCE_POTENTIAL`
   - `OUTPUT_VECTOR_SOURCE_BUFFER`
+- `INPUT_COORDINATOR_MODE_DIRTY_ON_CHANGE` is the default input mode.
+- `OUTPUT_VECTOR_SOURCE_POTENTIAL` is the default output-vector mode.
 - Subscriber identity may be explicit via `subscriber_actor`; otherwise sender PID is used.
 - Placement of per-brain coordinators is transparent to the client. Demo code should not assume coordinators are local to IO Gateway.
+
+## Runtime parameter ranges demos must honor
+
+- `homeostasis_base_probability`: `[0,1]`
+- `homeostasis_min_step_codes`: `>= 1`
+- `homeostasis_energy_target_scale`: `[0,4]`
+- `homeostasis_energy_probability_scale`: `[0,4]`
+- `plasticity_rate`: `>= 0`
+- `plasticity_delta`: `>= 0`
+- `plasticity_rebase_threshold`: `>= 0`
+- `plasticity_rebase_threshold_pct`: `[0,1]`
+- `plasticity_energy_cost_reference_tick_cost`: `> 0` when modulation is enabled
+- `plasticity_energy_cost_response_strength`: `[0,8]`
+- `plasticity_energy_cost_min_scale`: `[0,1]`
+- `plasticity_energy_cost_max_scale`: `[0,1]` and `>= min_scale`
 
 ## Documentation maintenance expectations
 
@@ -271,6 +355,8 @@
 - For approved `../NBNv2` changes triggered by demo work, minimum verification is:
   - `dotnet test ../NBNv2/tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~Nbn.Tests.Proto.ProtoCompatibilityTests`
   - `bash ../NBNv2/tools/docs/render-nbnv2-docs.sh --check`
+  - `dotnet test ../NBNv2/tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~InputCoordinatorActorTests`
+  - `dotnet test ../NBNv2/tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~OutputCoordinatorActorTests`
   - `dotnet test ../NBNv2/NBNv2.sln -c Release --disable-build-servers`
 - If file locks occur, use the runtime repo’s `.artifacts-temp` guidance from `../NBNv2/AGENTS.md`.
 
