@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Nbn.Demos.Basics.Environment</RootNamespace>
+    <AssemblyName>Nbn.Demos.Basics.Environment</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Proto.Actor" Version="1.8.0" />
+    <PackageReference Include="Proto.Remote" Version="1.8.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\NBNv2\src\Nbn.Shared\Nbn.Shared.csproj" />
+  </ItemGroup>
+
+</Project>
