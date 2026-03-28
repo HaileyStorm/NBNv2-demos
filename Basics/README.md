@@ -5,10 +5,13 @@
 ## Current Scope
 
 - A shared environment library in `src/Basics.Environment`.
+- A task-plugin library in `src/Basics.Tasks`.
 - A small Avalonia desktop UI in `src/Basics.Ui`.
 - A test project in `tests/Basics.Environment.Tests`.
+- A task-plugin test project in `tests/Basics.Tasks.Tests`.
 - A template-anchored seed-population contract: initial brains are exact-template or bounded minor deviations, not unconstrained random topologies.
 - IO-only runtime plumbing for environment work. Capacity sizing is intended to come through IO, not direct SettingsMonitor calls by the demo.
+- The first real task plugin (`AND`) and registry wiring so the UI can resolve at least one available task instead of showing only placeholders.
 
 ## Design Direction
 
@@ -26,8 +29,10 @@
 
 - `Basics.sln`: local solution for the Basics demo.
 - `src/Basics.Environment`: shared environment contract, sizing heuristics, runtime client, and planner.
+- `src/Basics.Tasks`: concrete Basics task plugins plus the plugin registry.
 - `src/Basics.Ui`: small operator UI for connection/configuration, capacity fetch, task selection, scheduling settings, and metric surfaces.
 - `tests/Basics.Environment.Tests`: contract and planner tests.
+- `tests/Basics.Tasks.Tests`: task-plugin evaluation tests.
 
 ## Runtime Dependency
 
@@ -41,4 +46,4 @@ dotnet build Basics.sln -c Release
 dotnet test Basics.sln -c Release --no-restore
 ```
 
-Later issues will flesh out the per-task scoring plugins, live metric feeds, and the remaining operator workflows on top of this shared environment and UI shell.
+Later issues will add the remaining task plugins, live metric feeds, and the remaining operator workflows on top of this shared environment, task library, and UI shell.

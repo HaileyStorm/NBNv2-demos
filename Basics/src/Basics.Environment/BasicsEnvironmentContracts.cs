@@ -269,6 +269,13 @@ public sealed record BasicsReproductionPolicy
 public sealed record BasicsEnvironmentOptions
 {
     public string ClientName { get; init; } = "nbn.basics.environment";
+    public BasicsTaskContract SelectedTask { get; init; } = new(
+        TaskId: "and",
+        DisplayName: "AND",
+        InputWidth: BasicsIoGeometry.InputWidth,
+        OutputWidth: BasicsIoGeometry.OutputWidth,
+        UsesTickAlignedEvaluation: true,
+        Description: "Boolean AND over canonical 0/1 inputs and outputs.");
     public BasicsSeedTemplateContract SeedTemplate { get; init; } = BasicsSeedTemplateContract.CreateDefault();
     public BasicsSizingOverrides SizingOverrides { get; init; } = new();
     public BasicsMetricsContract Metrics { get; init; } = BasicsMetricsContract.Default;
@@ -281,6 +288,16 @@ public sealed record BasicsEnvironmentOptions
         if (string.IsNullOrWhiteSpace(ClientName))
         {
             errors.Add("ClientName is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(SelectedTask.TaskId) || string.IsNullOrWhiteSpace(SelectedTask.DisplayName))
+        {
+            errors.Add("SelectedTask must define a task id and display name.");
+        }
+
+        if (SelectedTask.InputWidth != BasicsIoGeometry.InputWidth || SelectedTask.OutputWidth != BasicsIoGeometry.OutputWidth)
+        {
+            errors.Add("SelectedTask must remain bound to the Basics 2->1 geometry.");
         }
 
         AddValidationErrors(SeedTemplate.Validate(), errors);
@@ -305,6 +322,7 @@ public sealed record BasicsEnvironmentOptions
 }
 
 public sealed record BasicsEnvironmentPlan(
+    BasicsTaskContract SelectedTask,
     BasicsSeedTemplateContract SeedTemplate,
     BasicsCapacityRecommendation Capacity,
     BasicsReproductionPolicy Reproduction,
@@ -317,7 +335,14 @@ public sealed record BasicsTaskContract(
     string DisplayName,
     uint InputWidth,
     uint OutputWidth,
-    bool UsesTickAlignedEvaluation);
+    bool UsesTickAlignedEvaluation,
+    string Description = "");
+
+public sealed record BasicsTaskEvaluationContext(
+    uint InputWidth,
+    uint OutputWidth,
+    bool TickAligned,
+    ulong TickBase = 0);
 
 public readonly record struct BasicsTaskSample(
     float InputA,
@@ -333,6 +358,7 @@ public sealed record BasicsTaskEvaluationResult(
     float Accuracy,
     int SamplesEvaluated,
     int SamplesCorrect,
+    IReadOnlyDictionary<string, float> ScoreBreakdown,
     IReadOnlyList<string> Diagnostics);
 
 public interface IBasicsTaskPlugin
@@ -342,6 +368,7 @@ public interface IBasicsTaskPlugin
     IReadOnlyList<BasicsTaskSample> BuildDeterministicDataset();
 
     BasicsTaskEvaluationResult Evaluate(
+        BasicsTaskEvaluationContext context,
         IReadOnlyList<BasicsTaskSample> samples,
         IReadOnlyList<BasicsTaskObservation> observations);
 }

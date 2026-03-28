@@ -26,6 +26,7 @@ public sealed class BasicsEnvironmentPlanner
         var placementInventory = await _runtimeClient.GetPlacementWorkerInventoryAsync(cancellationToken).ConfigureAwait(false);
         var capacity = BasicsCapacitySizer.Recommend(placementInventory, options.SizingOverrides);
         return new BasicsEnvironmentPlan(
+            SelectedTask: options.SelectedTask,
             SeedTemplate: options.SeedTemplate,
             Capacity: capacity,
             Reproduction: options.Reproduction,

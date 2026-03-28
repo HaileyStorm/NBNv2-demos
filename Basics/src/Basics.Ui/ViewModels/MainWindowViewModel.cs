@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using Nbn.Demos.Basics.Environment;
+using Nbn.Demos.Basics.Tasks;
 using Nbn.Demos.Basics.Ui.Services;
 using Nbn.Proto;
 using Nbn.Shared;
@@ -555,7 +556,10 @@ public sealed class MainWindowViewModel : ViewModelBase
         RecommendedMaxConcurrentBrainsText = plan.Capacity.RecommendedMaxConcurrentBrains.ToString(CultureInfo.InvariantCulture);
         CapacityStatus = $"Capacity source: {plan.Capacity.Source}";
         CapacitySummary = plan.Capacity.Summary;
-        LastPlanSummary = $"Task {SelectedTask?.DisplayName ?? "n/a"} · template {plan.SeedTemplate.TemplateId} · {plan.Capacity.EligibleWorkerCount} eligible worker(s).";
+        LastPlanSummary = $"Task {plan.SelectedTask.DisplayName} · template {plan.SeedTemplate.TemplateId} · {plan.Capacity.EligibleWorkerCount} eligible worker(s).";
+        MetricsStatus = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
+            ? $"{plan.SelectedTask.DisplayName} plugin is available; live metric histories will populate once runtime execution is wired."
+            : $"{plan.SelectedTask.DisplayName} plugin is not implemented yet.";
         MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, run count {plan.Capacity.RecommendedReproductionRunCount}.";
 
         UpdateMetricSummary(BasicsMetricId.PopulationCount, plan.Capacity.RecommendedInitialPopulationCount.ToString(CultureInfo.InvariantCulture), "Recommended initial population bound.");
@@ -732,6 +736,13 @@ public sealed class MainWindowViewModel : ViewModelBase
         options = new BasicsEnvironmentOptions
         {
             ClientName = ClientName.Trim(),
+            SelectedTask = SelectedTask?.Contract ?? new BasicsTaskContract(
+                TaskId: "and",
+                DisplayName: "AND",
+                InputWidth: BasicsIoGeometry.InputWidth,
+                OutputWidth: BasicsIoGeometry.OutputWidth,
+                UsesTickAlignedEvaluation: true,
+                Description: "Boolean AND over canonical 0/1 inputs and outputs."),
             SeedTemplate = seedTemplate,
             SizingOverrides = overrides,
             Reproduction = new BasicsReproductionPolicy
@@ -879,14 +890,32 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static IEnumerable<TaskOption> BuildTasks()
     {
-        yield return new TaskOption("and", "AND", "Plugin pending");
-        yield return new TaskOption("or", "OR", "Plugin pending");
-        yield return new TaskOption("xor", "XOR", "Plugin pending");
-        yield return new TaskOption("gt", "GT", "Plugin pending");
-        yield return new TaskOption("multiplication", "Multiplication", "Plugin pending");
-        yield return new TaskOption("denoise", "Noisy in → clean out", "Plugin pending");
-        yield return new TaskOption("delay", "Delayed out", "Plugin pending");
-        yield return new TaskOption("one-hot", "One-hot classifier", "Viability pending");
+        yield return CreateTaskOption("and", "AND", "Boolean AND over canonical 0/1 inputs and outputs.", "Plugin pending");
+        yield return CreateTaskOption("or", "OR", "Boolean OR over canonical 0/1 inputs and outputs.", "Plugin pending");
+        yield return CreateTaskOption("xor", "XOR", "Boolean XOR over canonical 0/1 inputs and outputs.", "Plugin pending");
+        yield return CreateTaskOption("gt", "GT", "Boolean greater-than over canonical 0/1 or bounded scalar inputs.", "Plugin pending");
+        yield return CreateTaskOption("multiplication", "Multiplication", "Bounded scalar multiplication over the shared 2->1 Basics geometry.", "Plugin pending");
+        yield return CreateTaskOption("denoise", "Noisy in → clean out", "Denoising task over the shared 2->1 Basics geometry.", "Plugin pending");
+        yield return CreateTaskOption("delay", "Delayed out", "Temporal delayed-output task over the shared 2->1 Basics geometry.", "Plugin pending");
+        yield return CreateTaskOption("one-hot", "One-hot classifier", "Viability still pending for the shared 2->1 Basics geometry.", "Viability pending");
+    }
+
+    private static TaskOption CreateTaskOption(string taskId, string displayName, string description, string placeholderStatus)
+    {
+        if (TaskPluginRegistry.TryGet(taskId, out var plugin))
+        {
+            return new TaskOption(plugin.Contract, "Plugin available");
+        }
+
+        return new TaskOption(
+            new BasicsTaskContract(
+                TaskId: taskId,
+                DisplayName: displayName,
+                InputWidth: BasicsIoGeometry.InputWidth,
+                OutputWidth: BasicsIoGeometry.OutputWidth,
+                UsesTickAlignedEvaluation: true,
+                Description: description),
+            placeholderStatus);
     }
 
     private static IEnumerable<StrengthSourceOption> BuildStrengthSources()
@@ -909,7 +938,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     }
 }
 
-public sealed record TaskOption(string TaskId, string DisplayName, string StatusText);
+public sealed record TaskOption(BasicsTaskContract Contract, string StatusText)
+{
+    public string TaskId => Contract.TaskId;
+
+    public string DisplayName => Contract.DisplayName;
+}
 
 public sealed record StrengthSourceOption(Repro.StrengthSource Value, string DisplayName);
 
