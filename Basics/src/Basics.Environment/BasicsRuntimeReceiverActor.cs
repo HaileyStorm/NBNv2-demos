@@ -1,0 +1,82 @@
+using Nbn.Proto.Io;
+using Nbn.Shared;
+using Proto;
+
+namespace Nbn.Demos.Basics.Environment;
+
+internal interface IBasicsRuntimeEventSink
+{
+    void OnOutputVectorEvent(OutputVectorEvent output);
+}
+
+internal sealed class BasicsRuntimeReceiverActor : IActor
+{
+    private readonly IBasicsRuntimeEventSink _sink;
+    private PID? _ioGateway;
+
+    public BasicsRuntimeReceiverActor(IBasicsRuntimeEventSink sink)
+    {
+        _sink = sink ?? throw new ArgumentNullException(nameof(sink));
+    }
+
+    public Task ReceiveAsync(IContext context)
+    {
+        switch (context.Message)
+        {
+            case BasicsSetIoGatewayPid setIo:
+                _ioGateway = setIo.Pid;
+                break;
+            case BasicsSubscribeOutputsVectorCommand subscribe:
+                SendToIo(context, new SubscribeOutputsVector
+                {
+                    BrainId = subscribe.BrainId.ToProtoUuid(),
+                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                });
+                break;
+            case BasicsUnsubscribeOutputsVectorCommand unsubscribe:
+                SendToIo(context, new UnsubscribeOutputsVector
+                {
+                    BrainId = unsubscribe.BrainId.ToProtoUuid(),
+                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                });
+                break;
+            case BasicsInputVectorCommand vector:
+                var message = new InputVector
+                {
+                    BrainId = vector.BrainId.ToProtoUuid()
+                };
+                message.Values.Add(vector.Values);
+                SendToIo(context, message);
+                break;
+            case OutputVectorEvent outputVector:
+                _sink.OnOutputVectorEvent(outputVector.Clone());
+                break;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void SendToIo(IContext context, object message)
+    {
+        if (_ioGateway is null)
+        {
+            return;
+        }
+
+        context.Send(_ioGateway, message);
+    }
+
+    private static string PidLabel(PID pid, string? fallbackAddress = null)
+    {
+        var address = string.IsNullOrWhiteSpace(pid.Address) ? fallbackAddress : pid.Address;
+        return string.IsNullOrWhiteSpace(address) ? pid.Id : $"{address}/{pid.Id}";
+    }
+}
+
+internal sealed record BasicsSetIoGatewayPid(PID? Pid);
+
+internal sealed record BasicsSubscribeOutputsVectorCommand(Guid BrainId);
+
+internal sealed record BasicsUnsubscribeOutputsVectorCommand(Guid BrainId);
+
+internal sealed record BasicsInputVectorCommand(Guid BrainId, IReadOnlyList<float> Values);

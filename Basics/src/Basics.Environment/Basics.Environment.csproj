@@ -14,7 +14,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\..\..\NBNv2\src\Nbn.Shared\Nbn.Shared.csproj" />
+    <ProjectReference Include="..\..\..\..\NBNv2\src\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
   </ItemGroup>
 
 </Project>

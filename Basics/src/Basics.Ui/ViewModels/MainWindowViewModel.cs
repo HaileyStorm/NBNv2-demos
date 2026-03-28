@@ -32,14 +32,22 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(ShowFitnessEmptyState),
         nameof(AccuracyChartPoints),
         nameof(FitnessChartPoints),
+        nameof(ExecutionStatus),
+        nameof(ExecutionDetail),
+        nameof(IsExecutionRunning),
         nameof(MetricsStatus),
         nameof(MetricsSecondaryStatus)
     };
 
     private readonly UiDispatcher _dispatcher;
     private IBasicsRuntimeClient? _runtimeClient;
+    private BasicsExecutionSession? _executionSession;
+    private CancellationTokenSource? _executionCts;
     private BasicsEnvironmentPlan? _lastPlan;
     private bool _suppressValidationRefresh;
+    private bool _isExecutionRunning;
+    private readonly List<float> _accuracyHistory = new();
+    private readonly List<float> _fitnessHistory = new();
 
     private string _ioAddress = "127.0.0.1:12050";
     private string _ioGatewayName = "io-gateway";
@@ -91,8 +99,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _fitnessExponentText = "1.20";
     private string _diversityBoostText = "0.35";
     private string _lastPlanSummary = "No environment plan built yet.";
-    private string _metricsStatus = "Accuracy and fitness charts are wired for runtime data, but no task plugin has published samples yet.";
-    private string _metricsSecondaryStatus = "Population and resource summaries update when capacity is fetched or a plan is built.";
+    private string _executionStatus = "Idle";
+    private string _executionDetail = "Connect to IO, build capacity bounds, then start an implemented task plugin.";
+    private string _metricsStatus = "Connect to IO, fetch capacity, and start an implemented task to populate live metrics.";
+    private string _metricsSecondaryStatus = "Population and resource summaries update when capacity is fetched or a run is active.";
     private TaskOption? _selectedTask;
     private StrengthSourceOption? _selectedStrengthSource;
 
@@ -110,8 +120,10 @@ public sealed class MainWindowViewModel : ViewModelBase
         MetricSummaries = new ObservableCollection<MetricSummaryItemViewModel>(BuildMetricSummaryItems());
 
         ConnectCommand = new AsyncRelayCommand(ConnectAsync, CanConnect);
-        DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, () => _runtimeClient is not null);
+        DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, CanDisconnect);
         FetchCapacityCommand = new AsyncRelayCommand(FetchCapacityAsync, CanBuildPlan);
+        StartCommand = new AsyncRelayCommand(StartAsync, CanStart);
+        StopCommand = new AsyncRelayCommand(StopAsync, CanStop);
         ApplySuggestedBoundsCommand = new RelayCommand(ApplySuggestedBounds, () => _lastPlan is not null);
 
         PropertyChanged += (_, args) =>
@@ -145,6 +157,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AsyncRelayCommand DisconnectCommand { get; }
 
     public AsyncRelayCommand FetchCapacityCommand { get; }
+
+    public AsyncRelayCommand StartCommand { get; }
+
+    public AsyncRelayCommand StopCommand { get; }
 
     public RelayCommand ApplySuggestedBoundsCommand { get; }
 
@@ -470,6 +486,24 @@ public sealed class MainWindowViewModel : ViewModelBase
         private set => SetProperty(ref _lastPlanSummary, value);
     }
 
+    public string ExecutionStatus
+    {
+        get => _executionStatus;
+        private set => SetProperty(ref _executionStatus, value);
+    }
+
+    public string ExecutionDetail
+    {
+        get => _executionDetail;
+        private set => SetProperty(ref _executionDetail, value);
+    }
+
+    public bool IsExecutionRunning
+    {
+        get => _isExecutionRunning;
+        private set => SetProperty(ref _isExecutionRunning, value);
+    }
+
     public string MetricsStatus
     {
         get => _metricsStatus;
@@ -482,17 +516,17 @@ public sealed class MainWindowViewModel : ViewModelBase
         private set => SetProperty(ref _metricsSecondaryStatus, value);
     }
 
-    public bool HasAccuracyChartData => false;
+    public bool HasAccuracyChartData => _accuracyHistory.Count > 0;
 
-    public bool HasFitnessChartData => false;
+    public bool HasFitnessChartData => _fitnessHistory.Count > 0;
 
     public bool ShowAccuracyEmptyState => !HasAccuracyChartData;
 
     public bool ShowFitnessEmptyState => !HasFitnessChartData;
 
-    public string AccuracyChartPoints => string.Empty;
+    public string AccuracyChartPoints => BuildChartPoints(_accuracyHistory);
 
-    public string FitnessChartPoints => string.Empty;
+    public string FitnessChartPoints => BuildChartPoints(_fitnessHistory);
 
     private async Task ConnectAsync()
     {
@@ -534,11 +568,14 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private async Task DisconnectAsync()
     {
+        await StopExecutionAsync().ConfigureAwait(false);
         await DisposeRuntimeClientAsync().ConfigureAwait(false);
         _dispatcher.Post(() =>
         {
             ConnectionStatus = "Disconnected";
             CapacityStatus = "No capacity snapshot fetched.";
+            ExecutionStatus = "Idle";
+            ExecutionDetail = "Connect to IO, build capacity bounds, then start an implemented task plugin.";
             RaiseCommandStates();
         });
     }
@@ -592,6 +629,100 @@ public sealed class MainWindowViewModel : ViewModelBase
         RefreshValidationState();
     }
 
+    private async Task StartAsync()
+    {
+        try
+        {
+            if (_runtimeClient is null)
+            {
+                ExecutionStatus = "Start blocked.";
+                ExecutionDetail = "Connect to IO before starting a run.";
+                return;
+            }
+
+            var runtimeOptionsValid = TryBuildRuntimeClientOptions(out var runtimeOptions, out var runtimeErrors);
+            var environmentOptionsValid = TryBuildEnvironmentOptions(out var options, out var optionErrors);
+            if (!runtimeOptionsValid || !environmentOptionsValid)
+            {
+                ApplyValidationMessages(runtimeErrors.Concat(optionErrors).ToArray());
+                ExecutionStatus = "Start blocked.";
+                ExecutionDetail = "Fix validation issues before starting a run.";
+                return;
+            }
+
+            var planner = new BasicsEnvironmentPlanner(_runtimeClient);
+            var plan = await planner.BuildPlanAsync(options).ConfigureAwait(false);
+            _dispatcher.Post(() => ApplyPlan(plan));
+
+            if (!TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out var plugin))
+            {
+                _dispatcher.Post(() =>
+                {
+                    ExecutionStatus = "Start blocked.";
+                    ExecutionDetail = $"{plan.SelectedTask.DisplayName} is not implemented yet.";
+                });
+                return;
+            }
+
+            await StopExecutionAsync().ConfigureAwait(false);
+
+            var session = new BasicsExecutionSession(
+                _runtimeClient,
+                new BasicsTemplatePublishingOptions
+                {
+                    BindHost = runtimeOptions.BindHost,
+                    AdvertiseHost = runtimeOptions.AdvertiseHost
+                });
+
+            _executionSession = session;
+            _executionCts = new CancellationTokenSource();
+            _dispatcher.Post(() =>
+            {
+                ResetCharts();
+                IsExecutionRunning = true;
+                ExecutionStatus = "Starting...";
+                ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}.";
+                RaiseCommandStates();
+            });
+
+            try
+            {
+                await session.RunAsync(
+                        plan,
+                        plugin,
+                        snapshot => _dispatcher.Post(() => ApplyExecutionSnapshot(snapshot, plan.Capacity.RecommendedMaxConcurrentBrains)),
+                        _executionCts.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_executionCts.IsCancellationRequested)
+            {
+                // Normal stop path.
+            }
+            finally
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+                _executionSession = null;
+                _executionCts?.Dispose();
+                _executionCts = null;
+                _dispatcher.Post(() =>
+                {
+                    IsExecutionRunning = false;
+                    RaiseCommandStates();
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(() =>
+            {
+                ExecutionStatus = "Execution failed.";
+                ExecutionDetail = ex.GetBaseException().Message;
+            });
+        }
+    }
+
+    private Task StopAsync() => StopExecutionAsync();
+
     private void ApplyPlan(BasicsEnvironmentPlan plan)
     {
         _lastPlan = plan;
@@ -602,9 +733,16 @@ public sealed class MainWindowViewModel : ViewModelBase
         CapacitySummary = plan.Capacity.Summary;
         LastPlanSummary = $"Task {plan.SelectedTask.DisplayName} · template {plan.SeedTemplate.TemplateId} · {plan.Capacity.EligibleWorkerCount} eligible worker(s).";
         MetricsStatus = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
-            ? $"{plan.SelectedTask.DisplayName} plugin is available; live metric histories will populate once runtime execution is wired."
+            ? $"{plan.SelectedTask.DisplayName} plugin is available; Start will seed an artifact pool, evaluate live brains, and update metrics here."
             : $"{plan.SelectedTask.DisplayName} plugin is not implemented yet.";
         MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, run count {plan.Capacity.RecommendedReproductionRunCount}.";
+        if (!IsExecutionRunning)
+        {
+            ExecutionStatus = "Ready to start.";
+            ExecutionDetail = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
+                ? $"Template {plan.SeedTemplate.TemplateId} will be published automatically if no artifact ref is supplied."
+                : $"{plan.SelectedTask.DisplayName} cannot start until its plugin issue is implemented.";
+        }
 
         UpdateMetricSummary(BasicsMetricId.PopulationCount, plan.Capacity.RecommendedInitialPopulationCount.ToString(CultureInfo.InvariantCulture), "Recommended initial population bound.");
         UpdateMetricSummary(BasicsMetricId.ActiveBrainCount, plan.Capacity.RecommendedMaxConcurrentBrains.ToString(CultureInfo.InvariantCulture), "Recommended max concurrent brains.");
@@ -641,20 +779,37 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool CanConnect()
     {
         return TryBuildRuntimeClientOptions(out _, out _)
+               && !IsExecutionRunning
                && !string.IsNullOrWhiteSpace(ClientName);
     }
 
     private bool CanBuildPlan()
     {
         return _runtimeClient is not null
+               && !IsExecutionRunning
                && TryBuildEnvironmentOptions(out _, out _);
     }
+
+    private bool CanDisconnect() => _runtimeClient is not null && !IsExecutionRunning;
+
+    private bool CanStart()
+    {
+        return _runtimeClient is not null
+               && !IsExecutionRunning
+               && TryBuildEnvironmentOptions(out _, out _)
+               && SelectedTask is not null
+               && TaskPluginRegistry.TryGet(SelectedTask.TaskId, out _);
+    }
+
+    private bool CanStop() => IsExecutionRunning && _executionCts is not null;
 
     private void RaiseCommandStates()
     {
         ConnectCommand.RaiseCanExecuteChanged();
         DisconnectCommand.RaiseCanExecuteChanged();
         FetchCapacityCommand.RaiseCanExecuteChanged();
+        StartCommand.RaiseCanExecuteChanged();
+        StopCommand.RaiseCanExecuteChanged();
         ApplySuggestedBoundsCommand.RaiseCanExecuteChanged();
     }
 
@@ -854,6 +1009,100 @@ public sealed class MainWindowViewModel : ViewModelBase
             storeUri: string.IsNullOrWhiteSpace(TemplateArtifactStoreUri) ? null : TemplateArtifactStoreUri.Trim());
     }
 
+    private async Task StopExecutionAsync()
+    {
+        if (_executionCts is null)
+        {
+            return;
+        }
+
+        _dispatcher.Post(() =>
+        {
+            ExecutionStatus = "Stopping...";
+            ExecutionDetail = "Canceling the current run and cleaning up evaluation brains.";
+            RaiseCommandStates();
+        });
+
+        _executionCts.Cancel();
+        await Task.Yield();
+    }
+
+    private void ApplyExecutionSnapshot(BasicsExecutionSnapshot snapshot, int maxConcurrentBrains)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        ExecutionStatus = snapshot.StatusText;
+        ExecutionDetail = snapshot.DetailText;
+        MetricsStatus = snapshot.StatusText;
+        MetricsSecondaryStatus = snapshot.DetailText;
+        LastPlanSummary = $"Generation {snapshot.Generation} · population {snapshot.PopulationCount} · species {snapshot.SpeciesCount}.";
+
+        ReplaceHistory(_accuracyHistory, snapshot.AccuracyHistory);
+        ReplaceHistory(_fitnessHistory, snapshot.BestFitnessHistory);
+        UpdateChartBindings();
+
+        if (snapshot.EffectiveTemplateDefinition is not null)
+        {
+            _suppressValidationRefresh = true;
+            try
+            {
+                TemplateArtifactSha256 = snapshot.EffectiveTemplateDefinition.ToSha256Hex();
+                TemplateArtifactMediaType = string.IsNullOrWhiteSpace(snapshot.EffectiveTemplateDefinition.MediaType)
+                    ? "application/x-nbn"
+                    : snapshot.EffectiveTemplateDefinition.MediaType;
+                TemplateArtifactSizeBytesText = snapshot.EffectiveTemplateDefinition.SizeBytes.ToString(CultureInfo.InvariantCulture);
+                TemplateArtifactStoreUri = snapshot.EffectiveTemplateDefinition.StoreUri ?? string.Empty;
+            }
+            finally
+            {
+                _suppressValidationRefresh = false;
+            }
+        }
+
+        UpdateMetricSummary(
+            BasicsMetricId.Accuracy,
+            snapshot.BestAccuracy.ToString("0.###", CultureInfo.InvariantCulture),
+            snapshot.BestCandidate is null
+                ? "No successful evaluation yet."
+                : $"Best candidate species {snapshot.BestCandidate.SpeciesId}.");
+        UpdateMetricSummary(
+            BasicsMetricId.BestFitness,
+            snapshot.BestFitness.ToString("0.###", CultureInfo.InvariantCulture),
+            snapshot.BestCandidate is null
+                ? "No successful evaluation yet."
+                : $"Artifact {snapshot.BestCandidate.ArtifactSha256[..Math.Min(12, snapshot.BestCandidate.ArtifactSha256.Length)]}...");
+        UpdateMetricSummary(
+            BasicsMetricId.MeanFitness,
+            snapshot.MeanFitness.ToString("0.###", CultureInfo.InvariantCulture),
+            $"Generation {snapshot.Generation} mean fitness.");
+        UpdateMetricSummary(
+            BasicsMetricId.PopulationCount,
+            snapshot.PopulationCount.ToString(CultureInfo.InvariantCulture),
+            $"Artifact pool size for generation {snapshot.Generation}.");
+        UpdateMetricSummary(
+            BasicsMetricId.ActiveBrainCount,
+            snapshot.ActiveBrainCount.ToString(CultureInfo.InvariantCulture),
+            $"Current active evaluation brains (cap {maxConcurrentBrains}).");
+        UpdateMetricSummary(
+            BasicsMetricId.SpeciesCount,
+            snapshot.SpeciesCount.ToString(CultureInfo.InvariantCulture),
+            "Current committed speciation memberships in the artifact pool.");
+        UpdateMetricSummary(
+            BasicsMetricId.ReproductionCalls,
+            snapshot.ReproductionCalls.ToString(CultureInfo.InvariantCulture),
+            "Cumulative reproduction requests sent through IO.");
+        UpdateMetricSummary(
+            BasicsMetricId.ReproductionRunsObserved,
+            snapshot.ReproductionRunsObserved.ToString(CultureInfo.InvariantCulture),
+            "Cumulative requested/effective child runs.");
+        UpdateMetricSummary(
+            BasicsMetricId.CapacityUtilization,
+            snapshot.CapacityUtilization.ToString("0.###", CultureInfo.InvariantCulture),
+            snapshot.ActiveBrainCount > 0
+                ? "Current evaluation batch utilization."
+                : "Idle between evaluation batches.");
+    }
+
     private async Task DisposeRuntimeClientAsync()
     {
         if (_runtimeClient is null)
@@ -929,6 +1178,54 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
 
         return value;
+    }
+
+    private void ResetCharts()
+    {
+        _accuracyHistory.Clear();
+        _fitnessHistory.Clear();
+        UpdateChartBindings();
+    }
+
+    private void ReplaceHistory(List<float> target, IReadOnlyList<float> source)
+    {
+        target.Clear();
+        target.AddRange(source);
+    }
+
+    private void UpdateChartBindings()
+    {
+        OnPropertyChanged(nameof(HasAccuracyChartData));
+        OnPropertyChanged(nameof(HasFitnessChartData));
+        OnPropertyChanged(nameof(ShowAccuracyEmptyState));
+        OnPropertyChanged(nameof(ShowFitnessEmptyState));
+        OnPropertyChanged(nameof(AccuracyChartPoints));
+        OnPropertyChanged(nameof(FitnessChartPoints));
+    }
+
+    private static string BuildChartPoints(IReadOnlyList<float> history)
+    {
+        if (history.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        const float width = 320f;
+        const float height = 140f;
+        if (history.Count == 1)
+        {
+            var y = height - (Math.Clamp(history[0], 0f, 1f) * height);
+            return $"0,{y.ToString("0.###", CultureInfo.InvariantCulture)}";
+        }
+
+        var stepX = width / (history.Count - 1f);
+        var points = history.Select((value, index) =>
+        {
+            var x = index * stepX;
+            var y = height - (Math.Clamp(value, 0f, 1f) * height);
+            return $"{x.ToString("0.###", CultureInfo.InvariantCulture)},{y.ToString("0.###", CultureInfo.InvariantCulture)}";
+        });
+        return string.Join(' ', points);
     }
 
     private void UpdateMetricSummary(BasicsMetricId metricId, string value, string detail)

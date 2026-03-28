@@ -1,7 +1,9 @@
 using Nbn.Demos.Basics.Environment;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
+using Nbn.Proto.Speciation;
 using Nbn.Shared;
+using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Demos.Basics.Environment.Tests;
 
@@ -88,6 +90,39 @@ public sealed class BasicsEnvironmentPlannerTests
 
         public Task<SpawnBrainViaIOAck?> SpawnBrainAsync(SpawnBrain request, CancellationToken cancellationToken = default)
             => Task.FromResult<SpawnBrainViaIOAck?>(null);
+
+        public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task UnsubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task SendInputVectorAsync(Guid brainId, IReadOnlyList<float> values, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public void ResetOutputBuffer(Guid brainId)
+        {
+        }
+
+        public Task<BasicsRuntimeOutputVector?> WaitForOutputVectorAsync(
+            Guid brainId,
+            ulong afterTickExclusive,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<BasicsRuntimeOutputVector?>(null);
+
+        public Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default)
+            => Task.FromResult<KillBrainViaIOAck?>(null);
+
+        public Task<Repro.ReproduceResult?> ReproduceByArtifactsAsync(
+            Repro.ReproduceByArtifactsRequest request,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<Repro.ReproduceResult?>(null);
+
+        public Task<SpeciationAssignResponse?> AssignSpeciationAsync(
+            SpeciationAssignRequest request,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<SpeciationAssignResponse?>(null);
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

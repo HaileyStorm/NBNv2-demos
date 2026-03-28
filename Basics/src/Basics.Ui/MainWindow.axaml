@@ -46,6 +46,15 @@
                                        Foreground="#D5C9B5"
                                        FontSize="12"
                                        TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding ExecutionStatus}"
+                                       Foreground="#F7F2E7"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="Wrap"
+                                       Margin="0,6,0,0" />
+                            <TextBlock Text="{Binding ExecutionDetail}"
+                                       Foreground="#D5C9B5"
+                                       FontSize="12"
+                                       TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -302,22 +311,33 @@
                             <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding RecommendedMaxConcurrentBrainsText}" VerticalAlignment="Center" />
                         </Grid>
 
-                        <Grid ColumnDefinitions="Auto,Auto,*"
+                        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*"
                               ColumnSpacing="12">
                             <Button Grid.Column="0"
+                                    Content="Start"
+                                    Command="{Binding StartCommand}"
+                                    MinWidth="110" />
+                            <Button Grid.Column="1"
+                                    Content="Stop"
+                                    Command="{Binding StopCommand}"
+                                    MinWidth="110" />
+                            <Button Grid.Column="2"
                                     Content="Fetch Capacity"
                                     Command="{Binding FetchCapacityCommand}"
                                     MinWidth="130" />
-                            <Button Grid.Column="1"
+                            <Button Grid.Column="3"
                                     Content="Apply Suggested Bounds"
                                     Command="{Binding ApplySuggestedBoundsCommand}"
                                     MinWidth="180" />
-                            <TextBlock Grid.Column="2"
-                                       Text="{Binding LastPlanSummary}"
+                            <TextBlock Grid.Column="4"
+                                       Text="{Binding ExecutionDetail}"
                                        TextWrapping="Wrap"
                                        VerticalAlignment="Center"
                                        Foreground="#425466" />
                         </Grid>
+                        <TextBlock Text="{Binding LastPlanSummary}"
+                                   TextWrapping="Wrap"
+                                   Foreground="#6C7A89" />
                     </StackPanel>
                 </Border>
 
