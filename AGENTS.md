@@ -50,6 +50,8 @@
 ## Demo repo layout
 
 - Each demo lives in its own top-level folder.
+- Each demo folder should have its own `README.md` that explains the demo's purpose, setup, runtime expectations, and any demo-specific commands.
+- A demo folder may also have its own `AGENTS.md` when that project has stable local workflow rules, tooling constraints, or integration notes that are worth codifying. Repo-level guidance still applies unless the demo-local guide overrides it.
 - Keep demo-specific docs near the demo root; do not create duplicate copies of canonical NBN contracts here.
 - If a demo needs generated client code or vendored schema snapshots, document the source path in `../NBNv2` and the regeneration command.
 
