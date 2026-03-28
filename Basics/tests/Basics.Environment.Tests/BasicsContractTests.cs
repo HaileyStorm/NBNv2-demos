@@ -67,4 +67,27 @@ public sealed class BasicsContractTests
         Assert.InRange(parentScore.WeightedScore, 0.6f, 0.7f);
         Assert.Equal(4u, runCount);
     }
+
+    [Fact]
+    public void SeedShapeConstraints_RejectInvalidRanges()
+    {
+        var template = BasicsSeedTemplateContract.CreateDefault() with
+        {
+            InitialSeedShapeConstraints = new BasicsSeedShapeConstraints
+            {
+                MinActiveInternalRegionCount = 4,
+                MaxActiveInternalRegionCount = 2,
+                MinInternalNeuronCount = -1,
+                MinAxonCount = 10,
+                MaxAxonCount = 9
+            }
+        };
+
+        var validation = template.Validate();
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, error => error.Contains("Active internal region count maximum", StringComparison.Ordinal));
+        Assert.Contains(validation.Errors, error => error.Contains("Internal neuron count minimum", StringComparison.Ordinal));
+        Assert.Contains(validation.Errors, error => error.Contains("Axon count maximum", StringComparison.Ordinal));
+    }
 }

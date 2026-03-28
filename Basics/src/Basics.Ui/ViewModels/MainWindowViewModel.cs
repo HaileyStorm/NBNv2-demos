@@ -61,6 +61,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _templateArtifactMediaType = "application/x-nbn";
     private string _templateArtifactSizeBytesText = string.Empty;
     private string _templateArtifactStoreUri = string.Empty;
+    private string _minActiveInternalRegionCountText = string.Empty;
+    private string _maxActiveInternalRegionCountText = string.Empty;
+    private string _minInternalNeuronCountText = string.Empty;
+    private string _maxInternalNeuronCountText = string.Empty;
+    private string _minAxonCountText = string.Empty;
+    private string _maxAxonCountText = string.Empty;
     private string _maxInternalNeuronDeltaText = "2";
     private string _maxAxonDeltaText = "8";
     private string _maxStrengthCodeDeltaText = "4";
@@ -266,6 +272,42 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _templateArtifactStoreUri;
         set => SetProperty(ref _templateArtifactStoreUri, value);
+    }
+
+    public string MinActiveInternalRegionCountText
+    {
+        get => _minActiveInternalRegionCountText;
+        set => SetProperty(ref _minActiveInternalRegionCountText, value);
+    }
+
+    public string MaxActiveInternalRegionCountText
+    {
+        get => _maxActiveInternalRegionCountText;
+        set => SetProperty(ref _maxActiveInternalRegionCountText, value);
+    }
+
+    public string MinInternalNeuronCountText
+    {
+        get => _minInternalNeuronCountText;
+        set => SetProperty(ref _minInternalNeuronCountText, value);
+    }
+
+    public string MaxInternalNeuronCountText
+    {
+        get => _maxInternalNeuronCountText;
+        set => SetProperty(ref _maxInternalNeuronCountText, value);
+    }
+
+    public string MinAxonCountText
+    {
+        get => _minAxonCountText;
+        set => SetProperty(ref _minAxonCountText, value);
+    }
+
+    public string MaxAxonCountText
+    {
+        get => _maxAxonCountText;
+        set => SetProperty(ref _maxAxonCountText, value);
     }
 
     public string InputWidthDisplay => BasicsIoGeometry.InputWidth.ToString(CultureInfo.InvariantCulture);
@@ -478,9 +520,11 @@ public sealed class MainWindowViewModel : ViewModelBase
             _dispatcher.Post(() =>
             {
                 ConnectionStatus = $"Connected to {IoAddress} as {ack.ServerName}";
-                CapacityStatus = "Connected. Fetch capacity to build sizing recommendations.";
+                CapacityStatus = "Connected. Fetching capacity through IO...";
                 RaiseCommandStates();
             });
+
+            await FetchCapacityAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -698,6 +742,16 @@ public sealed class MainWindowViewModel : ViewModelBase
             AllowRegionSetChange = AllowRegionSetChange
         };
 
+        var seedShapeConstraints = new BasicsSeedShapeConstraints
+        {
+            MinActiveInternalRegionCount = ParseOptionalInt(MinActiveInternalRegionCountText, "Minimum internal region count", errors),
+            MaxActiveInternalRegionCount = ParseOptionalInt(MaxActiveInternalRegionCountText, "Maximum internal region count", errors),
+            MinInternalNeuronCount = ParseOptionalInt(MinInternalNeuronCountText, "Minimum internal neuron count", errors),
+            MaxInternalNeuronCount = ParseOptionalInt(MaxInternalNeuronCountText, "Maximum internal neuron count", errors),
+            MinAxonCount = ParseOptionalInt(MinAxonCountText, "Minimum axon count", errors),
+            MaxAxonCount = ParseOptionalInt(MaxAxonCountText, "Maximum axon count", errors)
+        };
+
         var overrides = new BasicsSizingOverrides
         {
             InitialPopulationCount = ParseOptionalInt(InitialPopulationOverrideText, "Initial population override", errors),
@@ -730,7 +784,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             TemplateId = TemplateId.Trim(),
             Description = TemplateDescription.Trim(),
             TemplateDefinition = templateDefinition,
-            InitialVariationBand = variation
+            InitialVariationBand = variation,
+            InitialSeedShapeConstraints = seedShapeConstraints
         };
 
         options = new BasicsEnvironmentOptions

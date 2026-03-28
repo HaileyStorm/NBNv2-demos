@@ -218,27 +218,51 @@
                         CornerRadius="16"
                         Padding="18">
                     <StackPanel Spacing="14">
-                        <TextBlock Text="Template Divergence"
+                        <TextBlock Text="Seed Family + Divergence"
                                    FontSize="18"
                                    FontWeight="SemiBold"
                                    Foreground="#182436" />
                         <Grid ColumnDefinitions="Auto,120,Auto,120"
-                              RowDefinitions="Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
-                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Internal neuron delta" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MaxInternalNeuronDeltaText}" />
-                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Axon delta" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding MaxAxonDeltaText}" />
+                            <TextBlock Grid.Row="0" Grid.ColumnSpan="4" Text="Initial seed-shape bounds" FontWeight="SemiBold" Foreground="#425466" />
 
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Strength-code delta" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MaxStrengthCodeDeltaText}" />
-                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Param-code delta" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding MaxParameterCodeDeltaText}" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Min internal regions" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MinActiveInternalRegionCountText}" Watermark="template" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Max internal regions" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding MaxActiveInternalRegionCountText}" Watermark="template" />
 
-                            <CheckBox Grid.Row="2" Grid.Column="0" Content="Allow function mutation" IsChecked="{Binding AllowFunctionMutation}" />
-                            <CheckBox Grid.Row="2" Grid.Column="1" Content="Allow axon reroute" IsChecked="{Binding AllowAxonReroute}" />
-                            <CheckBox Grid.Row="2" Grid.Column="2" Content="Allow region-set change" IsChecked="{Binding AllowRegionSetChange}" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Min internal neurons" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MinInternalNeuronCountText}" Watermark="template" />
+                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Max internal neurons" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding MaxInternalNeuronCountText}" Watermark="template" />
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Min axons" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MinAxonCountText}" Watermark="template" />
+                            <TextBlock Grid.Row="3" Grid.Column="2" Text="Max axons" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding MaxAxonCountText}" Watermark="template" />
+
+                            <TextBlock Grid.Row="4" Grid.ColumnSpan="4" Text="Bounded divergence from template" FontWeight="SemiBold" Foreground="#425466" />
+
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Internal neuron delta" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding MaxInternalNeuronDeltaText}" />
+                            <TextBlock Grid.Row="5" Grid.Column="2" Text="Axon delta" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="5" Grid.Column="3" Text="{Binding MaxAxonDeltaText}" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,120,Auto,120"
+                              RowDefinitions="Auto,Auto"
+                              ColumnSpacing="12"
+                              RowSpacing="10">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Strength-code delta" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MaxStrengthCodeDeltaText}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Param-code delta" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding MaxParameterCodeDeltaText}" />
+
+                            <CheckBox Grid.Row="1" Grid.Column="0" Content="Allow function mutation" IsChecked="{Binding AllowFunctionMutation}" />
+                            <CheckBox Grid.Row="1" Grid.Column="1" Content="Allow axon reroute" IsChecked="{Binding AllowAxonReroute}" />
+                            <CheckBox Grid.Row="1" Grid.Column="2" Content="Allow region-set change" IsChecked="{Binding AllowRegionSetChange}" />
                         </Grid>
                     </StackPanel>
                 </Border>

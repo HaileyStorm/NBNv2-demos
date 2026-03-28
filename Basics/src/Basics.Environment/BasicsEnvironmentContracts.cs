@@ -105,12 +105,64 @@ public sealed record BasicsSeedVariationBand
     }
 }
 
+public sealed record BasicsSeedShapeConstraints
+{
+    public int? MinActiveInternalRegionCount { get; init; }
+    public int? MaxActiveInternalRegionCount { get; init; }
+    public int? MinInternalNeuronCount { get; init; }
+    public int? MaxInternalNeuronCount { get; init; }
+    public int? MinAxonCount { get; init; }
+    public int? MaxAxonCount { get; init; }
+
+    public BasicsContractValidationResult Validate()
+    {
+        var errors = new List<string>();
+
+        ValidateOptionalMinMax(
+            MinActiveInternalRegionCount,
+            MaxActiveInternalRegionCount,
+            "Active internal region count",
+            errors);
+        ValidateOptionalMinMax(
+            MinInternalNeuronCount,
+            MaxInternalNeuronCount,
+            "Internal neuron count",
+            errors);
+        ValidateOptionalMinMax(
+            MinAxonCount,
+            MaxAxonCount,
+            "Axon count",
+            errors);
+
+        return BasicsContractValidationResult.FromErrors(errors);
+    }
+
+    private static void ValidateOptionalMinMax(int? min, int? max, string label, ICollection<string> errors)
+    {
+        if (min is < 0)
+        {
+            errors.Add($"{label} minimum must be >= 0 when set.");
+        }
+
+        if (max is < 0)
+        {
+            errors.Add($"{label} maximum must be >= 0 when set.");
+        }
+
+        if (min.HasValue && max.HasValue && max.Value < min.Value)
+        {
+            errors.Add($"{label} maximum must be >= minimum.");
+        }
+    }
+}
+
 public sealed record BasicsSeedTemplateContract
 {
     public required string TemplateId { get; init; }
     public string Description { get; init; } = string.Empty;
     public ArtifactRef? TemplateDefinition { get; init; }
     public BasicsSeedVariationBand InitialVariationBand { get; init; } = BasicsSeedVariationBand.Minor();
+    public BasicsSeedShapeConstraints InitialSeedShapeConstraints { get; init; } = new();
     public bool ExpectSingleBootstrapSpecies { get; init; } = true;
     public bool AllowOffTemplateSeeds { get; init; }
     public uint InputWidth { get; init; } = BasicsIoGeometry.InputWidth;
@@ -156,6 +208,12 @@ public sealed record BasicsSeedTemplateContract
         if (!variationValidation.IsValid)
         {
             errors.AddRange(variationValidation.Errors);
+        }
+
+        var shapeValidation = InitialSeedShapeConstraints.Validate();
+        if (!shapeValidation.IsValid)
+        {
+            errors.AddRange(shapeValidation.Errors);
         }
 
         return BasicsContractValidationResult.FromErrors(errors);
