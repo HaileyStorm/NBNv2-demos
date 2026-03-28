@@ -1,3 +1,3 @@
 # Puzzler
 
-Placeholder for the `Puzzler` External World demo.
+Placeholder folder for the Puzzler external-world demo.

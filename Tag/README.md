@@ -1,3 +1,3 @@
 # Tag
 
-Placeholder for the `Tag` External World demo.
+Placeholder folder for the Tag external-world demo.

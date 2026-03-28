@@ -1,3 +1,3 @@
 # TunnelFlight
 
-Placeholder for the `TunnelFlight` External World demo.
+Placeholder folder for the TunnelFlight external-world demo.

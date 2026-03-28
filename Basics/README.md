@@ -1,3 +1,3 @@
 # Basics
 
-Placeholder for the `Basics` External World demo.
+Placeholder folder for the Basics external-world demo.

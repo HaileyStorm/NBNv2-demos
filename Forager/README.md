@@ -1,3 +1,3 @@
 # Forager
 
-Placeholder for the `Forager` External World demo.
+Placeholder folder for the Forager external-world demo.

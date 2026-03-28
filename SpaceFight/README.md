@@ -1,3 +1,3 @@
 # SpaceFight
 
-Placeholder for the `SpaceFight` External World demo.
+Placeholder folder for the SpaceFight external-world demo.
