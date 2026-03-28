@@ -1,0 +1,944 @@
+using System.Collections.ObjectModel;
+using System.Globalization;
+using Nbn.Demos.Basics.Environment;
+using Nbn.Demos.Basics.Ui.Services;
+using Nbn.Proto;
+using Nbn.Shared;
+using Repro = Nbn.Proto.Repro;
+
+namespace Nbn.Demos.Basics.Ui.ViewModels;
+
+public sealed class MainWindowViewModel : ViewModelBase
+{
+    private static readonly HashSet<string> NonEditableProperties = new(StringComparer.Ordinal)
+    {
+        nameof(ConnectionStatus),
+        nameof(CapacityStatus),
+        nameof(CapacitySummary),
+        nameof(ValidationSummary),
+        nameof(RecommendedInitialPopulationText),
+        nameof(RecommendedRunCountText),
+        nameof(RecommendedMaxConcurrentBrainsText),
+        nameof(LastPlanSummary),
+        nameof(InputWidthDisplay),
+        nameof(OutputWidthDisplay),
+        nameof(ExpectSingleBootstrapSpeciesDisplay),
+        nameof(AllowOffTemplateSeedsDisplay),
+        nameof(ProtectIoRegionNeuronCountsDisplay),
+        nameof(HasAccuracyChartData),
+        nameof(HasFitnessChartData),
+        nameof(ShowAccuracyEmptyState),
+        nameof(ShowFitnessEmptyState),
+        nameof(AccuracyChartPoints),
+        nameof(FitnessChartPoints),
+        nameof(MetricsStatus),
+        nameof(MetricsSecondaryStatus)
+    };
+
+    private readonly UiDispatcher _dispatcher;
+    private IBasicsRuntimeClient? _runtimeClient;
+    private BasicsEnvironmentPlan? _lastPlan;
+    private bool _suppressValidationRefresh;
+
+    private string _ioAddress = "127.0.0.1:12020";
+    private string _ioGatewayName = "io-gateway";
+    private string _clientName = "nbn.basics.ui";
+    private string _bindHost = NetworkAddressDefaults.DefaultBindHost;
+    private string _portText = "12094";
+    private string _advertiseHost = string.Empty;
+    private string _advertisePortText = string.Empty;
+    private string _requestTimeoutSecondsText = "30";
+    private string _optionalSettingsAddress = string.Empty;
+    private string _optionalSettingsActorName = "SettingsMonitor";
+    private string _connectionStatus = "Disconnected";
+    private string _capacityStatus = "No capacity snapshot fetched.";
+    private string _capacitySummary = "Fetch capacity through IO to compute population bounds.";
+    private string _validationSummary = "Configuration not yet validated.";
+    private string _templateId = "basics-template-a";
+    private string _templateDescription = "Seed all initial brains from one shared 2→1 template, allowing only bounded minor divergence.";
+    private string _templateArtifactSha256 = string.Empty;
+    private string _templateArtifactMediaType = "application/x-nbn";
+    private string _templateArtifactSizeBytesText = string.Empty;
+    private string _templateArtifactStoreUri = string.Empty;
+    private string _maxInternalNeuronDeltaText = "2";
+    private string _maxAxonDeltaText = "8";
+    private string _maxStrengthCodeDeltaText = "4";
+    private string _maxParameterCodeDeltaText = "4";
+    private bool _allowFunctionMutation;
+    private bool _allowAxonReroute = true;
+    private bool _allowRegionSetChange;
+    private string _initialPopulationOverrideText = string.Empty;
+    private string _reproductionRunCountOverrideText = string.Empty;
+    private string _maxConcurrentBrainsOverrideText = string.Empty;
+    private string _recommendedInitialPopulationText = "—";
+    private string _recommendedRunCountText = "—";
+    private string _recommendedMaxConcurrentBrainsText = "—";
+    private string _fitnessWeightText = "0.55";
+    private string _diversityWeightText = "0.30";
+    private string _speciesBalanceWeightText = "0.15";
+    private string _eliteFractionText = "0.10";
+    private string _explorationFractionText = "0.20";
+    private string _maxParentsPerSpeciesText = "8";
+    private string _minRunsPerPairText = "1";
+    private string _maxRunsPerPairText = "6";
+    private string _fitnessExponentText = "1.20";
+    private string _diversityBoostText = "0.35";
+    private string _lastPlanSummary = "No environment plan built yet.";
+    private string _metricsStatus = "Accuracy and fitness charts are wired for runtime data, but no task plugin has published samples yet.";
+    private string _metricsSecondaryStatus = "Population and resource summaries update when capacity is fetched or a plan is built.";
+    private TaskOption? _selectedTask;
+    private StrengthSourceOption? _selectedStrengthSource;
+
+    public MainWindowViewModel(UiDispatcher dispatcher)
+    {
+        _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+
+        Tasks = new ObservableCollection<TaskOption>(BuildTasks());
+        SelectedTask = Tasks.FirstOrDefault();
+
+        StrengthSources = new ObservableCollection<StrengthSourceOption>(BuildStrengthSources());
+        SelectedStrengthSource = StrengthSources.First(static option => option.Value == Repro.StrengthSource.StrengthBaseOnly);
+
+        ValidationErrors = new ObservableCollection<string>();
+        MetricSummaries = new ObservableCollection<MetricSummaryItemViewModel>(BuildMetricSummaryItems());
+
+        ConnectCommand = new AsyncRelayCommand(ConnectAsync, CanConnect);
+        DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, () => _runtimeClient is not null);
+        FetchCapacityCommand = new AsyncRelayCommand(FetchCapacityAsync, CanBuildPlan);
+        ApplySuggestedBoundsCommand = new RelayCommand(ApplySuggestedBounds, () => _lastPlan is not null);
+
+        PropertyChanged += (_, args) =>
+        {
+            if (_suppressValidationRefresh)
+            {
+                return;
+            }
+
+            if (args.PropertyName is null || NonEditableProperties.Contains(args.PropertyName))
+            {
+                return;
+            }
+
+            RefreshValidationState();
+        };
+
+        RefreshValidationState();
+    }
+
+    public ObservableCollection<TaskOption> Tasks { get; }
+
+    public ObservableCollection<StrengthSourceOption> StrengthSources { get; }
+
+    public ObservableCollection<string> ValidationErrors { get; }
+
+    public ObservableCollection<MetricSummaryItemViewModel> MetricSummaries { get; }
+
+    public AsyncRelayCommand ConnectCommand { get; }
+
+    public AsyncRelayCommand DisconnectCommand { get; }
+
+    public AsyncRelayCommand FetchCapacityCommand { get; }
+
+    public RelayCommand ApplySuggestedBoundsCommand { get; }
+
+    public string IoAddress
+    {
+        get => _ioAddress;
+        set => SetProperty(ref _ioAddress, value);
+    }
+
+    public string IoGatewayName
+    {
+        get => _ioGatewayName;
+        set => SetProperty(ref _ioGatewayName, value);
+    }
+
+    public string ClientName
+    {
+        get => _clientName;
+        set => SetProperty(ref _clientName, value);
+    }
+
+    public string BindHost
+    {
+        get => _bindHost;
+        set => SetProperty(ref _bindHost, value);
+    }
+
+    public string PortText
+    {
+        get => _portText;
+        set => SetProperty(ref _portText, value);
+    }
+
+    public string AdvertiseHost
+    {
+        get => _advertiseHost;
+        set => SetProperty(ref _advertiseHost, value);
+    }
+
+    public string AdvertisePortText
+    {
+        get => _advertisePortText;
+        set => SetProperty(ref _advertisePortText, value);
+    }
+
+    public string RequestTimeoutSecondsText
+    {
+        get => _requestTimeoutSecondsText;
+        set => SetProperty(ref _requestTimeoutSecondsText, value);
+    }
+
+    public string OptionalSettingsAddress
+    {
+        get => _optionalSettingsAddress;
+        set => SetProperty(ref _optionalSettingsAddress, value);
+    }
+
+    public string OptionalSettingsActorName
+    {
+        get => _optionalSettingsActorName;
+        set => SetProperty(ref _optionalSettingsActorName, value);
+    }
+
+    public string ConnectionStatus
+    {
+        get => _connectionStatus;
+        private set => SetProperty(ref _connectionStatus, value);
+    }
+
+    public string CapacityStatus
+    {
+        get => _capacityStatus;
+        private set => SetProperty(ref _capacityStatus, value);
+    }
+
+    public string CapacitySummary
+    {
+        get => _capacitySummary;
+        private set => SetProperty(ref _capacitySummary, value);
+    }
+
+    public string ValidationSummary
+    {
+        get => _validationSummary;
+        private set => SetProperty(ref _validationSummary, value);
+    }
+
+    public TaskOption? SelectedTask
+    {
+        get => _selectedTask;
+        set => SetProperty(ref _selectedTask, value);
+    }
+
+    public string TemplateId
+    {
+        get => _templateId;
+        set => SetProperty(ref _templateId, value);
+    }
+
+    public string TemplateDescription
+    {
+        get => _templateDescription;
+        set => SetProperty(ref _templateDescription, value);
+    }
+
+    public string TemplateArtifactSha256
+    {
+        get => _templateArtifactSha256;
+        set => SetProperty(ref _templateArtifactSha256, value);
+    }
+
+    public string TemplateArtifactMediaType
+    {
+        get => _templateArtifactMediaType;
+        set => SetProperty(ref _templateArtifactMediaType, value);
+    }
+
+    public string TemplateArtifactSizeBytesText
+    {
+        get => _templateArtifactSizeBytesText;
+        set => SetProperty(ref _templateArtifactSizeBytesText, value);
+    }
+
+    public string TemplateArtifactStoreUri
+    {
+        get => _templateArtifactStoreUri;
+        set => SetProperty(ref _templateArtifactStoreUri, value);
+    }
+
+    public string InputWidthDisplay => BasicsIoGeometry.InputWidth.ToString(CultureInfo.InvariantCulture);
+
+    public string OutputWidthDisplay => BasicsIoGeometry.OutputWidth.ToString(CultureInfo.InvariantCulture);
+
+    public string ExpectSingleBootstrapSpeciesDisplay => "true";
+
+    public string AllowOffTemplateSeedsDisplay => "false";
+
+    public string MaxInternalNeuronDeltaText
+    {
+        get => _maxInternalNeuronDeltaText;
+        set => SetProperty(ref _maxInternalNeuronDeltaText, value);
+    }
+
+    public string MaxAxonDeltaText
+    {
+        get => _maxAxonDeltaText;
+        set => SetProperty(ref _maxAxonDeltaText, value);
+    }
+
+    public string MaxStrengthCodeDeltaText
+    {
+        get => _maxStrengthCodeDeltaText;
+        set => SetProperty(ref _maxStrengthCodeDeltaText, value);
+    }
+
+    public string MaxParameterCodeDeltaText
+    {
+        get => _maxParameterCodeDeltaText;
+        set => SetProperty(ref _maxParameterCodeDeltaText, value);
+    }
+
+    public bool AllowFunctionMutation
+    {
+        get => _allowFunctionMutation;
+        set => SetProperty(ref _allowFunctionMutation, value);
+    }
+
+    public bool AllowAxonReroute
+    {
+        get => _allowAxonReroute;
+        set => SetProperty(ref _allowAxonReroute, value);
+    }
+
+    public bool AllowRegionSetChange
+    {
+        get => _allowRegionSetChange;
+        set => SetProperty(ref _allowRegionSetChange, value);
+    }
+
+    public string InitialPopulationOverrideText
+    {
+        get => _initialPopulationOverrideText;
+        set => SetProperty(ref _initialPopulationOverrideText, value);
+    }
+
+    public string ReproductionRunCountOverrideText
+    {
+        get => _reproductionRunCountOverrideText;
+        set => SetProperty(ref _reproductionRunCountOverrideText, value);
+    }
+
+    public string MaxConcurrentBrainsOverrideText
+    {
+        get => _maxConcurrentBrainsOverrideText;
+        set => SetProperty(ref _maxConcurrentBrainsOverrideText, value);
+    }
+
+    public string RecommendedInitialPopulationText
+    {
+        get => _recommendedInitialPopulationText;
+        private set => SetProperty(ref _recommendedInitialPopulationText, value);
+    }
+
+    public string RecommendedRunCountText
+    {
+        get => _recommendedRunCountText;
+        private set => SetProperty(ref _recommendedRunCountText, value);
+    }
+
+    public string RecommendedMaxConcurrentBrainsText
+    {
+        get => _recommendedMaxConcurrentBrainsText;
+        private set => SetProperty(ref _recommendedMaxConcurrentBrainsText, value);
+    }
+
+    public StrengthSourceOption? SelectedStrengthSource
+    {
+        get => _selectedStrengthSource;
+        set => SetProperty(ref _selectedStrengthSource, value);
+    }
+
+    public string ProtectIoRegionNeuronCountsDisplay => "true";
+
+    public string FitnessWeightText
+    {
+        get => _fitnessWeightText;
+        set => SetProperty(ref _fitnessWeightText, value);
+    }
+
+    public string DiversityWeightText
+    {
+        get => _diversityWeightText;
+        set => SetProperty(ref _diversityWeightText, value);
+    }
+
+    public string SpeciesBalanceWeightText
+    {
+        get => _speciesBalanceWeightText;
+        set => SetProperty(ref _speciesBalanceWeightText, value);
+    }
+
+    public string EliteFractionText
+    {
+        get => _eliteFractionText;
+        set => SetProperty(ref _eliteFractionText, value);
+    }
+
+    public string ExplorationFractionText
+    {
+        get => _explorationFractionText;
+        set => SetProperty(ref _explorationFractionText, value);
+    }
+
+    public string MaxParentsPerSpeciesText
+    {
+        get => _maxParentsPerSpeciesText;
+        set => SetProperty(ref _maxParentsPerSpeciesText, value);
+    }
+
+    public string MinRunsPerPairText
+    {
+        get => _minRunsPerPairText;
+        set => SetProperty(ref _minRunsPerPairText, value);
+    }
+
+    public string MaxRunsPerPairText
+    {
+        get => _maxRunsPerPairText;
+        set => SetProperty(ref _maxRunsPerPairText, value);
+    }
+
+    public string FitnessExponentText
+    {
+        get => _fitnessExponentText;
+        set => SetProperty(ref _fitnessExponentText, value);
+    }
+
+    public string DiversityBoostText
+    {
+        get => _diversityBoostText;
+        set => SetProperty(ref _diversityBoostText, value);
+    }
+
+    public string LastPlanSummary
+    {
+        get => _lastPlanSummary;
+        private set => SetProperty(ref _lastPlanSummary, value);
+    }
+
+    public string MetricsStatus
+    {
+        get => _metricsStatus;
+        private set => SetProperty(ref _metricsStatus, value);
+    }
+
+    public string MetricsSecondaryStatus
+    {
+        get => _metricsSecondaryStatus;
+        private set => SetProperty(ref _metricsSecondaryStatus, value);
+    }
+
+    public bool HasAccuracyChartData => false;
+
+    public bool HasFitnessChartData => false;
+
+    public bool ShowAccuracyEmptyState => !HasAccuracyChartData;
+
+    public bool ShowFitnessEmptyState => !HasFitnessChartData;
+
+    public string AccuracyChartPoints => string.Empty;
+
+    public string FitnessChartPoints => string.Empty;
+
+    private async Task ConnectAsync()
+    {
+        if (!TryBuildRuntimeClientOptions(out var options, out var errors))
+        {
+            ApplyValidationMessages(errors);
+            ConnectionStatus = "Connection settings invalid.";
+            return;
+        }
+
+        await DisposeRuntimeClientAsync().ConfigureAwait(false);
+
+        try
+        {
+            var runtimeClient = await BasicsRuntimeClient.StartAsync(options).ConfigureAwait(false);
+            var ack = await runtimeClient.ConnectAsync(ClientName.Trim()).ConfigureAwait(false);
+            if (ack is null)
+            {
+                await runtimeClient.DisposeAsync().ConfigureAwait(false);
+                _dispatcher.Post(() => ConnectionStatus = "IO connect failed.");
+                return;
+            }
+
+            _runtimeClient = runtimeClient;
+            _dispatcher.Post(() =>
+            {
+                ConnectionStatus = $"Connected to {IoAddress} as {ack.ServerName}";
+                CapacityStatus = "Connected. Fetch capacity to build sizing recommendations.";
+                RaiseCommandStates();
+            });
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(() => ConnectionStatus = $"IO connect failed: {ex.GetBaseException().Message}");
+        }
+    }
+
+    private async Task DisconnectAsync()
+    {
+        await DisposeRuntimeClientAsync().ConfigureAwait(false);
+        _dispatcher.Post(() =>
+        {
+            ConnectionStatus = "Disconnected";
+            CapacityStatus = "No capacity snapshot fetched.";
+            RaiseCommandStates();
+        });
+    }
+
+    private async Task FetchCapacityAsync()
+    {
+        if (_runtimeClient is null)
+        {
+            CapacityStatus = "Connect to IO before fetching capacity.";
+            return;
+        }
+
+        if (!TryBuildEnvironmentOptions(out var options, out var errors))
+        {
+            ApplyValidationMessages(errors);
+            CapacityStatus = "Configuration invalid.";
+            return;
+        }
+
+        try
+        {
+            var planner = new BasicsEnvironmentPlanner(_runtimeClient);
+            var plan = await planner.BuildPlanAsync(options).ConfigureAwait(false);
+            _dispatcher.Post(() => ApplyPlan(plan));
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(() => CapacityStatus = $"Plan failed: {ex.GetBaseException().Message}");
+        }
+    }
+
+    private void ApplySuggestedBounds()
+    {
+        if (_lastPlan is null)
+        {
+            return;
+        }
+
+        _suppressValidationRefresh = true;
+        try
+        {
+            InitialPopulationOverrideText = _lastPlan.Capacity.RecommendedInitialPopulationCount.ToString(CultureInfo.InvariantCulture);
+            ReproductionRunCountOverrideText = _lastPlan.Capacity.RecommendedReproductionRunCount.ToString(CultureInfo.InvariantCulture);
+            MaxConcurrentBrainsOverrideText = _lastPlan.Capacity.RecommendedMaxConcurrentBrains.ToString(CultureInfo.InvariantCulture);
+        }
+        finally
+        {
+            _suppressValidationRefresh = false;
+        }
+
+        RefreshValidationState();
+    }
+
+    private void ApplyPlan(BasicsEnvironmentPlan plan)
+    {
+        _lastPlan = plan;
+        RecommendedInitialPopulationText = plan.Capacity.RecommendedInitialPopulationCount.ToString(CultureInfo.InvariantCulture);
+        RecommendedRunCountText = plan.Capacity.RecommendedReproductionRunCount.ToString(CultureInfo.InvariantCulture);
+        RecommendedMaxConcurrentBrainsText = plan.Capacity.RecommendedMaxConcurrentBrains.ToString(CultureInfo.InvariantCulture);
+        CapacityStatus = $"Capacity source: {plan.Capacity.Source}";
+        CapacitySummary = plan.Capacity.Summary;
+        LastPlanSummary = $"Task {SelectedTask?.DisplayName ?? "n/a"} · template {plan.SeedTemplate.TemplateId} · {plan.Capacity.EligibleWorkerCount} eligible worker(s).";
+        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, run count {plan.Capacity.RecommendedReproductionRunCount}.";
+
+        UpdateMetricSummary(BasicsMetricId.PopulationCount, plan.Capacity.RecommendedInitialPopulationCount.ToString(CultureInfo.InvariantCulture), "Recommended initial population bound.");
+        UpdateMetricSummary(BasicsMetricId.ActiveBrainCount, plan.Capacity.RecommendedMaxConcurrentBrains.ToString(CultureInfo.InvariantCulture), "Recommended max concurrent brains.");
+        UpdateMetricSummary(BasicsMetricId.ReproductionRunsObserved, plan.Capacity.RecommendedReproductionRunCount.ToString(CultureInfo.InvariantCulture), "Recommended runs per parent pair.");
+        UpdateMetricSummary(BasicsMetricId.SpeciesCount, plan.SeedTemplate.ExpectSingleBootstrapSpecies ? "1 seed family" : "multiple", "Bootstrap template-family expectation.");
+        UpdateMetricSummary(BasicsMetricId.CapacityUtilization, plan.Capacity.CapacityScore.ToString("0.###", CultureInfo.InvariantCulture), plan.Capacity.Source.ToString());
+        RaiseCommandStates();
+    }
+
+    private void RefreshValidationState()
+    {
+        var errors = new List<string>();
+        TryBuildRuntimeClientOptions(out _, out var runtimeErrors);
+        errors.AddRange(runtimeErrors);
+        TryBuildEnvironmentOptions(out _, out var optionErrors);
+        errors.AddRange(optionErrors);
+        ApplyValidationMessages(errors);
+        RaiseCommandStates();
+    }
+
+    private void ApplyValidationMessages(IReadOnlyCollection<string> errors)
+    {
+        ValidationErrors.Clear();
+        foreach (var error in errors)
+        {
+            ValidationErrors.Add(error);
+        }
+
+        ValidationSummary = errors.Count == 0
+            ? "Configuration valid."
+            : $"{errors.Count} validation issue(s) blocking plan/build actions.";
+    }
+
+    private bool CanConnect()
+    {
+        return TryBuildRuntimeClientOptions(out _, out _)
+               && !string.IsNullOrWhiteSpace(ClientName);
+    }
+
+    private bool CanBuildPlan()
+    {
+        return _runtimeClient is not null
+               && TryBuildEnvironmentOptions(out _, out _);
+    }
+
+    private void RaiseCommandStates()
+    {
+        ConnectCommand.RaiseCanExecuteChanged();
+        DisconnectCommand.RaiseCanExecuteChanged();
+        FetchCapacityCommand.RaiseCanExecuteChanged();
+        ApplySuggestedBoundsCommand.RaiseCanExecuteChanged();
+    }
+
+    private bool TryBuildRuntimeClientOptions(
+        out BasicsRuntimeClientOptions options,
+        out List<string> errors)
+    {
+        errors = new List<string>();
+        options = new BasicsRuntimeClientOptions();
+
+        if (string.IsNullOrWhiteSpace(IoAddress))
+        {
+            errors.Add("IO address is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(IoGatewayName))
+        {
+            errors.Add("IO gateway name is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(ClientName))
+        {
+            errors.Add("Client name is required.");
+        }
+
+        if (!int.TryParse(PortText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port) || port <= 0)
+        {
+            errors.Add("Bind port must be a positive integer.");
+        }
+
+        int? advertisePort = null;
+        if (!string.IsNullOrWhiteSpace(AdvertisePortText))
+        {
+            if (!int.TryParse(AdvertisePortText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedAdvertisePort) || parsedAdvertisePort <= 0)
+            {
+                errors.Add("Advertise port must be empty or a positive integer.");
+            }
+            else
+            {
+                advertisePort = parsedAdvertisePort;
+            }
+        }
+
+        if (!double.TryParse(RequestTimeoutSecondsText, NumberStyles.Float, CultureInfo.InvariantCulture, out var requestTimeoutSeconds) || requestTimeoutSeconds <= 0d)
+        {
+            errors.Add("Request timeout must be a positive number of seconds.");
+        }
+
+        if (errors.Count != 0)
+        {
+            return false;
+        }
+
+        options = new BasicsRuntimeClientOptions
+        {
+            IoAddress = IoAddress.Trim(),
+            IoGatewayName = IoGatewayName.Trim(),
+            BindHost = string.IsNullOrWhiteSpace(BindHost) ? NetworkAddressDefaults.DefaultBindHost : BindHost.Trim(),
+            Port = port,
+            AdvertiseHost = string.IsNullOrWhiteSpace(AdvertiseHost) ? null : AdvertiseHost.Trim(),
+            AdvertisePort = advertisePort,
+            RequestTimeout = TimeSpan.FromSeconds(requestTimeoutSeconds)
+        };
+        return true;
+    }
+
+    private bool TryBuildEnvironmentOptions(
+        out BasicsEnvironmentOptions options,
+        out List<string> errors)
+    {
+        errors = new List<string>();
+        options = new BasicsEnvironmentOptions();
+
+        var templateDefinition = TryBuildTemplateArtifact(out var templateErrors);
+        errors.AddRange(templateErrors);
+
+        var variation = new BasicsSeedVariationBand
+        {
+            MaxInternalNeuronDelta = ParseRequiredInt(MaxInternalNeuronDeltaText, "Internal neuron delta", errors),
+            MaxAxonDelta = ParseRequiredInt(MaxAxonDeltaText, "Axon delta", errors),
+            MaxStrengthCodeDelta = ParseRequiredInt(MaxStrengthCodeDeltaText, "Strength-code delta", errors),
+            MaxParameterCodeDelta = ParseRequiredInt(MaxParameterCodeDeltaText, "Parameter-code delta", errors),
+            AllowFunctionMutation = AllowFunctionMutation,
+            AllowAxonReroute = AllowAxonReroute,
+            AllowRegionSetChange = AllowRegionSetChange
+        };
+
+        var overrides = new BasicsSizingOverrides
+        {
+            InitialPopulationCount = ParseOptionalInt(InitialPopulationOverrideText, "Initial population override", errors),
+            ReproductionRunCount = ParseOptionalUInt(ReproductionRunCountOverrideText, "Run-count override", errors),
+            MaxConcurrentBrains = ParseOptionalInt(MaxConcurrentBrainsOverrideText, "Max-concurrent override", errors)
+        };
+
+        var scheduling = new BasicsReproductionSchedulingPolicy
+        {
+            ParentSelection = new BasicsParentSelectionPolicy
+            {
+                FitnessWeight = ParseRequiredDouble(FitnessWeightText, "Fitness weight", errors),
+                DiversityWeight = ParseRequiredDouble(DiversityWeightText, "Diversity weight", errors),
+                SpeciesBalanceWeight = ParseRequiredDouble(SpeciesBalanceWeightText, "Species-balance weight", errors),
+                EliteFraction = ParseRequiredDouble(EliteFractionText, "Elite fraction", errors),
+                ExplorationFraction = ParseRequiredDouble(ExplorationFractionText, "Exploration fraction", errors),
+                MaxParentsPerSpecies = ParseRequiredInt(MaxParentsPerSpeciesText, "Max parents per species", errors)
+            },
+            RunAllocation = new BasicsRunAllocationPolicy
+            {
+                MinRunsPerPair = ParseRequiredUInt(MinRunsPerPairText, "Min runs per pair", errors),
+                MaxRunsPerPair = ParseRequiredUInt(MaxRunsPerPairText, "Max runs per pair", errors),
+                FitnessExponent = ParseRequiredDouble(FitnessExponentText, "Fitness exponent", errors),
+                DiversityBoost = ParseRequiredDouble(DiversityBoostText, "Diversity boost", errors)
+            }
+        };
+
+        var seedTemplate = new BasicsSeedTemplateContract
+        {
+            TemplateId = TemplateId.Trim(),
+            Description = TemplateDescription.Trim(),
+            TemplateDefinition = templateDefinition,
+            InitialVariationBand = variation
+        };
+
+        options = new BasicsEnvironmentOptions
+        {
+            ClientName = ClientName.Trim(),
+            SeedTemplate = seedTemplate,
+            SizingOverrides = overrides,
+            Reproduction = new BasicsReproductionPolicy
+            {
+                StrengthSource = SelectedStrengthSource?.Value ?? Repro.StrengthSource.StrengthBaseOnly
+            },
+            Scheduling = scheduling
+        };
+
+        var validation = options.Validate();
+        if (!validation.IsValid)
+        {
+            errors.AddRange(validation.Errors);
+        }
+
+        return errors.Count == 0;
+    }
+
+    private ArtifactRef? TryBuildTemplateArtifact(out List<string> errors)
+    {
+        errors = new List<string>();
+        if (string.IsNullOrWhiteSpace(TemplateArtifactSha256)
+            && string.IsNullOrWhiteSpace(TemplateArtifactSizeBytesText)
+            && string.IsNullOrWhiteSpace(TemplateArtifactStoreUri))
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(TemplateArtifactSha256))
+        {
+            errors.Add("Template artifact SHA-256 is required when any template artifact field is set.");
+            return null;
+        }
+
+        if (!ProtoSha256Extensions.TryFromHex(TemplateArtifactSha256.Trim(), out var sha256))
+        {
+            errors.Add("Template artifact SHA-256 must be a valid 64-character hex value.");
+            return null;
+        }
+
+        ulong sizeBytes = 0;
+        if (!string.IsNullOrWhiteSpace(TemplateArtifactSizeBytesText)
+            && (!ulong.TryParse(TemplateArtifactSizeBytesText, NumberStyles.Integer, CultureInfo.InvariantCulture, out sizeBytes)))
+        {
+            errors.Add("Template artifact size bytes must be empty or a non-negative integer.");
+        }
+
+        var mediaType = string.IsNullOrWhiteSpace(TemplateArtifactMediaType)
+            ? "application/x-nbn"
+            : TemplateArtifactMediaType.Trim();
+        return sha256.ToArtifactRef(
+            sizeBytes: sizeBytes,
+            mediaType: mediaType,
+            storeUri: string.IsNullOrWhiteSpace(TemplateArtifactStoreUri) ? null : TemplateArtifactStoreUri.Trim());
+    }
+
+    private async Task DisposeRuntimeClientAsync()
+    {
+        if (_runtimeClient is null)
+        {
+            return;
+        }
+
+        var current = _runtimeClient;
+        _runtimeClient = null;
+        await current.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private static int ParseRequiredInt(string text, string fieldName, ICollection<string> errors)
+    {
+        if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            errors.Add($"{fieldName} must be an integer.");
+            return 0;
+        }
+
+        return value;
+    }
+
+    private static uint ParseRequiredUInt(string text, string fieldName, ICollection<string> errors)
+    {
+        if (!uint.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            errors.Add($"{fieldName} must be a positive integer.");
+            return 0;
+        }
+
+        return value;
+    }
+
+    private static double ParseRequiredDouble(string text, string fieldName, ICollection<string> errors)
+    {
+        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            errors.Add($"{fieldName} must be a number.");
+            return 0d;
+        }
+
+        return value;
+    }
+
+    private static int? ParseOptionalInt(string text, string fieldName, ICollection<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            errors.Add($"{fieldName} must be empty or an integer.");
+            return null;
+        }
+
+        return value;
+    }
+
+    private static uint? ParseOptionalUInt(string text, string fieldName, ICollection<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        if (!uint.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            errors.Add($"{fieldName} must be empty or a positive integer.");
+            return null;
+        }
+
+        return value;
+    }
+
+    private void UpdateMetricSummary(BasicsMetricId metricId, string value, string detail)
+    {
+        var item = MetricSummaries.FirstOrDefault(entry => entry.MetricId == metricId);
+        if (item is null)
+        {
+            return;
+        }
+
+        item.ValueText = value;
+        item.DetailText = detail;
+    }
+
+    private static IEnumerable<TaskOption> BuildTasks()
+    {
+        yield return new TaskOption("and", "AND", "Plugin pending");
+        yield return new TaskOption("or", "OR", "Plugin pending");
+        yield return new TaskOption("xor", "XOR", "Plugin pending");
+        yield return new TaskOption("gt", "GT", "Plugin pending");
+        yield return new TaskOption("multiplication", "Multiplication", "Plugin pending");
+        yield return new TaskOption("denoise", "Noisy in → clean out", "Plugin pending");
+        yield return new TaskOption("delay", "Delayed out", "Plugin pending");
+        yield return new TaskOption("one-hot", "One-hot classifier", "Viability pending");
+    }
+
+    private static IEnumerable<StrengthSourceOption> BuildStrengthSources()
+    {
+        yield return new StrengthSourceOption(Repro.StrengthSource.StrengthBaseOnly, "Base definition only");
+        yield return new StrengthSourceOption(Repro.StrengthSource.StrengthLiveCodes, "Base + live overlay codes");
+    }
+
+    private static IEnumerable<MetricSummaryItemViewModel> BuildMetricSummaryItems()
+    {
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.Accuracy, "Accuracy", "—", "No runtime samples yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestFitness, "Best fitness", "—", "No runtime samples yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.MeanFitness, "Mean fitness", "—", "No runtime samples yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.PopulationCount, "Population", "—", "Plan-derived once capacity is fetched.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.ActiveBrainCount, "Active brains", "—", "Plan-derived once capacity is fetched.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.SpeciesCount, "Species", "1 seed family", "Template-anchored bootstrap assumption.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.ReproductionCalls, "Reproduction calls", "—", "No runtime samples yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.ReproductionRunsObserved, "Runs per pair", "—", "Plan-derived once capacity is fetched.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.CapacityUtilization, "Capacity score", "—", "Filled from IO capacity planning.");
+    }
+}
+
+public sealed record TaskOption(string TaskId, string DisplayName, string StatusText);
+
+public sealed record StrengthSourceOption(Repro.StrengthSource Value, string DisplayName);
+
+public sealed class MetricSummaryItemViewModel : ViewModelBase
+{
+    private string _valueText;
+    private string _detailText;
+
+    public MetricSummaryItemViewModel(BasicsMetricId metricId, string displayName, string valueText, string detailText)
+    {
+        MetricId = metricId;
+        DisplayName = displayName;
+        _valueText = valueText;
+        _detailText = detailText;
+    }
+
+    public BasicsMetricId MetricId { get; }
+
+    public string DisplayName { get; }
+
+    public string ValueText
+    {
+        get => _valueText;
+        set => SetProperty(ref _valueText, value);
+    }
+
+    public string DetailText
+    {
+        get => _detailText;
+        set => SetProperty(ref _detailText, value);
+    }
+}

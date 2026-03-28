@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Nbn.Demos.Basics.Environment</RootNamespace>
     <AssemblyName>Nbn.Demos.Basics.Environment</AssemblyName>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>

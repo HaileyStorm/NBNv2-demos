@@ -5,6 +5,7 @@
 ## Current Scope
 
 - A shared environment library in `src/Basics.Environment`.
+- A small Avalonia desktop UI in `src/Basics.Ui`.
 - A test project in `tests/Basics.Environment.Tests`.
 - A template-anchored seed-population contract: initial brains are exact-template or bounded minor deviations, not unconstrained random topologies.
 - IO-only runtime plumbing for environment work. Capacity sizing is intended to come through IO, not direct SettingsMonitor calls by the demo.
@@ -25,6 +26,7 @@
 
 - `Basics.sln`: local solution for the Basics demo.
 - `src/Basics.Environment`: shared environment contract, sizing heuristics, runtime client, and planner.
+- `src/Basics.Ui`: small operator UI for connection/configuration, capacity fetch, task selection, scheduling settings, and metric surfaces.
 - `tests/Basics.Environment.Tests`: contract and planner tests.
 
 ## Runtime Dependency
@@ -35,7 +37,8 @@
 
 ```bash
 cd /home/hailey/AI/NBNv2-demos/Basics
+dotnet build Basics.sln -c Release
 dotnet test Basics.sln -c Release --no-restore
 ```
 
-Later issues will add the small UI and the per-task scoring plugins on top of this shared environment.
+Later issues will flesh out the per-task scoring plugins, live metric feeds, and the remaining operator workflows on top of this shared environment and UI shell.

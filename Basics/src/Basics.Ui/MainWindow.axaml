@@ -1,0 +1,488 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:Nbn.Demos.Basics.Ui.ViewModels"
+        mc:Ignorable="d"
+        x:Class="Nbn.Demos.Basics.Ui.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Width="1320"
+        Height="980"
+        MinWidth="1120"
+        MinHeight="820"
+        Title="Basics UI"
+        Background="#F5F1E8">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+        <Grid RowDefinitions="Auto,*" Margin="24">
+            <Border Grid.Row="0"
+                    Background="#132033"
+                    CornerRadius="18"
+                    Padding="20"
+                    Margin="0,0,0,18">
+                <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Basics"
+                                   FontSize="28"
+                                   FontWeight="SemiBold"
+                                   Foreground="#F7F2E7" />
+                        <TextBlock Text="Shared configuration and metrics UI for the template-seeded 2→1 Basics environment."
+                                   Foreground="#D5C9B5"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Border Grid.Column="1"
+                            Background="#1D314E"
+                            CornerRadius="12"
+                            Padding="14,10"
+                            MinWidth="280">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Connection"
+                                       Foreground="#D5C9B5"
+                                       FontSize="12" />
+                            <TextBlock Text="{Binding ConnectionStatus}"
+                                       FontWeight="SemiBold"
+                                       Foreground="#F7F2E7"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding CapacityStatus}"
+                                       Foreground="#D5C9B5"
+                                       FontSize="12"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="1"
+                  ColumnDefinitions="1.3*,1*"
+                  RowDefinitions="Auto,Auto,Auto,*"
+                  ColumnSpacing="18"
+                  RowSpacing="18">
+                <Border Grid.Row="0"
+                        Grid.Column="0"
+                        Background="#FFFDFC"
+                        BorderBrush="#D9D0C2"
+                        BorderThickness="1"
+                        CornerRadius="16"
+                        Padding="18">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Connection"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Foreground="#182436" />
+                        <Grid ColumnDefinitions="Auto,*"
+                              RowDefinitions="Auto,Auto,Auto,Auto"
+                              ColumnSpacing="12"
+                              RowSpacing="10">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="IO address" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding IoAddress}" Watermark="127.0.0.1:12020" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Gateway name" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding IoGatewayName}" Watermark="io-gateway" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Client name" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ClientName}" Watermark="nbn.basics.ui" />
+
+                            <Grid Grid.Row="3"
+                                  Grid.ColumnSpan="2"
+                                  ColumnDefinitions="Auto,120,Auto,120,Auto,120"
+                                  ColumnSpacing="10">
+                                <TextBlock Grid.Column="0" Text="Bind host" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" Text="{Binding BindHost}" />
+                                <TextBlock Grid.Column="2" Text="Port" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="3" Text="{Binding PortText}" />
+                                <TextBlock Grid.Column="4" Text="Timeout (s)" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="5" Text="{Binding RequestTimeoutSecondsText}" />
+                            </Grid>
+                        </Grid>
+
+                        <Expander Header="Optional Operator Endpoints"
+                                  IsExpanded="False">
+                            <Grid Margin="0,10,0,0"
+                                  ColumnDefinitions="Auto,*"
+                                  RowDefinitions="Auto,Auto"
+                                  ColumnSpacing="12"
+                                  RowSpacing="10">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Settings address" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding OptionalSettingsAddress}" Watermark="optional" />
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Settings actor" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding OptionalSettingsActorName}" />
+                            </Grid>
+                        </Expander>
+
+                        <Grid ColumnDefinitions="Auto,Auto,*"
+                              ColumnSpacing="12">
+                            <Button Grid.Column="0"
+                                    Content="Connect"
+                                    Command="{Binding ConnectCommand}"
+                                    MinWidth="120" />
+                            <Button Grid.Column="1"
+                                    Content="Disconnect"
+                                    Command="{Binding DisconnectCommand}"
+                                    MinWidth="120" />
+                            <TextBlock Grid.Column="2"
+                                       VerticalAlignment="Center"
+                                       Text="{Binding ValidationSummary}"
+                                       Foreground="#7A5E2C"
+                                       TextWrapping="Wrap" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="0"
+                        Grid.Column="1"
+                        Background="#FFFDFC"
+                        BorderBrush="#D9D0C2"
+                        BorderThickness="1"
+                        CornerRadius="16"
+                        Padding="18">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Task + Seed Family"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Foreground="#182436" />
+                        <Grid ColumnDefinitions="Auto,*"
+                              RowDefinitions="Auto,Auto,Auto,Auto"
+                              ColumnSpacing="12"
+                              RowSpacing="10">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Task" VerticalAlignment="Center" />
+                            <ComboBox Grid.Row="0" Grid.Column="1"
+                                      ItemsSource="{Binding Tasks}"
+                                      SelectedItem="{Binding SelectedTask}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:TaskOption">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding DisplayName}" />
+                                            <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="#6C7A89" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Template ID" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TemplateId}" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Description" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="1"
+                                     Text="{Binding TemplateDescription}"
+                                     AcceptsReturn="True"
+                                     Height="72"
+                                     TextWrapping="Wrap" />
+
+                            <Grid Grid.Row="3"
+                                  Grid.ColumnSpan="2"
+                                  ColumnDefinitions="Auto,Auto,Auto,Auto"
+                                  ColumnSpacing="16">
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="Input width" FontSize="12" Foreground="#6C7A89" />
+                                    <TextBlock Text="{Binding InputWidthDisplay}" FontWeight="SemiBold" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="Output width" FontSize="12" Foreground="#6C7A89" />
+                                    <TextBlock Text="{Binding OutputWidthDisplay}" FontWeight="SemiBold" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="Bootstrap species" FontSize="12" Foreground="#6C7A89" />
+                                    <TextBlock Text="{Binding ExpectSingleBootstrapSpeciesDisplay}" FontWeight="SemiBold" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="3">
+                                    <TextBlock Text="Off-template seeds" FontSize="12" Foreground="#6C7A89" />
+                                    <TextBlock Text="{Binding AllowOffTemplateSeedsDisplay}" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+
+                        <Expander Header="Optional Template Artifact"
+                                  IsExpanded="False">
+                            <Grid Margin="0,10,0,0"
+                                  ColumnDefinitions="Auto,*"
+                                  RowDefinitions="Auto,Auto,Auto,Auto"
+                                  ColumnSpacing="12"
+                                  RowSpacing="10">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="SHA-256" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding TemplateArtifactSha256}" Watermark="64-char hex" />
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Media type" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TemplateArtifactMediaType}" />
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Size bytes" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TemplateArtifactSizeBytesText}" />
+                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Store URI" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding TemplateArtifactStoreUri}" />
+                            </Grid>
+                        </Expander>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Grid.Column="0"
+                        Background="#FFFDFC"
+                        BorderBrush="#D9D0C2"
+                        BorderThickness="1"
+                        CornerRadius="16"
+                        Padding="18">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Template Divergence"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Foreground="#182436" />
+                        <Grid ColumnDefinitions="Auto,120,Auto,120"
+                              RowDefinitions="Auto,Auto,Auto"
+                              ColumnSpacing="12"
+                              RowSpacing="10">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Internal neuron delta" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MaxInternalNeuronDeltaText}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Axon delta" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding MaxAxonDeltaText}" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Strength-code delta" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MaxStrengthCodeDeltaText}" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Param-code delta" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding MaxParameterCodeDeltaText}" />
+
+                            <CheckBox Grid.Row="2" Grid.Column="0" Content="Allow function mutation" IsChecked="{Binding AllowFunctionMutation}" />
+                            <CheckBox Grid.Row="2" Grid.Column="1" Content="Allow axon reroute" IsChecked="{Binding AllowAxonReroute}" />
+                            <CheckBox Grid.Row="2" Grid.Column="2" Content="Allow region-set change" IsChecked="{Binding AllowRegionSetChange}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Grid.Column="1"
+                        Background="#FFFDFC"
+                        BorderBrush="#D9D0C2"
+                        BorderThickness="1"
+                        CornerRadius="16"
+                        Padding="18">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Capacity + Bounds"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Foreground="#182436" />
+                        <TextBlock Text="{Binding CapacitySummary}"
+                                   TextWrapping="Wrap"
+                                   Foreground="#425466" />
+                        <Grid ColumnDefinitions="Auto,110,Auto,110"
+                              RowDefinitions="Auto,Auto,Auto"
+                              ColumnSpacing="12"
+                              RowSpacing="10">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Initial population" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding InitialPopulationOverrideText}" Watermark="auto" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding RecommendedInitialPopulationText}" VerticalAlignment="Center" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Run count" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ReproductionRunCountOverrideText}" Watermark="auto" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding RecommendedRunCountText}" VerticalAlignment="Center" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Max concurrent" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxConcurrentBrainsOverrideText}" Watermark="auto" />
+                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding RecommendedMaxConcurrentBrainsText}" VerticalAlignment="Center" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,Auto,*"
+                              ColumnSpacing="12">
+                            <Button Grid.Column="0"
+                                    Content="Fetch Capacity"
+                                    Command="{Binding FetchCapacityCommand}"
+                                    MinWidth="130" />
+                            <Button Grid.Column="1"
+                                    Content="Apply Suggested Bounds"
+                                    Command="{Binding ApplySuggestedBoundsCommand}"
+                                    MinWidth="180" />
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding LastPlanSummary}"
+                                       TextWrapping="Wrap"
+                                       VerticalAlignment="Center"
+                                       Foreground="#425466" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="2"
+                        Grid.Column="0"
+                        Background="#FFFDFC"
+                        BorderBrush="#D9D0C2"
+                        BorderThickness="1"
+                        CornerRadius="16"
+                        Padding="18">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Reproduction + Speciation Scheduling"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Foreground="#182436" />
+                        <Grid ColumnDefinitions="Auto,140,Auto,140,Auto,140"
+                              RowDefinitions="Auto,Auto,Auto"
+                              ColumnSpacing="12"
+                              RowSpacing="10">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Strength source" VerticalAlignment="Center" />
+                            <ComboBox Grid.Row="0" Grid.Column="1"
+                                      ItemsSource="{Binding StrengthSources}"
+                                      SelectedItem="{Binding SelectedStrengthSource}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:StrengthSourceOption">
+                                        <TextBlock Text="{Binding DisplayName}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Protect IO neurons" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding ProtectIoRegionNeuronCountsDisplay}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="0" Grid.Column="4" Text="Max parents/species" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="5" Text="{Binding MaxParentsPerSpeciesText}" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Fitness weight" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FitnessWeightText}" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Diversity weight" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding DiversityWeightText}" />
+                            <TextBlock Grid.Row="1" Grid.Column="4" Text="Species-balance" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding SpeciesBalanceWeightText}" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Elite fraction" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding EliteFractionText}" />
+                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Exploration" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding ExplorationFractionText}" />
+                            <TextBlock Grid.Row="2" Grid.Column="4" Text="Fitness exponent" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="5" Text="{Binding FitnessExponentText}" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,120,Auto,120,Auto,120"
+                              ColumnSpacing="12">
+                            <TextBlock Grid.Column="0" Text="Min runs/pair" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Text="{Binding MinRunsPerPairText}" />
+                            <TextBlock Grid.Column="2" Text="Max runs/pair" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="3" Text="{Binding MaxRunsPerPairText}" />
+                            <TextBlock Grid.Column="4" Text="Diversity boost" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="5" Text="{Binding DiversityBoostText}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="2"
+                        Grid.Column="1"
+                        Background="#FFFDFC"
+                        BorderBrush="#D9D0C2"
+                        BorderThickness="1"
+                        CornerRadius="16"
+                        Padding="18">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Validation"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Foreground="#182436" />
+                        <TextBlock Text="{Binding ValidationSummary}"
+                                   TextWrapping="Wrap"
+                                   Foreground="#7A5E2C" />
+                        <ItemsControl ItemsSource="{Binding ValidationErrors}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding .}"
+                                               TextWrapping="Wrap"
+                                               Foreground="#8B3B2E" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="3"
+                        Grid.ColumnSpan="2"
+                        Background="#FFFDFC"
+                        BorderBrush="#D9D0C2"
+                        BorderThickness="1"
+                        CornerRadius="16"
+                        Padding="18">
+                    <Grid ColumnDefinitions="1.2*,1.2*,1*"
+                          ColumnSpacing="18">
+                        <StackPanel Grid.Column="0" Spacing="10">
+                            <TextBlock Text="Accuracy Over Time"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Foreground="#182436" />
+                            <Border BorderBrush="#D9D0C2"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Padding="8"
+                                    Background="#FBF8F1"
+                                    Height="180">
+                                <Grid>
+                                    <Canvas IsVisible="{Binding HasAccuracyChartData}">
+                                        <Polyline Points="{Binding AccuracyChartPoints}"
+                                                  Stroke="#0E7490"
+                                                  StrokeThickness="2" />
+                                    </Canvas>
+                                    <TextBlock IsVisible="{Binding ShowAccuracyEmptyState}"
+                                               Text="No runtime accuracy samples yet."
+                                               Foreground="#6C7A89"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                            <TextBlock Text="{Binding MetricsStatus}"
+                                       Foreground="#425466"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Spacing="10">
+                            <TextBlock Text="Best Fitness Over Time"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Foreground="#182436" />
+                            <Border BorderBrush="#D9D0C2"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Padding="8"
+                                    Background="#FBF8F1"
+                                    Height="180">
+                                <Grid>
+                                    <Canvas IsVisible="{Binding HasFitnessChartData}">
+                                        <Polyline Points="{Binding FitnessChartPoints}"
+                                                  Stroke="#A16207"
+                                                  StrokeThickness="2" />
+                                    </Canvas>
+                                    <TextBlock IsVisible="{Binding ShowFitnessEmptyState}"
+                                               Text="No runtime fitness samples yet."
+                                               Foreground="#6C7A89"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                            <TextBlock Text="{Binding MetricsSecondaryStatus}"
+                                       Foreground="#425466"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2" Spacing="10">
+                            <TextBlock Text="Metric Summary"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Foreground="#182436" />
+                            <ItemsControl ItemsSource="{Binding MetricSummaries}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:MetricSummaryItemViewModel">
+                                        <Border Margin="0,0,0,8"
+                                                Background="#FBF8F1"
+                                                BorderBrush="#E5DECF"
+                                                BorderThickness="1"
+                                                CornerRadius="10"
+                                                Padding="10">
+                                            <StackPanel Spacing="4">
+                                                <TextBlock Text="{Binding DisplayName}"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="#182436" />
+                                                <TextBlock Text="{Binding ValueText}"
+                                                           FontSize="20"
+                                                           Foreground="#182436" />
+                                                <TextBlock Text="{Binding DetailText}"
+                                                           FontSize="12"
+                                                           Foreground="#6C7A89"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </ScrollViewer>
+</Window>
