@@ -73,7 +73,7 @@
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="IO address" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding IoAddress}" Watermark="127.0.0.1:12020" />
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding IoAddress}" Watermark="127.0.0.1:12050" />
 
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Gateway name" VerticalAlignment="Center" />
                             <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding IoGatewayName}" Watermark="io-gateway" />

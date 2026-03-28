@@ -41,7 +41,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private BasicsEnvironmentPlan? _lastPlan;
     private bool _suppressValidationRefresh;
 
-    private string _ioAddress = "127.0.0.1:12020";
+    private string _ioAddress = "127.0.0.1:12050";
     private string _ioGatewayName = "io-gateway";
     private string _clientName = "nbn.basics.ui";
     private string _bindHost = NetworkAddressDefaults.DefaultBindHost;

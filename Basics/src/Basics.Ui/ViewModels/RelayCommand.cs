@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using System.Windows.Input;
 
 namespace Nbn.Demos.Basics.Ui.ViewModels;
@@ -19,7 +20,16 @@ public sealed class RelayCommand : ICommand
 
     public void Execute(object? parameter) => _execute();
 
-    public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    public void RaiseCanExecuteChanged()
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => CanExecuteChanged?.Invoke(this, EventArgs.Empty));
+    }
 }
 
 public sealed class AsyncRelayCommand : ICommand
@@ -49,7 +59,7 @@ public sealed class AsyncRelayCommand : ICommand
         {
             _isExecuting = true;
             RaiseCanExecuteChanged();
-            await _execute().ConfigureAwait(false);
+            await _execute();
         }
         finally
         {
@@ -58,5 +68,14 @@ public sealed class AsyncRelayCommand : ICommand
         }
     }
 
-    public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    public void RaiseCanExecuteChanged()
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => CanExecuteChanged?.Invoke(this, EventArgs.Empty));
+    }
 }
