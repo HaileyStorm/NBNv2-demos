@@ -10,7 +10,9 @@ namespace Nbn.Demos.Basics.Environment;
 public sealed class BasicsExecutionSession : IAsyncDisposable
 {
     private static readonly TimeSpan EvaluationOutputTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
     private static readonly IReadOnlyList<float> PrimeInputVector = new[] { 0f, 0f };
+    private const int MaxObservationAttempts = 3;
 
     private readonly IBasicsRuntimeClient _runtimeClient;
     private readonly BasicsTemplatePublishingOptions _publishingOptions;
@@ -42,6 +44,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
 
         BasicsResolvedSeedShape? seedShape = null;
         ArtifactRef? effectiveTemplateDefinition = null;
+        ulong? speciationEpochId = null;
         var accuracyHistory = new List<float>();
         var fitnessHistory = new List<float>();
         ulong reproductionCalls = 0;
@@ -52,6 +55,9 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
             BasicsExecutionState.Starting,
             statusText: "Starting Basics session...",
             detailText: $"Preparing template-seeded {plan.SelectedTask.DisplayName} population.",
+            speciationEpochId: speciationEpochId,
+            evaluationFailureCount: 0,
+            evaluationFailureSummary: string.Empty,
             generation: 0,
             populationCount: 0,
             activeBrainCount: 0,
@@ -79,6 +85,9 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 BasicsExecutionState.Starting,
                 statusText: "Preparing speciation epoch...",
                 detailText: "Starting a fresh speciation epoch for this Basics run.",
+                speciationEpochId: speciationEpochId,
+                evaluationFailureCount: 0,
+                evaluationFailureSummary: string.Empty,
                 generation: 0,
                 populationCount: 0,
                 activeBrainCount: 0,
@@ -94,7 +103,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 bestCandidate: null,
                 accuracyHistory,
                 fitnessHistory);
-            await EnsureFreshSpeciationEpochAsync(cancellationToken).ConfigureAwait(false);
+            speciationEpochId = await EnsureFreshSpeciationEpochAsync(cancellationToken).ConfigureAwait(false);
             await ConfigureOutputObservationModeAsync(plan.OutputObservationMode, cancellationToken).ConfigureAwait(false);
 
             var targetPopulation = Math.Max(1, plan.Capacity.RecommendedInitialPopulationCount);
@@ -112,6 +121,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                     BasicsExecutionState.Failed,
                     "Execution failed.",
                     "The initial template population could not be seeded.",
+                    speciationEpochId,
                     0,
                     Array.Empty<PopulationMember>(),
                     0,
@@ -133,6 +143,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                         generation,
                         population,
                         plan.OutputObservationMode,
+                        speciationEpochId,
                         effectiveTemplateDefinition,
                         seedShape,
                         reproductionCalls,
@@ -151,6 +162,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                     BasicsExecutionState.Running,
                     $"Generation {generation} evaluated.",
                     BuildGenerationDetail(generation, generationMetrics),
+                    speciationEpochId,
                     generation,
                     population,
                     activeBrainCount: 0,
@@ -169,6 +181,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                         BasicsExecutionState.Succeeded,
                         "Execution reached a perfect candidate.",
                         $"Generation {generation} achieved perfect {taskPlugin.Contract.DisplayName} accuracy.",
+                        speciationEpochId,
                         generation,
                         population,
                         0,
@@ -191,6 +204,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                                 BasicsExecutionState.Running,
                                 $"Breeding generation {generation + 1}...",
                                 detail,
+                                speciationEpochId,
                                 generation,
                                 population,
                                 activePopulationCount,
@@ -215,6 +229,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                         BasicsExecutionState.Failed,
                         "Execution failed.",
                         $"Generation {generation} could not produce a successor population.",
+                        speciationEpochId,
                         generation,
                         population,
                         0,
@@ -234,6 +249,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 BasicsExecutionState.Stopped,
                 "Execution stopped.",
                 "The run was canceled by the operator.",
+                speciationEpochId,
                 accuracyHistory.Count,
                 population,
                 0,
@@ -251,6 +267,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 BasicsExecutionState.Stopped,
                 "Execution stopped.",
                 "The run was canceled by the operator.",
+                speciationEpochId,
                 accuracyHistory.Count,
                 Array.Empty<PopulationMember>(),
                 0,
@@ -268,6 +285,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 BasicsExecutionState.Failed,
                 "Execution failed.",
                 ex.GetBaseException().Message,
+                speciationEpochId,
                 accuracyHistory.Count,
                 Array.Empty<PopulationMember>(),
                 0,
@@ -282,7 +300,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
 
     public ValueTask DisposeAsync() => _artifactPublisher.DisposeAsync();
 
-    private async Task EnsureFreshSpeciationEpochAsync(CancellationToken cancellationToken)
+    private async Task<ulong> EnsureFreshSpeciationEpochAsync(CancellationToken cancellationToken)
     {
         var current = await _runtimeClient.GetSpeciationConfigAsync(cancellationToken).ConfigureAwait(false);
         if (current is null)
@@ -315,6 +333,16 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
             throw new InvalidOperationException(
                 $"Speciation epoch start failed: {updated.FailureReason} {updated.FailureDetail}".Trim());
         }
+
+        var previousEpochId = current.CurrentEpoch?.EpochId ?? 0UL;
+        var currentEpochId = updated.CurrentEpoch?.EpochId ?? 0UL;
+        if (currentEpochId == 0UL || currentEpochId <= previousEpochId)
+        {
+            throw new InvalidOperationException(
+                $"Speciation epoch did not advance (previous={previousEpochId}, current={currentEpochId}).");
+        }
+
+        return currentEpochId;
     }
 
     private async Task ConfigureOutputObservationModeAsync(
@@ -445,6 +473,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
         int generation,
         IReadOnlyList<PopulationMember> population,
         BasicsOutputObservationMode outputObservationMode,
+        ulong? speciationEpochId,
         ArtifactRef? effectiveTemplateDefinition,
         BasicsResolvedSeedShape? seedShape,
         ulong reproductionCalls,
@@ -467,6 +496,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 BasicsExecutionState.Running,
                 $"Evaluating generation {generation}...",
                 $"Batch {chunkIndex + 1}/{chunkCount} with {batch.Length} active brain(s).",
+                speciationEpochId,
                 generation,
                 evaluated.Concat(batch).ToArray(),
                 activeBrainCount: batch.Length,
@@ -555,49 +585,24 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
 
             foreach (var sample in samples)
             {
-                await _runtimeClient.SendInputVectorAsync(
+                var observation = await ObserveSampleAsync(
                         brainId,
-                        new[] { sample.InputA, sample.InputB },
+                        sample,
+                        lastTick,
+                        outputObservationMode,
+                        taskPlugin.Contract.OutputWidth,
                         cancellationToken)
                     .ConfigureAwait(false);
-                if (outputObservationMode.UsesVectorSubscription())
+                if (observation is null)
                 {
-                    var output = await _runtimeClient.WaitForOutputVectorAsync(
-                            brainId,
-                            lastTick,
-                            EvaluationOutputTimeout,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                    if (output is null || output.Values.Count < taskPlugin.Contract.OutputWidth)
+                    return member with
                     {
-                        return member with
-                        {
-                            LastEvaluation = CreateTransportFailure("output_timeout_or_width_mismatch")
-                        };
-                    }
+                        LastEvaluation = CreateTransportFailure("output_timeout_or_width_mismatch")
+                    };
+                }
 
-                    observations.Add(new BasicsTaskObservation(output.TickId, output.Values[0]));
-                    lastTick = output.TickId;
-                }
-                else
-                {
-                    var output = await _runtimeClient.WaitForOutputEventAsync(
-                            brainId,
-                            lastTick,
-                            EvaluationOutputTimeout,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                    if (output is null)
-                    {
-                        lastTick++;
-                        observations.Add(new BasicsTaskObservation(lastTick, 0f));
-                    }
-                    else
-                    {
-                        lastTick = Math.Max(lastTick + 1, output.TickId);
-                        observations.Add(new BasicsTaskObservation(lastTick, output.Value));
-                    }
-                }
+                observations.Add(observation.Value);
+                lastTick = observation.Value.TickId;
             }
 
             var evaluation = taskPlugin.Evaluate(
@@ -644,6 +649,60 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 }
             }
         }
+    }
+
+    private async Task<BasicsTaskObservation?> ObserveSampleAsync(
+        Guid brainId,
+        BasicsTaskSample sample,
+        ulong lastTick,
+        BasicsOutputObservationMode outputObservationMode,
+        uint expectedOutputWidth,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; attempt <= MaxObservationAttempts; attempt++)
+        {
+            await _runtimeClient.SendInputVectorAsync(
+                    brainId,
+                    new[] { sample.InputA, sample.InputB },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (outputObservationMode.UsesVectorSubscription())
+            {
+                var output = await _runtimeClient.WaitForOutputVectorAsync(
+                        brainId,
+                        lastTick,
+                        EvaluationOutputTimeout,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (output is not null && output.Values.Count >= expectedOutputWidth)
+                {
+                    return new BasicsTaskObservation(output.TickId, output.Values[0]);
+                }
+            }
+            else
+            {
+                var output = await _runtimeClient.WaitForOutputEventAsync(
+                        brainId,
+                        lastTick,
+                        EvaluationOutputTimeout,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (output is not null)
+                {
+                    return new BasicsTaskObservation(Math.Max(lastTick + 1, output.TickId), output.Value);
+                }
+
+                return new BasicsTaskObservation(lastTick + 1, 0f);
+            }
+
+            if (attempt < MaxObservationAttempts)
+            {
+                await Task.Delay(EvaluationRetryDelay, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return null;
     }
 
     private async Task<List<PopulationMember>> BreedNextGenerationAsync(
@@ -871,6 +930,17 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
 
         var response = await _runtimeClient.AssignSpeciationAsync(request, cancellationToken).ConfigureAwait(false);
         var decision = response?.Decision;
+        if (decision is null)
+        {
+            throw new InvalidOperationException("Speciation assignment returned no decision.");
+        }
+
+        if (!decision.Success && !decision.ImmutableConflict)
+        {
+            throw new InvalidOperationException(
+                $"Speciation assignment failed: {decision.FailureReason} {decision.FailureDetail}".Trim());
+        }
+
         var speciesId = NormalizeSpeciesId(decision?.SpeciesId);
         if (string.IsNullOrWhiteSpace(decision?.SpeciesId) && !string.IsNullOrWhiteSpace(explicitSpeciesId))
         {
@@ -975,6 +1045,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
         BasicsExecutionState state,
         string statusText,
         string detailText,
+        ulong? speciationEpochId,
         int generation,
         IReadOnlyList<PopulationMember> population,
         int activeBrainCount,
@@ -989,6 +1060,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
             state,
             statusText,
             detailText,
+            speciationEpochId,
             generation,
             population,
             activeBrainCount,
@@ -1007,6 +1079,9 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
         BasicsExecutionState state,
         string statusText,
         string detailText,
+        ulong? speciationEpochId,
+        int evaluationFailureCount,
+        string evaluationFailureSummary,
         int generation,
         int populationCount,
         int activeBrainCount,
@@ -1027,6 +1102,9 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
             state,
             statusText,
             detailText,
+            speciationEpochId,
+            evaluationFailureCount,
+            evaluationFailureSummary,
             generation,
             populationCount,
             activeBrainCount,
@@ -1048,6 +1126,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
         BasicsExecutionState state,
         string statusText,
         string detailText,
+        ulong? speciationEpochId,
         int generation,
         IReadOnlyList<PopulationMember> population,
         int activeBrainCount,
@@ -1063,6 +1142,9 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
             state,
             statusText,
             detailText,
+            speciationEpochId,
+            metrics.EvaluationFailureCount,
+            metrics.EvaluationFailureSummary,
             generation,
             population.Count,
             activeBrainCount,
@@ -1090,7 +1172,9 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 MeanFitness: 0f,
                 SpeciesCount: 0,
                 CapacityUtilization: 0f,
-                BestCandidate: null);
+                BestCandidate: null,
+                EvaluationFailureCount: 0,
+                EvaluationFailureSummary: string.Empty);
         }
 
         var evaluated = population.Select(member => member.LastEvaluation ?? CreateTransportFailure("evaluation_missing")).ToArray();
@@ -1105,6 +1189,24 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
         var bestMember = population[bestIndex];
         var bestEvaluation = evaluated[bestIndex];
         var speciesCount = population.Select(member => NormalizeSpeciesId(member.SpeciesId)).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+        var failureDiagnostics = population
+            .SelectMany(member => member.LastEvaluation?.Diagnostics ?? Array.Empty<string>())
+            .Where(static diagnostic => !string.IsNullOrWhiteSpace(diagnostic))
+            .Select(static diagnostic => diagnostic.Trim())
+            .ToArray();
+        var failureCount = population.Count(member => (member.LastEvaluation?.Diagnostics.Count ?? 0) > 0);
+        var failureSummary = string.Empty;
+        if (failureDiagnostics.Length > 0)
+        {
+            var grouped = failureDiagnostics
+                .GroupBy(static diagnostic => diagnostic, StringComparer.Ordinal)
+                .OrderByDescending(group => group.Count())
+                .ThenBy(group => group.Key, StringComparer.Ordinal)
+                .Take(3)
+                .Select(group => $"{group.Key} x{group.Count()}");
+            failureSummary = string.Join("; ", grouped);
+        }
+
         return new GenerationMetrics(
             BestAccuracy: evaluated.Max(candidate => candidate.Accuracy),
             BestFitness: evaluated.Max(candidate => candidate.Fitness),
@@ -1117,12 +1219,20 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 bestEvaluation.Accuracy,
                 bestEvaluation.Fitness,
                 new Dictionary<string, float>(bestEvaluation.ScoreBreakdown, StringComparer.Ordinal),
-                bestEvaluation.Diagnostics.ToArray()));
+                bestEvaluation.Diagnostics.ToArray()),
+            EvaluationFailureCount: failureCount,
+            EvaluationFailureSummary: failureSummary);
     }
 
     private static string BuildGenerationDetail(int generation, GenerationMetrics metrics)
     {
-        return $"Generation {generation}: accuracy={metrics.BestAccuracy:0.###}, best_fitness={metrics.BestFitness:0.###}, mean_fitness={metrics.MeanFitness:0.###}, species={metrics.SpeciesCount}.";
+        var summary = $"Generation {generation}: accuracy={metrics.BestAccuracy:0.###}, best_fitness={metrics.BestFitness:0.###}, mean_fitness={metrics.MeanFitness:0.###}, species={metrics.SpeciesCount}.";
+        if (metrics.EvaluationFailureCount > 0 && !string.IsNullOrWhiteSpace(metrics.EvaluationFailureSummary))
+        {
+            summary += $" Evaluation failures: {metrics.EvaluationFailureSummary}.";
+        }
+
+        return summary;
     }
 
     private static string NormalizeSpeciesId(string? value)
@@ -1136,7 +1246,9 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
         double MeanFitness,
         int SpeciesCount,
         float CapacityUtilization,
-        BasicsExecutionBestCandidateSummary? BestCandidate);
+        BasicsExecutionBestCandidateSummary? BestCandidate,
+        int EvaluationFailureCount,
+        string EvaluationFailureSummary);
 
     private sealed record PopulationMember(
         ArtifactRef Definition,

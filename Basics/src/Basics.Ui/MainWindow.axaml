@@ -252,19 +252,19 @@
                             <TextBlock Grid.Row="0" Grid.ColumnSpan="4" Text="Initial seed-shape bounds" FontWeight="SemiBold" Foreground="#425466" />
 
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Min internal regions" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MinActiveInternalRegionCountText}" Watermark="template" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MinActiveInternalRegionCountText}" Watermark="{Binding MinActiveInternalRegionCountWatermark}" />
                             <TextBlock Grid.Row="1" Grid.Column="2" Text="Max internal regions" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding MaxActiveInternalRegionCountText}" Watermark="template" />
+                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding MaxActiveInternalRegionCountText}" Watermark="{Binding MaxActiveInternalRegionCountWatermark}" />
 
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Min internal neurons" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MinInternalNeuronCountText}" Watermark="template" />
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MinInternalNeuronCountText}" Watermark="{Binding MinInternalNeuronCountWatermark}" />
                             <TextBlock Grid.Row="2" Grid.Column="2" Text="Max internal neurons" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding MaxInternalNeuronCountText}" Watermark="template" />
+                            <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding MaxInternalNeuronCountText}" Watermark="{Binding MaxInternalNeuronCountWatermark}" />
 
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Min axons" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MinAxonCountText}" Watermark="template" />
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MinAxonCountText}" Watermark="{Binding MinAxonCountWatermark}" />
                             <TextBlock Grid.Row="3" Grid.Column="2" Text="Max axons" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding MaxAxonCountText}" Watermark="template" />
+                            <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding MaxAxonCountText}" Watermark="{Binding MaxAxonCountWatermark}" />
 
                             <TextBlock Grid.Row="4" Grid.ColumnSpan="4" Text="Bounded divergence from template" FontWeight="SemiBold" Foreground="#425466" />
 

@@ -332,6 +332,18 @@ public sealed class MainWindowViewModel : ViewModelBase
         set => SetProperty(ref _maxAxonCountText, value);
     }
 
+    public string MinActiveInternalRegionCountWatermark => "1";
+
+    public string MaxActiveInternalRegionCountWatermark => "1";
+
+    public string MinInternalNeuronCountWatermark => "1";
+
+    public string MaxInternalNeuronCountWatermark => "1";
+
+    public string MinAxonCountWatermark => "3";
+
+    public string MaxAxonCountWatermark => "3";
+
     public string InputWidthDisplay => BasicsIoGeometry.InputWidth.ToString(CultureInfo.InvariantCulture);
 
     public string OutputWidthDisplay => BasicsIoGeometry.OutputWidth.ToString(CultureInfo.InvariantCulture);
@@ -1044,10 +1056,32 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
+        var detailLines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(snapshot.DetailText))
+        {
+            detailLines.Add(snapshot.DetailText);
+        }
+
+        if (snapshot.SpeciationEpochId is ulong epochId && epochId > 0)
+        {
+            detailLines.Add($"Speciation epoch {epochId}.");
+        }
+
+        if (snapshot.EvaluationFailureCount > 0 && !string.IsNullOrWhiteSpace(snapshot.EvaluationFailureSummary))
+        {
+            detailLines.Add($"Evaluation failures: {snapshot.EvaluationFailureSummary}");
+        }
+
+        if (snapshot.BestCandidate is not null && snapshot.BestCandidate.Diagnostics.Count > 0)
+        {
+            detailLines.Add($"Best-candidate diagnostics: {string.Join("; ", snapshot.BestCandidate.Diagnostics.Take(3))}");
+        }
+
+        var resolvedDetail = string.Join(" ", detailLines);
         ExecutionStatus = snapshot.StatusText;
-        ExecutionDetail = snapshot.DetailText;
+        ExecutionDetail = resolvedDetail;
         MetricsStatus = snapshot.StatusText;
-        MetricsSecondaryStatus = snapshot.DetailText;
+        MetricsSecondaryStatus = resolvedDetail;
         LastPlanSummary = $"Generation {snapshot.Generation} · population {snapshot.PopulationCount} · species {snapshot.SpeciesCount}.";
 
         ReplaceHistory(_accuracyHistory, snapshot.AccuracyHistory);
@@ -1099,7 +1133,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         UpdateMetricSummary(
             BasicsMetricId.SpeciesCount,
             snapshot.SpeciesCount.ToString(CultureInfo.InvariantCulture),
-            "Current committed speciation memberships in the artifact pool.");
+            snapshot.SpeciationEpochId is ulong currentEpochId && currentEpochId > 0
+                ? $"Current committed speciation memberships in epoch {currentEpochId}."
+                : "Current committed speciation memberships in the artifact pool.");
         UpdateMetricSummary(
             BasicsMetricId.ReproductionCalls,
             snapshot.ReproductionCalls.ToString(CultureInfo.InvariantCulture),
