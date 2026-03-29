@@ -7,7 +7,7 @@ using ProtoSpec = Nbn.Proto.Speciation;
 
 namespace Nbn.Demos.Basics.Environment;
 
-public sealed class BasicsExecutionSession : IAsyncDisposable
+public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 {
     private static readonly TimeSpan EvaluationOutputTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);

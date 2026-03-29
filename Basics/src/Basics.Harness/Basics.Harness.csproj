@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Nbn.Demos.Basics.Harness</RootNamespace>
+    <AssemblyName>Nbn.Demos.Basics.Harness</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Basics.Environment\Basics.Environment.csproj" />
+    <ProjectReference Include="..\Basics.Tasks\Basics.Tasks.csproj" />
+  </ItemGroup>
+
+</Project>

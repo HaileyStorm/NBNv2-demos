@@ -1,0 +1,312 @@
+using Nbn.Demos.Basics.Environment;
+using Nbn.Demos.Basics.Tasks;
+using Nbn.Proto;
+using Nbn.Proto.Control;
+using Nbn.Proto.Io;
+using Nbn.Proto.Speciation;
+using Repro = Nbn.Proto.Repro;
+
+namespace Nbn.Demos.Basics.Environment.Tests;
+
+public sealed class BasicsLiveTrialHarnessTests
+{
+    [Fact]
+    public async Task LiveTrialHarness_StopsAfterRequiredSuccessfulTrials()
+    {
+        var runtimeClients = new List<FakeHarnessRuntimeClient>();
+        var runners = new Queue<ScriptedExecutionRunner>(new[]
+        {
+            new ScriptedExecutionRunner(CreateSuccessfulSnapshots(generation: 3)),
+            new ScriptedExecutionRunner(CreateSuccessfulSnapshots(generation: 4)),
+            new ScriptedExecutionRunner(CreateSuccessfulSnapshots(generation: 5))
+        });
+
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) =>
+            {
+                var client = new FakeHarnessRuntimeClient();
+                runtimeClients.Add(client);
+                return Task.FromResult<IBasicsRuntimeClient>(client);
+            },
+            executionRunnerFactory: (_, _) => runners.Dequeue());
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 5, requiredSuccessfulTrials: 2),
+            new AndTaskPlugin());
+
+        Assert.True(report.StabilityTargetMet);
+        Assert.Equal(2, report.ExecutedTrialCount);
+        Assert.All(report.Trials, static trial => Assert.Equal(BasicsLiveTrialOutcome.Succeeded, trial.Outcome));
+        Assert.Equal(2, runtimeClients.Count);
+        Assert.Equal("nbn.basics.harness.trial01", runtimeClients[0].ConnectedClientName);
+        Assert.Equal("nbn.basics.harness.trial02", runtimeClients[1].ConnectedClientName);
+    }
+
+    [Fact]
+    public async Task LiveTrialHarness_AutoTunesAfterFailures()
+    {
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient()),
+            executionRunnerFactory: (_, _) => new ScriptedExecutionRunner(new[]
+            {
+                CreateSnapshot(
+                    BasicsExecutionState.Running,
+                    statusText: "Evaluating generation 1...",
+                    detailText: "Generation 1 is running.",
+                    generation: 1,
+                    speciesCount: 1,
+                    evaluationFailureCount: 4,
+                    evaluationFailureSummary: "output_timeout_or_width_mismatch x4",
+                    bestAccuracy: 0f,
+                    bestFitness: 0f),
+                CreateSnapshot(
+                    BasicsExecutionState.Failed,
+                    statusText: "Execution failed.",
+                    detailText: "Generation 1 timed out.",
+                    generation: 1,
+                    speciesCount: 1,
+                    evaluationFailureCount: 4,
+                    evaluationFailureSummary: "output_timeout_or_width_mismatch x4",
+                    bestAccuracy: 0f,
+                    bestFitness: 0f)
+            }));
+
+        var options = CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1) with
+        {
+            Environment = CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1).Environment with
+            {
+                OutputObservationMode = BasicsOutputObservationMode.EventedOutput,
+                SizingOverrides = new BasicsSizingOverrides
+                {
+                    InitialPopulationCount = 256,
+                    MaxConcurrentBrains = 128,
+                    ReproductionRunCount = 8
+                }
+            }
+        };
+
+        var report = await harness.RunAsync(options, new AndTaskPlugin());
+
+        Assert.False(report.StabilityTargetMet);
+        Assert.Single(report.Trials);
+        var decision = Assert.Single(report.Trials).TuningDecision;
+        Assert.NotNull(decision);
+        Assert.True(decision!.Applied);
+        Assert.Contains("output_mode=continuous_potential", decision.Changes);
+        Assert.Contains("initial_population=192", decision.Changes);
+        Assert.Contains("max_concurrent=96", decision.Changes);
+        Assert.Equal(BasicsOutputObservationMode.VectorPotential, report.FinalConfiguration.OutputObservationMode);
+        Assert.Equal(192, report.FinalConfiguration.Sizing.InitialPopulationCount);
+        Assert.Equal(96, report.FinalConfiguration.Sizing.MaxConcurrentBrains);
+    }
+
+    private static BasicsLiveTrialHarnessOptions CreateOptions(int maxTrialCount, int requiredSuccessfulTrials)
+        => new()
+        {
+            RuntimeClient = new BasicsRuntimeClientOptions
+            {
+                IoAddress = "127.0.0.1:12050",
+                IoGatewayName = "io-gateway"
+            },
+            Environment = new BasicsEnvironmentOptions
+            {
+                ClientName = "nbn.basics.harness",
+                SelectedTask = new AndTaskPlugin().Contract,
+                SeedTemplate = BasicsSeedTemplateContract.CreateDefault(),
+                SizingOverrides = new BasicsSizingOverrides
+                {
+                    InitialPopulationCount = 256,
+                    ReproductionRunCount = 8,
+                    MaxConcurrentBrains = 128
+                },
+                OutputObservationMode = BasicsOutputObservationMode.VectorPotential,
+                Reproduction = BasicsReproductionPolicy.CreateDefault(),
+                Scheduling = new BasicsReproductionSchedulingPolicy
+                {
+                    ParentSelection = new BasicsParentSelectionPolicy
+                    {
+                        FitnessWeight = 0.55d,
+                        DiversityWeight = 0.35d,
+                        SpeciesBalanceWeight = 0.15d,
+                        EliteFraction = 0.10d,
+                        ExplorationFraction = 0.25d,
+                        MaxParentsPerSpecies = 8
+                    },
+                    RunAllocation = new BasicsRunAllocationPolicy
+                    {
+                        MinRunsPerPair = 2,
+                        MaxRunsPerPair = 12,
+                        FitnessExponent = 1.20d,
+                        DiversityBoost = 0.35d
+                    }
+                }
+            },
+            MaxTrialCount = maxTrialCount,
+            TrialTimeout = TimeSpan.FromSeconds(5),
+            StabilityCriteria = new BasicsLiveTrialStabilityCriteria
+            {
+                TargetAccuracy = 0.99f,
+                TargetFitness = 0.99f,
+                RequiredSuccessfulTrials = requiredSuccessfulTrials
+            }
+        };
+
+    private static IReadOnlyList<BasicsExecutionSnapshot> CreateSuccessfulSnapshots(int generation)
+        => new[]
+        {
+            CreateSnapshot(
+                BasicsExecutionState.Running,
+                statusText: $"Generation {generation - 1} evaluated.",
+                detailText: "Harness success path.",
+                generation: generation - 1,
+                speciesCount: 2,
+                bestAccuracy: 0.92f,
+                bestFitness: 0.94f),
+            CreateSnapshot(
+                BasicsExecutionState.Succeeded,
+                statusText: "Execution reached a perfect candidate.",
+                detailText: "Harness success path.",
+                generation: generation,
+                speciesCount: 2,
+                bestAccuracy: 1f,
+                bestFitness: 1f)
+        };
+
+    private static BasicsExecutionSnapshot CreateSnapshot(
+        BasicsExecutionState state,
+        string statusText,
+        string detailText,
+        int generation,
+        int speciesCount,
+        int evaluationFailureCount = 0,
+        string evaluationFailureSummary = "",
+        float bestAccuracy = 1f,
+        float bestFitness = 1f)
+        => new(
+            State: state,
+            StatusText: statusText,
+            DetailText: detailText,
+            SpeciationEpochId: 1,
+            EvaluationFailureCount: evaluationFailureCount,
+            EvaluationFailureSummary: evaluationFailureSummary,
+            Generation: generation,
+            PopulationCount: 256,
+            ActiveBrainCount: 0,
+            SpeciesCount: speciesCount,
+            ReproductionCalls: (ulong)Math.Max(0, generation - 1),
+            ReproductionRunsObserved: (ulong)Math.Max(0, generation * 2),
+            CapacityUtilization: 0.5f,
+            BestAccuracy: bestAccuracy,
+            BestFitness: bestFitness,
+            MeanFitness: Math.Max(0f, bestFitness - 0.1f),
+            EffectiveTemplateDefinition: null,
+            SeedShape: new BasicsResolvedSeedShape(1, 1, 3),
+            BestCandidate: new BasicsExecutionBestCandidateSummary(
+                ArtifactSha256: new string('a', 64),
+                SpeciesId: "species.default",
+                Accuracy: bestAccuracy,
+                Fitness: bestFitness,
+                ScoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+                {
+                    ["classification_accuracy"] = bestAccuracy
+                },
+                Diagnostics: Array.Empty<string>()),
+            AccuracyHistory: new[] { bestAccuracy },
+            BestFitnessHistory: new[] { bestFitness });
+
+    private sealed class FakeHarnessRuntimeClient : IBasicsRuntimeClient
+    {
+        public string? ConnectedClientName { get; private set; }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
+        {
+            ConnectedClientName = clientName;
+            return Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = "nbn.io", ServerTimeMs = 1 });
+        }
+
+        public Task<PlacementWorkerInventoryResult?> GetPlacementWorkerInventoryAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<PlacementWorkerInventoryResult?>(null);
+
+        public Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.FromResult<BrainInfo?>(null);
+
+        public Task<SpawnBrainViaIOAck?> SpawnBrainAsync(SpawnBrain request, CancellationToken cancellationToken = default)
+            => Task.FromResult<SpawnBrainViaIOAck?>(null);
+
+        public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task SubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task UnsubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task UnsubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task SendInputVectorAsync(Guid brainId, IReadOnlyList<float> values, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public void ResetOutputBuffer(Guid brainId)
+        {
+        }
+
+        public void ResetOutputEventBuffer(Guid brainId)
+        {
+        }
+
+        public Task<BasicsRuntimeOutputVector?> WaitForOutputVectorAsync(Guid brainId, ulong afterTickExclusive, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult<BasicsRuntimeOutputVector?>(null);
+
+        public Task<BasicsRuntimeOutputEvent?> WaitForOutputEventAsync(Guid brainId, ulong afterTickExclusive, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult<BasicsRuntimeOutputEvent?>(null);
+
+        public Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default)
+            => Task.FromResult<KillBrainViaIOAck?>(null);
+
+        public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(OutputVectorSource outputVectorSource, Guid? brainId = null, CancellationToken cancellationToken = default)
+            => Task.FromResult<Nbn.Proto.Io.SetOutputVectorSourceAck?>(null);
+
+        public Task<Repro.ReproduceResult?> ReproduceByArtifactsAsync(Repro.ReproduceByArtifactsRequest request, CancellationToken cancellationToken = default)
+            => Task.FromResult<Repro.ReproduceResult?>(null);
+
+        public Task<SpeciationAssignResponse?> AssignSpeciationAsync(SpeciationAssignRequest request, CancellationToken cancellationToken = default)
+            => Task.FromResult<SpeciationAssignResponse?>(null);
+
+        public Task<SpeciationGetConfigResponse?> GetSpeciationConfigAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<SpeciationGetConfigResponse?>(null);
+
+        public Task<SpeciationSetConfigResponse?> SetSpeciationConfigAsync(SpeciationRuntimeConfig config, bool startNewEpoch, CancellationToken cancellationToken = default)
+            => Task.FromResult<SpeciationSetConfigResponse?>(null);
+    }
+
+    private sealed class ScriptedExecutionRunner : IBasicsExecutionRunner
+    {
+        private readonly IReadOnlyList<BasicsExecutionSnapshot> _snapshots;
+
+        public ScriptedExecutionRunner(IReadOnlyList<BasicsExecutionSnapshot> snapshots)
+        {
+            _snapshots = snapshots;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        public Task<BasicsExecutionSnapshot> RunAsync(
+            BasicsEnvironmentPlan plan,
+            IBasicsTaskPlugin taskPlugin,
+            Action<BasicsExecutionSnapshot>? onSnapshot,
+            CancellationToken cancellationToken = default)
+        {
+            foreach (var snapshot in _snapshots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                onSnapshot?.Invoke(snapshot);
+            }
+
+            return Task.FromResult(_snapshots[^1]);
+        }
+    }
+}

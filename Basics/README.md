@@ -7,6 +7,7 @@
 - A shared environment library in `src/Basics.Environment`.
 - A task-plugin library in `src/Basics.Tasks`.
 - A small Avalonia desktop UI in `src/Basics.Ui`.
+- A headless live-trial harness in `src/Basics.Harness`.
 - A test project in `tests/Basics.Environment.Tests`.
 - A task-plugin test project in `tests/Basics.Tasks.Tests`.
 - A template-anchored seed-population contract: initial brains are exact-template or bounded minor deviations, not unconstrained random topologies.
@@ -31,6 +32,7 @@
 - `src/Basics.Environment`: shared environment contract, sizing heuristics, runtime client, and planner.
 - `src/Basics.Tasks`: concrete Basics task plugins plus the plugin registry.
 - `src/Basics.Ui`: small operator UI for connection/configuration, capacity fetch, task selection, scheduling settings, and metric surfaces.
+- `src/Basics.Harness`: console entrypoint for repeatable live-runtime trial runs, JSON reports, and simple auto-tuning.
 - `tests/Basics.Environment.Tests`: contract and planner tests.
 - `tests/Basics.Tasks.Tests`: task-plugin evaluation tests.
 
@@ -46,4 +48,22 @@ dotnet build Basics.sln -c Release
 dotnet test Basics.sln -c Release --no-restore
 ```
 
-Later issues will add the remaining task plugins, live metric feeds, and the remaining operator workflows on top of this shared environment, task library, and UI shell.
+## Live Harness
+
+Generate a sample config:
+
+```bash
+cd /home/hailey/AI/NBNv2-demos/Basics
+dotnet run --project src/Basics.Harness/Basics.Harness.csproj -- --write-sample-config ./artifacts/live-trials/sample-config.json
+```
+
+Run repeated live trials against a running NBN stack:
+
+```bash
+cd /home/hailey/AI/NBNv2-demos/Basics
+dotnet run --project src/Basics.Harness/Basics.Harness.csproj -- --config ./artifacts/live-trials/sample-config.json
+```
+
+The harness writes a JSON report under `artifacts/live-trials/`, replays the shared `BasicsExecutionSession` against real IO, captures per-generation snapshots, and can apply simple follow-up tuning between trials while staying on the IO-only demo contract.
+
+Later issues will add the remaining task plugins and broader operator workflows on top of this shared environment, task library, UI shell, and live harness.
