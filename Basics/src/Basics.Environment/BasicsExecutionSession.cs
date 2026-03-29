@@ -15,7 +15,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
-    private static readonly IReadOnlyList<float> PrimeInputVector = new[] { 0f, 0f };
     private const int MaxObservationAttempts = 3;
 
     private readonly IBasicsRuntimeClient _runtimeClient;
@@ -689,7 +688,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
             if (outputObservationMode.UsesVectorSubscription())
             {
-                await _runtimeClient.SendInputVectorAsync(brainId, PrimeInputVector, cancellationToken).ConfigureAwait(false);
+                var primeVector = ResolvePrimeInputVector(samples);
+                await _runtimeClient.SendInputVectorAsync(brainId, primeVector, cancellationToken).ConfigureAwait(false);
                 var baseline = await _runtimeClient.WaitForOutputVectorAsync(
                         brainId,
                         afterTickExclusive: 0,
@@ -704,12 +704,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
             foreach (var sample in samples)
             {
+                var separatorVector = ResolveSeparatorInputVector(sample, samples);
                 var observation = await ObserveSampleAsync(
                         brainId,
                         sample,
                         lastTick,
                         outputObservationMode,
                         taskPlugin.Contract.OutputWidth,
+                        separatorVector,
                         cancellationToken)
                     .ConfigureAwait(false);
                 if (observation is null)
@@ -798,14 +800,72 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return Math.Max(1, Math.Min(maxConcurrent, workerScaled));
     }
 
+    private static IReadOnlyList<float> ResolvePrimeInputVector(IReadOnlyList<BasicsTaskSample> samples)
+    {
+        if (samples.Count == 0)
+        {
+            return new[] { 0f, 0f };
+        }
+
+        var first = samples[0];
+        foreach (var candidate in samples)
+        {
+            if (candidate.ExpectedOutput != first.ExpectedOutput
+                && (candidate.InputA != first.InputA || candidate.InputB != first.InputB))
+            {
+                return new[] { candidate.InputA, candidate.InputB };
+            }
+        }
+
+        foreach (var candidate in samples)
+        {
+            if (candidate.InputA != first.InputA || candidate.InputB != first.InputB)
+            {
+                return new[] { candidate.InputA, candidate.InputB };
+            }
+        }
+
+        return new[]
+        {
+            first.InputA >= 0.5f ? 0f : 1f,
+            first.InputB >= 0.5f ? 0f : 1f
+        };
+    }
+
+    private static IReadOnlyList<float>? ResolveSeparatorInputVector(
+        BasicsTaskSample sample,
+        IReadOnlyList<BasicsTaskSample> samples)
+    {
+        foreach (var candidate in samples)
+        {
+            if (candidate.ExpectedOutput != sample.ExpectedOutput
+                && (candidate.InputA != sample.InputA || candidate.InputB != sample.InputB))
+            {
+                return new[] { candidate.InputA, candidate.InputB };
+            }
+        }
+
+        foreach (var candidate in samples)
+        {
+            if (candidate.InputA != sample.InputA || candidate.InputB != sample.InputB)
+            {
+                return new[] { candidate.InputA, candidate.InputB };
+            }
+        }
+
+        return null;
+    }
+
     private async Task<BasicsTaskObservation?> ObserveSampleAsync(
         Guid brainId,
         BasicsTaskSample sample,
         ulong lastTick,
         BasicsOutputObservationMode outputObservationMode,
         uint expectedOutputWidth,
+        IReadOnlyList<float>? separatorVector,
         CancellationToken cancellationToken)
     {
+        var tickCursor = lastTick;
         for (var attempt = 1; attempt <= MaxObservationAttempts; attempt++)
         {
             await _runtimeClient.SendInputVectorAsync(
@@ -818,7 +878,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             {
                 var output = await _runtimeClient.WaitForOutputVectorAsync(
                         brainId,
-                        lastTick,
+                        tickCursor,
                         EvaluationOutputTimeout,
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -831,20 +891,37 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             {
                 var output = await _runtimeClient.WaitForOutputEventAsync(
                         brainId,
-                        lastTick,
+                        tickCursor,
                         EvaluationOutputTimeout,
                         cancellationToken)
                     .ConfigureAwait(false);
                 if (output is not null)
                 {
-                    return new BasicsTaskObservation(Math.Max(lastTick + 1, output.TickId), output.Value);
+                    return new BasicsTaskObservation(Math.Max(tickCursor + 1, output.TickId), output.Value);
                 }
 
-                return new BasicsTaskObservation(lastTick + 1, 0f);
+                return new BasicsTaskObservation(tickCursor + 1, 0f);
             }
 
             if (attempt < MaxObservationAttempts)
             {
+                if (outputObservationMode.UsesVectorSubscription()
+                    && separatorVector is not null
+                    && separatorVector.Count >= BasicsIoGeometry.InputWidth)
+                {
+                    await _runtimeClient.SendInputVectorAsync(brainId, separatorVector, cancellationToken).ConfigureAwait(false);
+                    var separatorOutput = await _runtimeClient.WaitForOutputVectorAsync(
+                            brainId,
+                            tickCursor,
+                            EvaluationOutputTimeout,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    if (separatorOutput is not null)
+                    {
+                        tickCursor = separatorOutput.TickId;
+                    }
+                }
+
                 await Task.Delay(EvaluationRetryDelay, cancellationToken).ConfigureAwait(false);
             }
         }

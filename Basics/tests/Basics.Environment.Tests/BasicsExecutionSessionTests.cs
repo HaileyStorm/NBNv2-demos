@@ -181,6 +181,52 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_SucceedsForXorTask_WhenVectorOutputsOnlyEmitOnChange()
+    {
+        var plugin = new XorTaskPlugin();
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = plugin.Contract.TaskId,
+            OnlyEmitOutputVectorOnChange = true
+        };
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var plan = CreatePlan(BasicsOutputObservationMode.VectorPotential, taskPlugin: plugin) with
+            {
+                Capacity = new BasicsCapacityRecommendation(
+                    Source: BasicsCapacitySource.RuntimePlacementInventory,
+                    EligibleWorkerCount: 1,
+                    RecommendedInitialPopulationCount: 1,
+                    RecommendedReproductionRunCount: 1,
+                    RecommendedMaxConcurrentBrains: 1,
+                    CapacityScore: 1f,
+                    EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                    Summary: "test")
+            };
+
+            var final = await session.RunAsync(
+                plan,
+                plugin,
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.True(final.BestAccuracy > 0f);
+            Assert.True(final.BestFitness > 0f);
+            Assert.NotNull(final.BestCandidate);
+            Assert.Equal(1f, final.BestCandidate.ScoreBreakdown["truth_table_coverage"]);
+            Assert.DoesNotContain(
+                final.BestCandidate.Diagnostics,
+                static diagnostic => diagnostic.Contains("output_timeout_or_width_mismatch", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_UsesEventedOutputMode_WhenConfigured()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
@@ -477,11 +523,13 @@ public sealed class BasicsExecutionSessionTests
         public int? ThrowOnReproduceCallNumber { get; init; }
         public TimeSpan SpawnDelay { get; init; }
         public string DefaultBehavior { get; init; } = "zero";
+        public bool OnlyEmitOutputVectorOnChange { get; init; }
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
         private int _activeSpawnRequests;
         private int _maxObservedConcurrentSpawnRequests;
+        private readonly Dictionary<Guid, float> _lastVectorOutputByBrain = new();
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
             => Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = clientName, ServerTimeMs = 1 });
@@ -522,6 +570,7 @@ public sealed class BasicsExecutionSessionTests
                 _outputs[brainId] = new Queue<BasicsRuntimeOutputVector>();
                 _outputEvents[brainId] = new Queue<BasicsRuntimeOutputEvent>();
                 _ticks[brainId] = 0;
+                _lastVectorOutputByBrain.Remove(brainId);
                 return new SpawnBrainViaIOAck
                 {
                     Ack = new SpawnBrainAck
@@ -602,7 +651,14 @@ public sealed class BasicsExecutionSessionTests
             var behavior = ResolveBehavior(artifact);
             var output = ComputeOutput(behavior, values);
 
-            _outputs[brainId].Enqueue(new BasicsRuntimeOutputVector(brainId, tick, new[] { output }));
+            if (!OnlyEmitOutputVectorOnChange
+                || !_lastVectorOutputByBrain.TryGetValue(brainId, out var previousOutput)
+                || previousOutput != output)
+            {
+                _outputs[brainId].Enqueue(new BasicsRuntimeOutputVector(brainId, tick, new[] { output }));
+            }
+
+            _lastVectorOutputByBrain[brainId] = output;
             if (output >= 0.5f)
             {
                 _outputEvents[brainId].Enqueue(new BasicsRuntimeOutputEvent(brainId, 0, tick, output));
@@ -676,6 +732,7 @@ public sealed class BasicsExecutionSessionTests
             _outputs.Remove(brainId);
             _outputEvents.Remove(brainId);
             _ticks.Remove(brainId);
+            _lastVectorOutputByBrain.Remove(brainId);
             return Task.FromResult<KillBrainViaIOAck?>(new KillBrainViaIOAck { Accepted = true });
         }
 
