@@ -1,5 +1,6 @@
 using Nbn.Proto;
 using Nbn.Proto.Control;
+using Nbn.Proto.Io;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Repro = Nbn.Proto.Repro;
@@ -383,9 +384,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private async Task ConfigureBrainOutputObservationModeAsync(
         Guid brainId,
         BasicsOutputObservationMode mode,
+        BrainInfo? currentInfo,
         CancellationToken cancellationToken)
     {
         if (brainId == Guid.Empty || !mode.UsesVectorSubscription())
+        {
+            return;
+        }
+
+        if (currentInfo is not null && currentInfo.OutputVectorSource == mode.ResolveVectorSource())
         {
             return;
         }
@@ -592,10 +599,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 };
             }
 
-            await ConfigureBrainOutputObservationModeAsync(brainId, outputObservationMode, cancellationToken).ConfigureAwait(false);
-
-            var geometry = BasicsIoGeometry.Validate(
-                await _runtimeClient.RequestBrainInfoAsync(brainId, cancellationToken).ConfigureAwait(false));
+            var brainInfo = await _runtimeClient.RequestBrainInfoAsync(brainId, cancellationToken).ConfigureAwait(false);
+            var geometry = BasicsIoGeometry.Validate(brainInfo);
             if (!geometry.IsValid)
             {
                 return member with
@@ -603,6 +608,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     LastEvaluation = CreateTransportFailure($"geometry_invalid:{geometry.FailureReason}")
                 };
             }
+
+            await ConfigureBrainOutputObservationModeAsync(brainId, outputObservationMode, brainInfo, cancellationToken).ConfigureAwait(false);
 
             if (outputObservationMode.UsesVectorSubscription())
             {

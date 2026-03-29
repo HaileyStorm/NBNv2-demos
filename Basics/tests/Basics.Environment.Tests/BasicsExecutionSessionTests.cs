@@ -121,9 +121,7 @@ public sealed class BasicsExecutionSessionTests
             Assert.Equal(1, runtimeClient.GetSpeciationConfigCallCount);
             Assert.Equal(1, runtimeClient.SetSpeciationConfigCallCount);
             Assert.True(runtimeClient.SpeciationEpochStartedBeforeFirstReproduce);
-            Assert.Contains(
-                runtimeClient.SetOutputVectorSourceRequests,
-                static request => request.BrainId != Guid.Empty && request.OutputVectorSource == OutputVectorSource.Potential);
+            Assert.Empty(runtimeClient.SetOutputVectorSourceRequests);
             Assert.True(runtimeClient.VectorSubscriptionCount > 0);
             Assert.Contains(snapshots, snapshot => snapshot.State == BasicsExecutionState.Running);
             Assert.True(final.AccuracyHistory.Count >= 2);

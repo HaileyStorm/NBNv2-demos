@@ -240,9 +240,33 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
         }
+        catch (OperationCanceledException)
+        {
+            return new SpawnBrainViaIOAck
+            {
+                FailureReasonCode = "spawn_request_canceled",
+                FailureMessage = "Spawn request was canceled.",
+                Ack = new SpawnBrainAck
+                {
+                    BrainId = Guid.Empty.ToProtoUuid(),
+                    FailureReasonCode = "spawn_request_canceled",
+                    FailureMessage = "Spawn request was canceled."
+                }
+            };
+        }
         catch
         {
-            return null;
+            return new SpawnBrainViaIOAck
+            {
+                FailureReasonCode = "spawn_request_failed",
+                FailureMessage = "Spawn request forwarding failed.",
+                Ack = new SpawnBrainAck
+                {
+                    BrainId = Guid.Empty.ToProtoUuid(),
+                    FailureReasonCode = "spawn_request_failed",
+                    FailureMessage = "Spawn request forwarding failed."
+                }
+            };
         }
     }
 
@@ -511,9 +535,31 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
         }
+        catch (OperationCanceledException)
+        {
+            return new Nbn.Proto.Io.SetOutputVectorSourceAck
+            {
+                Success = false,
+                FailureReasonCode = "output_vector_source_request_canceled",
+                FailureMessage = "Output vector source update request was canceled.",
+                OutputVectorSource = outputVectorSource,
+                BrainId = brainId.HasValue && brainId.Value != Guid.Empty
+                    ? brainId.Value.ToProtoUuid()
+                    : null
+            };
+        }
         catch
         {
-            return null;
+            return new Nbn.Proto.Io.SetOutputVectorSourceAck
+            {
+                Success = false,
+                FailureReasonCode = "output_vector_source_request_failed",
+                FailureMessage = "Output vector source update request failed.",
+                OutputVectorSource = outputVectorSource,
+                BrainId = brainId.HasValue && brainId.Value != Guid.Empty
+                    ? brainId.Value.ToProtoUuid()
+                    : null
+            };
         }
     }
 

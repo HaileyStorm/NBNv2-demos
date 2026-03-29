@@ -82,9 +82,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _allowFunctionMutation;
     private bool _allowAxonReroute = true;
     private bool _allowRegionSetChange;
-    private string _initialPopulationOverrideText = "256";
-    private string _reproductionRunCountOverrideText = "8";
-    private string _maxConcurrentBrainsOverrideText = "128";
+    private string _initialPopulationOverrideText = string.Empty;
+    private string _reproductionRunCountOverrideText = string.Empty;
+    private string _maxConcurrentBrainsOverrideText = string.Empty;
     private string _recommendedInitialPopulationText = "—";
     private string _recommendedRunCountText = "—";
     private string _recommendedMaxConcurrentBrainsText = "—";
