@@ -1,4 +1,5 @@
 using Nbn.Proto.Io;
+using Nbn.Proto.Control;
 using Nbn.Shared;
 using Proto;
 
@@ -9,6 +10,8 @@ internal interface IBasicsRuntimeEventSink
     void OnOutputEvent(OutputEvent output);
 
     void OnOutputVectorEvent(OutputVectorEvent output);
+
+    void OnBrainTerminated(BrainTerminated terminated);
 }
 
 internal sealed class BasicsRuntimeReceiverActor : IActor
@@ -69,6 +72,9 @@ internal sealed class BasicsRuntimeReceiverActor : IActor
                 break;
             case OutputVectorEvent outputVector:
                 _sink.OnOutputVectorEvent(outputVector.Clone());
+                break;
+            case BrainTerminated terminated:
+                _sink.OnBrainTerminated(terminated.Clone());
                 break;
         }
 

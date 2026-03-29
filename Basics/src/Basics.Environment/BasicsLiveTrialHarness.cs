@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Nbn.Proto.Io;
 
 namespace Nbn.Demos.Basics.Environment;
 
@@ -320,7 +321,12 @@ public sealed class BasicsLiveTrialHarness
                     BasicsLiveTrialPhase.Connecting,
                     $"Connecting trial {trialNumber} to {options.RuntimeClient.IoAddress}/{options.RuntimeClient.IoGatewayName}."));
 
-                var connectAck = await runtimeClient.ConnectAsync(trialEnvironment.ClientName, linkedCts.Token).ConfigureAwait(false);
+                var connectAck = await ConnectWithRetryAsync(
+                        runtimeClient,
+                        trialEnvironment.ClientName,
+                        ResolveConnectTimeout(options.TrialTimeout),
+                        linkedCts.Token)
+                    .ConfigureAwait(false);
                 if (connectAck is null)
                 {
                     outcome = BasicsLiveTrialOutcome.ConnectFailed;
@@ -482,6 +488,35 @@ public sealed class BasicsLiveTrialHarness
                 : $"Stability target not met after {report.ExecutedTrialCount} trial(s)."));
 
         return report;
+    }
+
+    private static TimeSpan ResolveConnectTimeout(TimeSpan trialTimeout)
+    {
+        var seconds = Math.Clamp(trialTimeout.TotalSeconds * 0.10d, 1d, 5d);
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    private static async Task<ConnectAck?> ConnectWithRetryAsync(
+        IBasicsRuntimeClient runtimeClient,
+        string clientName,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeout);
+
+        while (!timeoutCts.IsCancellationRequested)
+        {
+            var ack = await runtimeClient.ConnectAsync(clientName, timeoutCts.Token).ConfigureAwait(false);
+            if (ack is not null)
+            {
+                return ack;
+            }
+
+            await Task.Delay(200, timeoutCts.Token).ConfigureAwait(false);
+        }
+
+        return null;
     }
 
     private static BasicsLiveTrialOutcome TranslateOutcome(BasicsExecutionState state)

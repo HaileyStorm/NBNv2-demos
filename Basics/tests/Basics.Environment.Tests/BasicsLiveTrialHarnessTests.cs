@@ -267,6 +267,12 @@ public sealed class BasicsLiveTrialHarnessTests
         public Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default)
             => Task.FromResult<KillBrainViaIOAck?>(null);
 
+        public Task<BrainTerminated?> WaitForBrainTerminatedAsync(
+            Guid brainId,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<BrainTerminated?>(null);
+
         public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(OutputVectorSource outputVectorSource, Guid? brainId = null, CancellationToken cancellationToken = default)
             => Task.FromResult<Nbn.Proto.Io.SetOutputVectorSourceAck?>(null);
 

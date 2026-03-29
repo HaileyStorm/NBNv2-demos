@@ -267,7 +267,7 @@ internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
             IoAddress: null,
             IoName: null,
             WorkerInventoryRefreshMs: 2_000,
-            WorkerInventoryStaleAfterMs: 10_000,
+            WorkerInventoryStaleAfterMs: 600_000,
             PlacementAssignmentTimeoutMs: 1_000,
             PlacementAssignmentRetryBackoffMs: 10,
             PlacementAssignmentMaxRetries: 1,

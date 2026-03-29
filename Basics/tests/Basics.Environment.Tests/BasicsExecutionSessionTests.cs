@@ -185,6 +185,41 @@ public sealed class BasicsExecutionSessionTests
         }
     }
 
+    [Fact]
+    public async Task ExecutionSession_PreservesLastEvaluatedMetrics_WhenFailureOccursAfterGenerationSummary()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            ThrowOnReproduceCallNumber = 2
+        };
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential),
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Equal(1, final.Generation);
+            Assert.True(final.BestAccuracy > 0f);
+            Assert.True(final.BestFitness > 0f);
+            Assert.NotEmpty(final.AccuracyHistory);
+            Assert.NotEmpty(final.BestFitnessHistory);
+            Assert.NotNull(final.BestCandidate);
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Running && snapshot.StatusText.Contains("Generation 1 evaluated.", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
     private static BasicsEnvironmentPlan CreatePlan(BasicsOutputObservationMode outputObservationMode)
         => new(
             SelectedTask: new AndTaskPlugin().Contract,
@@ -220,6 +255,7 @@ public sealed class BasicsExecutionSessionTests
         public bool SpeciationEpochStartedBeforeFirstReproduce { get; private set; }
         public int VectorSubscriptionCount { get; private set; }
         public int SingleSubscriptionCount { get; private set; }
+        public int? ThrowOnReproduceCallNumber { get; init; }
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
@@ -229,12 +265,19 @@ public sealed class BasicsExecutionSessionTests
             => Task.FromResult<PlacementWorkerInventoryResult?>(null);
 
         public Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId, CancellationToken cancellationToken = default)
-            => Task.FromResult<BrainInfo?>(new BrainInfo
-            {
-                BrainId = brainId.ToProtoUuid(),
-                InputWidth = BasicsIoGeometry.InputWidth,
-                OutputWidth = BasicsIoGeometry.OutputWidth
-            });
+            => Task.FromResult<BrainInfo?>(_brainDefinitions.ContainsKey(brainId)
+                ? new BrainInfo
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    InputWidth = BasicsIoGeometry.InputWidth,
+                    OutputWidth = BasicsIoGeometry.OutputWidth
+                }
+                : new BrainInfo
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    InputWidth = 0,
+                    OutputWidth = 0
+                });
 
         public Task<SpawnBrainViaIOAck?> SpawnBrainAsync(SpawnBrain request, CancellationToken cancellationToken = default)
         {
@@ -357,6 +400,16 @@ public sealed class BasicsExecutionSessionTests
             return Task.FromResult<KillBrainViaIOAck?>(new KillBrainViaIOAck { Accepted = true });
         }
 
+        public Task<BrainTerminated?> WaitForBrainTerminatedAsync(
+            Guid brainId,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<BrainTerminated?>(new BrainTerminated
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Reason = "basics_evaluation_complete"
+            });
+
         public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
             OutputVectorSource outputVectorSource,
             Guid? brainId = null,
@@ -379,6 +432,11 @@ public sealed class BasicsExecutionSessionTests
             if (ReproduceCallCount == 1)
             {
                 SpeciationEpochStartedBeforeFirstReproduce = _epochStarted;
+            }
+
+            if (ThrowOnReproduceCallNumber.HasValue && ReproduceCallCount == ThrowOnReproduceCallNumber.Value)
+            {
+                throw new InvalidOperationException($"reproduce_failed:{ReproduceCallCount}");
             }
 
             var result = new Repro.ReproduceResult

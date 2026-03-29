@@ -64,6 +64,11 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
 
+    Task<BrainTerminated?> WaitForBrainTerminatedAsync(
+        Guid brainId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
+
     Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default);
 
     Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
@@ -95,6 +100,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     private readonly TimeSpan _requestTimeout;
     private readonly ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>> _outputBuffers;
     private readonly ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputEvent>> _outputEventBuffers;
+    private readonly ConcurrentDictionary<Guid, Channel<BrainTerminated>> _terminationBuffers;
     private bool _disposed;
 
     private BasicsRuntimeClient(
@@ -109,6 +115,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         _requestTimeout = requestTimeout;
         _outputBuffers = new ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>>();
         _outputEventBuffers = new ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputEvent>>();
+        _terminationBuffers = new ConcurrentDictionary<Guid, Channel<BrainTerminated>>();
     }
 
     public static async Task<BasicsRuntimeClient> StartAsync(
@@ -136,6 +143,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             options.RequestTimeout);
         runtimeEventSink.OnSingleOutput = client.OnOutputEvent;
         runtimeEventSink.OnOutput = client.OnOutputVectorEvent;
+        runtimeEventSink.OnTermination = client.OnBrainTerminated;
         system.Root.Send(receiverPid, new BasicsSetIoGatewayPid(client._ioPid));
         return client;
     }
@@ -419,6 +427,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
         try
         {
+            ResetTerminationBuffer(brainId);
             return await _system.Root.RequestAsync<KillBrainViaIOAck>(
                     _ioPid,
                     new KillBrainViaIO
@@ -434,6 +443,37 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 .ConfigureAwait(false);
         }
         catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<BrainTerminated?> WaitForBrainTerminatedAsync(
+        Guid brainId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var channel = EnsureTerminationBuffer(brainId);
+        using var timeoutCts = timeout > TimeSpan.Zero
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : null;
+        if (timeoutCts is not null)
+        {
+            timeoutCts.CancelAfter(timeout);
+        }
+
+        var effectiveToken = timeoutCts?.Token ?? cancellationToken;
+        try
+        {
+            return await channel.Reader.ReadAsync(effectiveToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (effectiveToken.IsCancellationRequested)
         {
             return null;
         }
@@ -582,6 +622,11 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             channel.Writer.TryComplete();
         }
 
+        foreach (var channel in _terminationBuffers.Values)
+        {
+            channel.Writer.TryComplete();
+        }
+
         await _system.Remote().ShutdownAsync(graceful: true).ConfigureAwait(false);
         await _system.ShutdownAsync().ConfigureAwait(false);
     }
@@ -594,6 +639,11 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     void IBasicsRuntimeEventSink.OnOutputVectorEvent(OutputVectorEvent output)
     {
         OnOutputVectorEvent(output);
+    }
+
+    void IBasicsRuntimeEventSink.OnBrainTerminated(BrainTerminated terminated)
+    {
+        OnBrainTerminated(terminated);
     }
 
     private void OnOutputEvent(OutputEvent output)
@@ -621,6 +671,17 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         channel.Writer.TryWrite(new BasicsRuntimeOutputVector(brainId, output.TickId, values));
     }
 
+    private void OnBrainTerminated(BrainTerminated terminated)
+    {
+        if (terminated.BrainId?.TryToGuid(out var brainId) != true || brainId == Guid.Empty)
+        {
+            return;
+        }
+
+        var channel = EnsureTerminationBuffer(brainId);
+        channel.Writer.TryWrite(terminated.Clone());
+    }
+
     private Channel<BasicsRuntimeOutputVector> EnsureOutputBuffer(Guid brainId)
     {
         return _outputBuffers.GetOrAdd(
@@ -643,6 +704,30 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                     SingleReader = false,
                     SingleWriter = false
                 }));
+    }
+
+    private Channel<BrainTerminated> EnsureTerminationBuffer(Guid brainId)
+    {
+        return _terminationBuffers.GetOrAdd(
+            brainId,
+            static _ => Channel.CreateUnbounded<BrainTerminated>(
+                new UnboundedChannelOptions
+                {
+                    SingleReader = false,
+                    SingleWriter = false
+                }));
+    }
+
+    private void ResetTerminationBuffer(Guid brainId)
+    {
+        if (brainId == Guid.Empty || !_terminationBuffers.TryGetValue(brainId, out var channel))
+        {
+            return;
+        }
+
+        while (channel.Reader.TryRead(out _))
+        {
+        }
     }
 
     private void ThrowIfDisposed()
@@ -694,6 +779,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     {
         public Action<OutputEvent>? OnSingleOutput { get; set; }
         public Action<OutputVectorEvent>? OnOutput { get; set; }
+        public Action<BrainTerminated>? OnTermination { get; set; }
 
         public void OnOutputEvent(OutputEvent output)
         {
@@ -703,6 +789,11 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         public void OnOutputVectorEvent(OutputVectorEvent output)
         {
             OnOutput?.Invoke(output);
+        }
+
+        public void OnBrainTerminated(BrainTerminated terminated)
+        {
+            OnTermination?.Invoke(terminated);
         }
     }
 }

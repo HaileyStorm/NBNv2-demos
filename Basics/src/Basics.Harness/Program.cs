@@ -81,9 +81,10 @@ internal static class Program
             throw new InvalidOperationException("--write-sample-config is not valid with smoke-local.");
         }
 
-        var config = command.ConfigPath is null
+        var useSmokeProfile = command.ConfigPath is null;
+        var config = useSmokeProfile
             ? CreateLocalSmokeConfig(command.OutputDirectoryOverride)
-            : await LoadConfigAsync(command.ConfigPath).ConfigureAwait(false);
+            : await LoadConfigAsync(command.ConfigPath!).ConfigureAwait(false);
         var resolved = config.Resolve();
         var ioPort = ResolveIoPort(resolved.Options.RuntimeClient.IoAddress);
 
@@ -93,44 +94,32 @@ internal static class Program
                     IoPort = ioPort
                 })
             .ConfigureAwait(false);
+        await runtimeHost.WaitForIoReadinessAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
 
-        var smokeOptions = resolved.Options with
-        {
-            RunLabel = $"{resolved.Options.RunLabel}-local-smoke",
-            RuntimeClient = resolved.Options.RuntimeClient with
-            {
-                IoAddress = runtimeHost.IoAddress,
-                IoGatewayName = runtimeHost.IoGatewayName
-            },
-            TemplatePublishing = resolved.Options.TemplatePublishing with
-            {
-                BackingStoreRoot = runtimeHost.ArtifactRoot
-            },
-            MaxTrialCount = 1,
-            TrialTimeout = TimeSpan.FromSeconds(Math.Min(10d, Math.Max(1d, resolved.Options.TrialTimeout.TotalSeconds))),
-            StabilityCriteria = resolved.Options.StabilityCriteria with
-            {
-                RequiredSuccessfulTrials = 1
-            },
-            AutoTuning = resolved.Options.AutoTuning with
-            {
-                Enabled = false
-            }
-        };
-
-        var smokeClient = await BasicsRuntimeClient.StartAsync(smokeOptions.RuntimeClient).ConfigureAwait(false);
-        await ConnectHarnessClientWithRetryAsync(
-                smokeClient,
-                smokeOptions.Environment.ClientName,
-                TimeSpan.FromSeconds(15))
-            .ConfigureAwait(false);
+        var localOptions = BuildLocalHarnessOptions(resolved.Options, runtimeHost, useSmokeProfile);
 
         using var loggingOverrides = ApplySmokeLoggingOverrides();
-        var harness = new BasicsLiveTrialHarness(
-            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(smokeClient),
-            executionRunnerFactory: null);
+        BasicsLiveTrialHarness harness;
+        if (useSmokeProfile)
+        {
+            var smokeClient = await BasicsRuntimeClient.StartAsync(localOptions.RuntimeClient).ConfigureAwait(false);
+            await ConnectHarnessClientWithRetryAsync(
+                    smokeClient,
+                    localOptions.Environment.ClientName,
+                    TimeSpan.FromSeconds(15))
+                .ConfigureAwait(false);
+
+            harness = new BasicsLiveTrialHarness(
+                runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(smokeClient),
+                executionRunnerFactory: null);
+        }
+        else
+        {
+            harness = new BasicsLiveTrialHarness();
+        }
+
         var report = await harness.RunAsync(
-                smokeOptions,
+                localOptions,
                 resolved.Plugin,
                 PrintProgress,
                 CancellationToken.None)
@@ -138,15 +127,60 @@ internal static class Program
 
         var outputDirectory = command.OutputDirectoryOverride ?? config.OutputDirectory;
         var reportPath = await WriteReportAsync(outputDirectory, report).ConfigureAwait(false);
-        var smokePassed = IsSmokeSuccess(report);
+        var commandPassed = useSmokeProfile ? IsSmokeSuccess(report) : report.StabilityTargetMet;
 
         Console.WriteLine();
         Console.WriteLine($"Report: {reportPath}");
-        Console.WriteLine(smokePassed
-            ? "Local smoke passed: the in-process NBN stack reached live harness execution and emitted trial telemetry."
-            : "Local smoke failed: the in-process NBN stack did not reach live harness execution cleanly.");
+        Console.WriteLine(useSmokeProfile
+            ? commandPassed
+                ? "Local smoke passed: the in-process NBN stack completed a full generation and emitted trial telemetry."
+                : "Local smoke failed: the in-process NBN stack did not complete a full generation cleanly."
+            : commandPassed
+                ? $"Local live trial met its stability target after {report.ExecutedTrialCount} trial(s)."
+                : $"Local live trial did not meet its stability target after {report.ExecutedTrialCount} trial(s).");
 
-        return smokePassed ? 0 : 2;
+        return commandPassed ? 0 : 2;
+    }
+
+    private static BasicsLiveTrialHarnessOptions BuildLocalHarnessOptions(
+        BasicsLiveTrialHarnessOptions options,
+        LocalSmokeRuntimeHost runtimeHost,
+        bool useSmokeProfile)
+    {
+        var localized = options with
+        {
+            RunLabel = useSmokeProfile
+                ? $"{options.RunLabel}-local-smoke"
+                : $"{options.RunLabel}-local",
+            RuntimeClient = options.RuntimeClient with
+            {
+                IoAddress = runtimeHost.IoAddress,
+                IoGatewayName = runtimeHost.IoGatewayName
+            },
+            TemplatePublishing = options.TemplatePublishing with
+            {
+                BackingStoreRoot = runtimeHost.ArtifactRoot
+            }
+        };
+
+        if (!useSmokeProfile)
+        {
+            return localized;
+        }
+
+        return localized with
+        {
+            MaxTrialCount = 1,
+            TrialTimeout = TimeSpan.FromSeconds(Math.Min(20d, Math.Max(8d, options.TrialTimeout.TotalSeconds))),
+            StabilityCriteria = localized.StabilityCriteria with
+            {
+                RequiredSuccessfulTrials = 1
+            },
+            AutoTuning = localized.AutoTuning with
+            {
+                Enabled = false
+            }
+        };
     }
 
     private static HarnessCommandArguments ParseHarnessArguments(string[] args)
@@ -265,7 +299,7 @@ internal static class Program
                 ClientName = "nbn.basics.harness.local-smoke",
                 Sizing = defaults.Environment.Sizing with
                 {
-                    InitialPopulationCount = 8,
+                    InitialPopulationCount = 4,
                     ReproductionRunCount = 1,
                     MaxConcurrentBrains = 2
                 },
@@ -279,7 +313,7 @@ internal static class Program
             Trials = defaults.Trials with
             {
                 MaxTrialCount = 1,
-                TrialTimeoutSeconds = 10,
+                TrialTimeoutSeconds = 20,
                 RequiredSuccessfulTrials = 1,
                 AutoTuneEnabled = false
             }
@@ -320,13 +354,19 @@ internal static class Program
             return false;
         }
 
-        if (terminal.TerminalSnapshot is not null && terminal.TerminalSnapshot.Generation > 0)
+        if (IsCompletedGenerationSnapshot(terminal.TerminalSnapshot))
         {
             return true;
         }
 
-        return terminal.Snapshots.Any(snapshot => snapshot.Generation > 0);
+        return terminal.Snapshots.Any(IsCompletedGenerationSnapshot);
     }
+
+    private static bool IsCompletedGenerationSnapshot(BasicsLiveTrialSnapshotRecord? snapshot)
+        => snapshot is not null
+           && snapshot.Generation > 0
+           && snapshot.ActiveBrainCount == 0
+           && snapshot.BestCandidate is not null;
 
     private static string SanitizeFileComponent(string value)
     {

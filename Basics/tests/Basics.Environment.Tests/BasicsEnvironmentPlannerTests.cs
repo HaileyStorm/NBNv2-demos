@@ -131,6 +131,12 @@ public sealed class BasicsEnvironmentPlannerTests
         public Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default)
             => Task.FromResult<KillBrainViaIOAck?>(null);
 
+        public Task<BrainTerminated?> WaitForBrainTerminatedAsync(
+            Guid brainId,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<BrainTerminated?>(null);
+
         public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
             Nbn.Proto.Control.OutputVectorSource outputVectorSource,
             Guid? brainId = null,

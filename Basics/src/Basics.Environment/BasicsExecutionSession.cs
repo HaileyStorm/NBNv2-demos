@@ -11,6 +11,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 {
     private static readonly TimeSpan EvaluationOutputTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
     private static readonly IReadOnlyList<float> PrimeInputVector = new[] { 0f, 0f };
     private const int MaxObservationAttempts = 3;
 
@@ -49,9 +51,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var fitnessHistory = new List<float>();
         ulong reproductionCalls = 0;
         ulong reproductionRunsObserved = 0;
+        BasicsExecutionSnapshot? lastObservedSnapshot = null;
+        var publishSnapshot = new Action<BasicsExecutionSnapshot>(snapshot =>
+        {
+            lastObservedSnapshot = snapshot;
+            onSnapshot?.Invoke(snapshot);
+        });
 
         PublishSnapshot(
-            onSnapshot,
+            publishSnapshot,
             BasicsExecutionState.Starting,
             statusText: "Starting Basics session...",
             detailText: $"Preparing template-seeded {plan.SelectedTask.DisplayName} population.",
@@ -81,7 +89,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             seedShape = template.SeedShape;
 
             PublishSnapshot(
-                onSnapshot,
+                publishSnapshot,
                 BasicsExecutionState.Starting,
                 statusText: "Preparing speciation epoch...",
                 detailText: "Starting a fresh speciation epoch for this Basics run.",
@@ -116,7 +124,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             if (population.Count == 0)
             {
                 return CreateFinalSnapshot(
-                    onSnapshot,
+                    publishSnapshot,
                     BasicsExecutionState.Failed,
                     "Execution failed.",
                     "The initial template population could not be seeded.",
@@ -129,7 +137,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     effectiveTemplateDefinition,
                     seedShape,
                     accuracyHistory,
-                    fitnessHistory);
+                    fitnessHistory,
+                    lastObservedSnapshot);
             }
 
             var generation = 0;
@@ -149,11 +158,33 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         reproductionRunsObserved,
                         accuracyHistory,
                         fitnessHistory,
-                        onSnapshot,
+                        publishSnapshot,
                         cancellationToken)
                     .ConfigureAwait(false);
 
                 var generationMetrics = BuildGenerationMetrics(population);
+                if (IsGenerationFullyFailed(population))
+                {
+                    return CreateFinalSnapshot(
+                        publishSnapshot,
+                        BasicsExecutionState.Failed,
+                        "Execution failed.",
+                        string.IsNullOrWhiteSpace(generationMetrics.EvaluationFailureSummary)
+                            ? $"Generation {generation} produced no viable evaluations."
+                            : $"Generation {generation} produced no viable evaluations. {generationMetrics.EvaluationFailureSummary}.",
+                        speciationEpochId,
+                        generation,
+                        Array.Empty<PopulationMember>(),
+                        0,
+                        reproductionCalls,
+                        reproductionRunsObserved,
+                        effectiveTemplateDefinition,
+                        seedShape,
+                        accuracyHistory,
+                        fitnessHistory,
+                        lastObservedSnapshot);
+                }
+
                 accuracyHistory.Add(generationMetrics.BestAccuracy);
                 fitnessHistory.Add(generationMetrics.BestFitness);
 
@@ -171,12 +202,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     seedShape,
                     accuracyHistory,
                     fitnessHistory);
-                onSnapshot?.Invoke(generationSummary);
+                publishSnapshot(generationSummary);
 
                 if (generationMetrics.BestAccuracy >= 1f && generationMetrics.BestFitness >= 0.999f)
                 {
                     return CreateFinalSnapshot(
-                        onSnapshot,
+                        publishSnapshot,
                         BasicsExecutionState.Succeeded,
                         "Execution reached a perfect candidate.",
                         $"Generation {generation} achieved perfect {taskPlugin.Contract.DisplayName} accuracy.",
@@ -189,7 +220,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         effectiveTemplateDefinition,
                         seedShape,
                         accuracyHistory,
-                        fitnessHistory);
+                        fitnessHistory,
+                        lastObservedSnapshot);
                 }
 
                 var nextGeneration = await BreedNextGenerationAsync(
@@ -199,7 +231,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         cancellationToken,
                         onBreedProgress: (detail, activePopulationCount) =>
                         {
-                            onSnapshot?.Invoke(CreateSnapshot(
+                            publishSnapshot(CreateSnapshot(
                                 BasicsExecutionState.Running,
                                 $"Breeding generation {generation + 1}...",
                                 detail,
@@ -224,7 +256,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 if (nextGeneration.Count == 0)
                 {
                     return CreateFinalSnapshot(
-                        onSnapshot,
+                        publishSnapshot,
                         BasicsExecutionState.Failed,
                         "Execution failed.",
                         $"Generation {generation} could not produce a successor population.",
@@ -237,14 +269,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         effectiveTemplateDefinition,
                         seedShape,
                         accuracyHistory,
-                        fitnessHistory);
+                        fitnessHistory,
+                        lastObservedSnapshot);
                 }
 
                 population = nextGeneration;
             }
 
             return CreateFinalSnapshot(
-                onSnapshot,
+                publishSnapshot,
                 BasicsExecutionState.Stopped,
                 "Execution stopped.",
                 "The run was canceled by the operator.",
@@ -257,12 +290,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 effectiveTemplateDefinition,
                 seedShape,
                 accuracyHistory,
-                fitnessHistory);
+                fitnessHistory,
+                lastObservedSnapshot);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return CreateFinalSnapshot(
-                onSnapshot,
+                publishSnapshot,
                 BasicsExecutionState.Stopped,
                 "Execution stopped.",
                 "The run was canceled by the operator.",
@@ -275,12 +309,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 effectiveTemplateDefinition,
                 seedShape,
                 accuracyHistory,
-                fitnessHistory);
+                fitnessHistory,
+                lastObservedSnapshot);
         }
         catch (Exception ex)
         {
             return CreateFinalSnapshot(
-                onSnapshot,
+                publishSnapshot,
                 BasicsExecutionState.Failed,
                 "Execution failed.",
                 ex.GetBaseException().Message,
@@ -293,7 +328,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 effectiveTemplateDefinition,
                 seedShape,
                 accuracyHistory,
-                fitnessHistory);
+                fitnessHistory,
+                lastObservedSnapshot);
         }
     }
 
@@ -656,6 +692,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     }
 
                     await _runtimeClient.KillBrainAsync(brainId, "basics_evaluation_complete", cancellationToken).ConfigureAwait(false);
+                    await WaitForBrainTerminationAsync(brainId, cancellationToken).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -717,6 +754,32 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         return null;
+    }
+
+    private async Task WaitForBrainTerminationAsync(Guid brainId, CancellationToken cancellationToken)
+    {
+        var terminated = await _runtimeClient.WaitForBrainTerminatedAsync(
+                brainId,
+                BrainTeardownTimeout,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (terminated?.BrainId?.TryToGuid(out var terminatedBrainId) == true && terminatedBrainId == brainId)
+        {
+            return;
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(BrainTeardownTimeout);
+        while (!timeoutCts.IsCancellationRequested)
+        {
+            var info = await _runtimeClient.RequestBrainInfoAsync(brainId, timeoutCts.Token).ConfigureAwait(false);
+            if (info is null || info.InputWidth == 0 || info.OutputWidth == 0)
+            {
+                return;
+            }
+
+            await Task.Delay(BrainTeardownPollInterval, timeoutCts.Token).ConfigureAwait(false);
+        }
     }
 
     private async Task<List<PopulationMember>> BreedNextGenerationAsync(
@@ -998,6 +1061,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static bool HasArtifactRef(ArtifactRef? artifactRef)
         => artifactRef is not null && artifactRef.TryToSha256Bytes(out _);
 
+    private static bool IsGenerationFullyFailed(IReadOnlyList<PopulationMember> population)
+        => population.Count > 0
+           && population.All(static member =>
+               member.LastEvaluation is { Fitness: <= 0f, Accuracy: <= 0f } evaluation
+               && evaluation.Diagnostics.Count > 0);
+
     private string ResolveBackingStoreRoot(string templateId)
     {
         if (!string.IsNullOrWhiteSpace(_publishingOptions.BackingStoreRoot))
@@ -1055,7 +1124,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             Diagnostics: new[] { diagnostic });
 
     private static BasicsExecutionSnapshot CreateFinalSnapshot(
-        Action<BasicsExecutionSnapshot>? onSnapshot,
+        Action<BasicsExecutionSnapshot> onSnapshot,
         BasicsExecutionState state,
         string statusText,
         string detailText,
@@ -1068,9 +1137,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         ArtifactRef? effectiveTemplateDefinition,
         BasicsResolvedSeedShape? seedShape,
         IReadOnlyList<float> accuracyHistory,
-        IReadOnlyList<float> fitnessHistory)
+        IReadOnlyList<float> fitnessHistory,
+        BasicsExecutionSnapshot? baselineSnapshot)
     {
-        var snapshot = CreateSnapshot(
+        var snapshot = CreateTerminalSnapshot(
             state,
             statusText,
             detailText,
@@ -1083,13 +1153,73 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             effectiveTemplateDefinition,
             seedShape,
             accuracyHistory,
-            fitnessHistory);
-        onSnapshot?.Invoke(snapshot);
+            fitnessHistory,
+            baselineSnapshot);
+        onSnapshot(snapshot);
         return snapshot;
     }
 
+    private static BasicsExecutionSnapshot CreateTerminalSnapshot(
+        BasicsExecutionState state,
+        string statusText,
+        string detailText,
+        ulong? speciationEpochId,
+        int generation,
+        IReadOnlyList<PopulationMember> population,
+        int activeBrainCount,
+        ulong reproductionCalls,
+        ulong reproductionRunsObserved,
+        ArtifactRef? effectiveTemplateDefinition,
+        BasicsResolvedSeedShape? seedShape,
+        IReadOnlyList<float> accuracyHistory,
+        IReadOnlyList<float> fitnessHistory,
+        BasicsExecutionSnapshot? baselineSnapshot)
+    {
+        if (!ShouldUseBaselineSnapshot(population, baselineSnapshot))
+        {
+            return CreateSnapshot(
+                state,
+                statusText,
+                detailText,
+                speciationEpochId,
+                generation,
+                population,
+                activeBrainCount,
+                reproductionCalls,
+                reproductionRunsObserved,
+                effectiveTemplateDefinition,
+                seedShape,
+                accuracyHistory,
+                fitnessHistory);
+        }
+
+        var baseline = baselineSnapshot!;
+        return new BasicsExecutionSnapshot(
+            State: state,
+            StatusText: statusText,
+            DetailText: detailText,
+            SpeciationEpochId: speciationEpochId ?? baseline.SpeciationEpochId,
+            EvaluationFailureCount: baseline.EvaluationFailureCount,
+            EvaluationFailureSummary: baseline.EvaluationFailureSummary,
+            Generation: Math.Max(generation, baseline.Generation),
+            PopulationCount: baseline.PopulationCount,
+            ActiveBrainCount: activeBrainCount,
+            SpeciesCount: baseline.SpeciesCount,
+            ReproductionCalls: reproductionCalls,
+            ReproductionRunsObserved: reproductionRunsObserved,
+            CapacityUtilization: 0f,
+            BestAccuracy: baseline.BestAccuracy,
+            BestFitness: baseline.BestFitness,
+            MeanFitness: baseline.MeanFitness,
+            EffectiveTemplateDefinition: effectiveTemplateDefinition?.Clone() ?? baseline.EffectiveTemplateDefinition?.Clone(),
+            SeedShape: seedShape ?? baseline.SeedShape,
+            BestCandidate: CloneBestCandidate(baseline.BestCandidate),
+            AccuracyHistory: MergeHistory(accuracyHistory, baseline.AccuracyHistory),
+            BestFitnessHistory: MergeHistory(fitnessHistory, baseline.BestFitnessHistory));
+    }
+
     private static void PublishSnapshot(
-        Action<BasicsExecutionSnapshot>? onSnapshot,
+        Action<BasicsExecutionSnapshot> onSnapshot,
         BasicsExecutionState state,
         string statusText,
         string detailText,
@@ -1112,7 +1242,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<float> accuracyHistory,
         IReadOnlyList<float> fitnessHistory)
     {
-        onSnapshot?.Invoke(new BasicsExecutionSnapshot(
+        onSnapshot(new BasicsExecutionSnapshot(
             state,
             statusText,
             detailText,
@@ -1135,6 +1265,28 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             accuracyHistory.ToArray(),
             fitnessHistory.ToArray()));
     }
+
+    private static bool ShouldUseBaselineSnapshot(
+        IReadOnlyList<PopulationMember> population,
+        BasicsExecutionSnapshot? baselineSnapshot)
+        => baselineSnapshot is not null
+           && (population.Count == 0 || population.All(static member => member.LastEvaluation is null));
+
+    private static BasicsExecutionBestCandidateSummary? CloneBestCandidate(BasicsExecutionBestCandidateSummary? candidate)
+        => candidate is null
+            ? null
+            : new BasicsExecutionBestCandidateSummary(
+                candidate.ArtifactSha256,
+                candidate.SpeciesId,
+                candidate.Accuracy,
+                candidate.Fitness,
+                new Dictionary<string, float>(candidate.ScoreBreakdown, StringComparer.Ordinal),
+                candidate.Diagnostics.ToArray());
+
+    private static IReadOnlyList<float> MergeHistory(
+        IReadOnlyList<float> current,
+        IReadOnlyList<float> baseline)
+        => current.Count > 0 ? current.ToArray() : baseline.ToArray();
 
     private static BasicsExecutionSnapshot CreateSnapshot(
         BasicsExecutionState state,
