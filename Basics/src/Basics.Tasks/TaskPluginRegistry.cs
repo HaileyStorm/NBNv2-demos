@@ -4,13 +4,19 @@ namespace Nbn.Demos.Basics.Tasks;
 
 public static class TaskPluginRegistry
 {
-    private static readonly IReadOnlyDictionary<string, IBasicsTaskPlugin> Implemented =
-        new Dictionary<string, IBasicsTaskPlugin>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["and"] = new AndTaskPlugin()
-        };
+    private static readonly IReadOnlyList<IBasicsTaskPlugin> Plugins =
+    [
+        new AndTaskPlugin(),
+        new OrTaskPlugin(),
+        new XorTaskPlugin(),
+        new GtTaskPlugin(),
+        new MultiplicationTaskPlugin()
+    ];
 
-    public static IReadOnlyList<IBasicsTaskPlugin> ImplementedPlugins { get; } = Implemented.Values.ToArray();
+    private static readonly IReadOnlyDictionary<string, IBasicsTaskPlugin> Implemented =
+        Plugins.ToDictionary(plugin => plugin.Contract.TaskId, StringComparer.OrdinalIgnoreCase);
+
+    public static IReadOnlyList<IBasicsTaskPlugin> ImplementedPlugins { get; } = Plugins;
 
     public static bool TryGet(string taskId, out IBasicsTaskPlugin plugin)
     {

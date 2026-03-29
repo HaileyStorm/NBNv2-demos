@@ -9,6 +9,7 @@ using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Validation;
 using Repro = Nbn.Proto.Repro;
+using System.Reflection;
 
 namespace Nbn.Demos.Basics.Environment.Tests;
 
@@ -255,6 +256,30 @@ public sealed class BasicsExecutionSessionTests
         {
             await session.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public void TransportFailure_UsesSharedBreakdownShape_ForAllImplementedTaskFamilies()
+    {
+        var method = typeof(BasicsExecutionSession).GetMethod("CreateTransportFailure", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var result = Assert.IsType<BasicsTaskEvaluationResult>(method!.Invoke(null, new object[] { "transport_failed" }));
+
+        Assert.Equal(0f, result.Fitness);
+        Assert.Equal(0f, result.Accuracy);
+        Assert.Equal(0f, result.ScoreBreakdown["task_accuracy"]);
+        Assert.Equal(0f, result.ScoreBreakdown["classification_accuracy"]);
+        Assert.Equal(0f, result.ScoreBreakdown["tolerance_accuracy"]);
+        Assert.Equal(0f, result.ScoreBreakdown["dataset_coverage"]);
+        Assert.Equal(0f, result.ScoreBreakdown["truth_table_coverage"]);
+        Assert.Equal(0f, result.ScoreBreakdown["comparison_set_coverage"]);
+        Assert.Equal(0f, result.ScoreBreakdown["evaluation_set_coverage"]);
+        Assert.Equal(1f, result.ScoreBreakdown["negative_mean_output"]);
+        Assert.Equal(1f, result.ScoreBreakdown["positive_mean_gap"]);
+        Assert.Equal(1f, result.ScoreBreakdown["zero_product_mean_output"]);
+        Assert.Equal(1f, result.ScoreBreakdown["unit_product_gap"]);
+        Assert.Equal(1f, result.ScoreBreakdown["midrange_mean_absolute_error"]);
     }
 
     [Fact]

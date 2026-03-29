@@ -12,7 +12,7 @@
 - A task-plugin test project in `tests/Basics.Tasks.Tests`.
 - A template-anchored seed-population contract: initial brains are exact-template or bounded minor deviations, not unconstrained random topologies.
 - IO-only runtime plumbing for environment work. Capacity sizing is intended to come through IO, not direct SettingsMonitor calls by the demo.
-- The first real task plugin (`AND`) and registry wiring so the UI can resolve at least one available task instead of showing only placeholders.
+- Implemented deterministic task plugins for `AND`, `OR`, `XOR`, `GT`, and `Multiplication`, all wired through the shared registry for the UI and harness.
 
 ## Design Direction
 
@@ -25,6 +25,30 @@
   - species-balance pressure prevents one bootstrap family from monopolizing the run budget
   - run counts stay bounded by IO-reported capacity recommendations and any explicit overrides
 - Shared metrics expected by the future UI include accuracy, best/mean fitness, population count, active brains, species count, reproduction activity, and capacity utilization.
+
+## Implemented Task Contracts
+
+All implemented Basics tasks use the same `2 -> 1` geometry, require tick-aligned evaluation, validate finite sample and observation values, and reject any dataset that drifts from the plugin's canonical deterministic set before awarding fitness.
+
+### Boolean truth-table tasks
+
+- `AND`, `OR`, and `XOR` use canonical boolean inputs `a,b in {0,1}` and normalized boolean output `y in {0,1}`.
+- Each plugin evaluates the full deterministic four-row truth table in fixed order: `00`, `01`, `10`, `11`.
+- Boolean scoring exposes shared keys `task_accuracy`, `mean_absolute_error`, `mean_squared_error`, `target_proximity_fitness`, and `dataset_coverage`, plus boolean-specific keys `classification_accuracy`, `negative_mean_output`, `positive_mean_gap`, and `truth_table_coverage`.
+
+### GT (`a > b`)
+
+- `GT` uses bounded scalar inputs `a,b in {0.0, 0.5, 1.0}` and normalized boolean output `y in {0,1}` where `1` means `a > b` and equality scores `0`.
+- The deterministic comparison dataset is the full `3 x 3` grid over those bounded scalar inputs, including ties.
+- Scoring uses the same shared boolean breakdown contract as the truth-table tasks, with `comparison_set_coverage` as the task-specific coverage alias.
+
+### Multiplication
+
+- `Multiplication` uses bounded scalar inputs `a,b in {0.0, 0.25, 0.5, 0.75, 1.0}`.
+- The deterministic evaluation set is the full `5 x 5` grid over that domain.
+- The expected output is the normalized product `a * b`. Because the input domain is already bounded to `[0,1]`, no extra remapping is applied.
+- Accuracy is tolerance-based for this task: a sample counts as correct when the observed output is within `+/-0.05` of the canonical product target.
+- Shared breakdown keys remain `task_accuracy`, `mean_absolute_error`, `mean_squared_error`, `target_proximity_fitness`, and `dataset_coverage`; task-specific regression keys are `tolerance_accuracy`, `zero_product_mean_output`, `unit_product_gap`, `midrange_mean_absolute_error`, and `evaluation_set_coverage`.
 
 ## Project Layout
 
@@ -75,4 +99,4 @@ dotnet run --project src/Basics.Harness/Basics.Harness.csproj -- smoke-local
 
 `smoke-local` boots a temporary HiveMind/IO/Reproduction/Speciation/Worker stack in-process, waits for IO readiness, runs a reduced one-trial Basics harness profile, writes a report under `artifacts/live-trials/local-smoke/`, and then tears the stack down. It validates startup, readiness, IO wiring, and harness execution flow; it is intentionally a smoke check, not a guarantee that the AND task converges to a perfect candidate within one short local run.
 
-Later issues will add the remaining task plugins and broader operator workflows on top of this shared environment, task library, UI shell, and live harness.
+Later issues will build broader operator workflows and additional task families on top of this shared environment, task library, UI shell, and live harness.

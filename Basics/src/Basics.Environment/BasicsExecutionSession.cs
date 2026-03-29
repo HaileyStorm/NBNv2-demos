@@ -1414,10 +1414,21 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             SamplesCorrect: 0,
             ScoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
             {
+                ["task_accuracy"] = 0f,
                 ["classification_accuracy"] = 0f,
+                ["tolerance_accuracy"] = 0f,
                 ["mean_absolute_error"] = 1f,
                 ["mean_squared_error"] = 1f,
-                ["truth_table_coverage"] = 0f
+                ["target_proximity_fitness"] = 0f,
+                ["dataset_coverage"] = 0f,
+                ["negative_mean_output"] = 1f,
+                ["positive_mean_gap"] = 1f,
+                ["zero_product_mean_output"] = 1f,
+                ["unit_product_gap"] = 1f,
+                ["midrange_mean_absolute_error"] = 1f,
+                ["truth_table_coverage"] = 0f,
+                ["comparison_set_coverage"] = 0f,
+                ["evaluation_set_coverage"] = 0f
             },
             Diagnostics: new[] { diagnostic });
 

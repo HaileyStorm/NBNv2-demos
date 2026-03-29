@@ -380,6 +380,7 @@ public sealed class BasicsLiveTrialHarnessTests
                 Complexity: new BasicsDefinitionComplexitySummary(1, 1, 3),
                 ScoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
                 {
+                    ["task_accuracy"] = bestAccuracy,
                     ["classification_accuracy"] = bestAccuracy
                 },
                 Diagnostics: Array.Empty<string>()),
