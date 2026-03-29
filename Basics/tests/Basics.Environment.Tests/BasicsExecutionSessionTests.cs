@@ -104,6 +104,7 @@ public sealed class BasicsExecutionSessionTests
                         CapacityScore: 1f,
                         EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
                         Summary: "test"),
+                    OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
                     Reproduction: BasicsReproductionPolicy.CreateDefault(),
                     Scheduling: BasicsReproductionSchedulingPolicy.Default,
                     Metrics: BasicsMetricsContract.Default,
@@ -120,6 +121,8 @@ public sealed class BasicsExecutionSessionTests
             Assert.Equal(1, runtimeClient.GetSpeciationConfigCallCount);
             Assert.Equal(1, runtimeClient.SetSpeciationConfigCallCount);
             Assert.True(runtimeClient.SpeciationEpochStartedBeforeFirstReproduce);
+            Assert.Contains(OutputVectorSource.Potential, runtimeClient.SetOutputVectorSourceRequests);
+            Assert.True(runtimeClient.VectorSubscriptionCount > 0);
             Assert.Contains(snapshots, snapshot => snapshot.State == BasicsExecutionState.Running);
             Assert.True(final.AccuracyHistory.Count >= 2);
         }
@@ -129,10 +132,79 @@ public sealed class BasicsExecutionSessionTests
         }
     }
 
+    [Fact]
+    public async Task ExecutionSession_UsesEventedOutputMode_WhenConfigured()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient();
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.EventedOutput),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.True(runtimeClient.SingleSubscriptionCount > 0);
+            Assert.Equal(0, runtimeClient.VectorSubscriptionCount);
+            Assert.Empty(runtimeClient.SetOutputVectorSourceRequests);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_UsesBufferVectorSource_WhenConfigured()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient();
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorBuffer),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.Contains(OutputVectorSource.Buffer, runtimeClient.SetOutputVectorSourceRequests);
+            Assert.True(runtimeClient.VectorSubscriptionCount > 0);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    private static BasicsEnvironmentPlan CreatePlan(BasicsOutputObservationMode outputObservationMode)
+        => new(
+            SelectedTask: new AndTaskPlugin().Contract,
+            SeedTemplate: BasicsSeedTemplateContract.CreateDefault(),
+            Capacity: new BasicsCapacityRecommendation(
+                Source: BasicsCapacitySource.RuntimePlacementInventory,
+                EligibleWorkerCount: 1,
+                RecommendedInitialPopulationCount: 2,
+                RecommendedReproductionRunCount: 1,
+                RecommendedMaxConcurrentBrains: 1,
+                CapacityScore: 1f,
+                EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                Summary: "test"),
+            OutputObservationMode: outputObservationMode,
+            Reproduction: BasicsReproductionPolicy.CreateDefault(),
+            Scheduling: BasicsReproductionSchedulingPolicy.Default,
+            Metrics: BasicsMetricsContract.Default,
+            PlannedAtUtc: DateTimeOffset.UtcNow);
+
     private sealed class FakeBasicsRuntimeClient : IBasicsRuntimeClient
     {
         private readonly Dictionary<Guid, ArtifactRef> _brainDefinitions = new();
         private readonly Dictionary<Guid, Queue<BasicsRuntimeOutputVector>> _outputs = new();
+        private readonly Dictionary<Guid, Queue<BasicsRuntimeOutputEvent>> _outputEvents = new();
         private readonly Dictionary<Guid, ulong> _ticks = new();
         private readonly Dictionary<string, string> _behaviorByArtifactSha = new(StringComparer.OrdinalIgnoreCase);
         private int _childIndex;
@@ -142,6 +214,9 @@ public sealed class BasicsExecutionSessionTests
         public int GetSpeciationConfigCallCount { get; private set; }
         public int SetSpeciationConfigCallCount { get; private set; }
         public bool SpeciationEpochStartedBeforeFirstReproduce { get; private set; }
+        public int VectorSubscriptionCount { get; private set; }
+        public int SingleSubscriptionCount { get; private set; }
+        public List<OutputVectorSource> SetOutputVectorSourceRequests { get; } = new();
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
             => Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = clientName, ServerTimeMs = 1 });
@@ -162,6 +237,7 @@ public sealed class BasicsExecutionSessionTests
             var brainId = Guid.NewGuid();
             _brainDefinitions[brainId] = request.BrainDef.Clone();
             _outputs[brainId] = new Queue<BasicsRuntimeOutputVector>();
+            _outputEvents[brainId] = new Queue<BasicsRuntimeOutputEvent>();
             _ticks[brainId] = 0;
             return Task.FromResult<SpawnBrainViaIOAck?>(new SpawnBrainViaIOAck
             {
@@ -173,9 +249,21 @@ public sealed class BasicsExecutionSessionTests
         }
 
         public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
+        {
+            VectorSubscriptionCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task SubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
+        {
+            SingleSubscriptionCount++;
+            return Task.CompletedTask;
+        }
 
         public Task UnsubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task UnsubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
         public Task SendInputVectorAsync(Guid brainId, IReadOnlyList<float> values, CancellationToken cancellationToken = default)
@@ -190,12 +278,25 @@ public sealed class BasicsExecutionSessionTests
             };
 
             _outputs[brainId].Enqueue(new BasicsRuntimeOutputVector(brainId, tick, new[] { output }));
+            if (output >= 0.5f)
+            {
+                _outputEvents[brainId].Enqueue(new BasicsRuntimeOutputEvent(brainId, 0, tick, output));
+            }
+
             return Task.CompletedTask;
         }
 
         public void ResetOutputBuffer(Guid brainId)
         {
             if (_outputs.TryGetValue(brainId, out var queue))
+            {
+                queue.Clear();
+            }
+        }
+
+        public void ResetOutputEventBuffer(Guid brainId)
+        {
+            if (_outputEvents.TryGetValue(brainId, out var queue))
             {
                 queue.Clear();
             }
@@ -222,12 +323,46 @@ public sealed class BasicsExecutionSessionTests
             return Task.FromResult<BasicsRuntimeOutputVector?>(null);
         }
 
+        public Task<BasicsRuntimeOutputEvent?> WaitForOutputEventAsync(
+            Guid brainId,
+            ulong afterTickExclusive,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+        {
+            if (_outputEvents.TryGetValue(brainId, out var queue))
+            {
+                while (queue.Count > 0)
+                {
+                    var output = queue.Dequeue();
+                    if (output.TickId > afterTickExclusive)
+                    {
+                        return Task.FromResult<BasicsRuntimeOutputEvent?>(output);
+                    }
+                }
+            }
+
+            return Task.FromResult<BasicsRuntimeOutputEvent?>(null);
+        }
+
         public Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default)
         {
             _brainDefinitions.Remove(brainId);
             _outputs.Remove(brainId);
+            _outputEvents.Remove(brainId);
             _ticks.Remove(brainId);
             return Task.FromResult<KillBrainViaIOAck?>(new KillBrainViaIOAck { Accepted = true });
+        }
+
+        public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
+            OutputVectorSource outputVectorSource,
+            CancellationToken cancellationToken = default)
+        {
+            SetOutputVectorSourceRequests.Add(outputVectorSource);
+            return Task.FromResult<Nbn.Proto.Io.SetOutputVectorSourceAck?>(new Nbn.Proto.Io.SetOutputVectorSourceAck
+            {
+                Success = true,
+                OutputVectorSource = outputVectorSource
+            });
         }
 
         public Task<Repro.ReproduceResult?> ReproduceByArtifactsAsync(

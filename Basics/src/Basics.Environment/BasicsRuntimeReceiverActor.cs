@@ -6,6 +6,8 @@ namespace Nbn.Demos.Basics.Environment;
 
 internal interface IBasicsRuntimeEventSink
 {
+    void OnOutputEvent(OutputEvent output);
+
     void OnOutputVectorEvent(OutputVectorEvent output);
 }
 
@@ -33,8 +35,22 @@ internal sealed class BasicsRuntimeReceiverActor : IActor
                     SubscriberActor = PidLabel(context.Self, context.System.Address)
                 });
                 break;
+            case BasicsSubscribeOutputsCommand subscribe:
+                SendToIo(context, new SubscribeOutputs
+                {
+                    BrainId = subscribe.BrainId.ToProtoUuid(),
+                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                });
+                break;
             case BasicsUnsubscribeOutputsVectorCommand unsubscribe:
                 SendToIo(context, new UnsubscribeOutputsVector
+                {
+                    BrainId = unsubscribe.BrainId.ToProtoUuid(),
+                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                });
+                break;
+            case BasicsUnsubscribeOutputsCommand unsubscribe:
+                SendToIo(context, new UnsubscribeOutputs
                 {
                     BrainId = unsubscribe.BrainId.ToProtoUuid(),
                     SubscriberActor = PidLabel(context.Self, context.System.Address)
@@ -47,6 +63,9 @@ internal sealed class BasicsRuntimeReceiverActor : IActor
                 };
                 message.Values.Add(vector.Values);
                 SendToIo(context, message);
+                break;
+            case OutputEvent outputEvent:
+                _sink.OnOutputEvent(outputEvent.Clone());
                 break;
             case OutputVectorEvent outputVector:
                 _sink.OnOutputVectorEvent(outputVector.Clone());
@@ -77,6 +96,10 @@ internal sealed record BasicsSetIoGatewayPid(PID? Pid);
 
 internal sealed record BasicsSubscribeOutputsVectorCommand(Guid BrainId);
 
+internal sealed record BasicsSubscribeOutputsCommand(Guid BrainId);
+
 internal sealed record BasicsUnsubscribeOutputsVectorCommand(Guid BrainId);
+
+internal sealed record BasicsUnsubscribeOutputsCommand(Guid BrainId);
 
 internal sealed record BasicsInputVectorCommand(Guid BrainId, IReadOnlyList<float> Values);

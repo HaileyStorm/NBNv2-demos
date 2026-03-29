@@ -26,6 +26,8 @@ public sealed record BasicsRuntimeClientOptions
 
 public sealed record BasicsRuntimeOutputVector(Guid BrainId, ulong TickId, IReadOnlyList<float> Values);
 
+public sealed record BasicsRuntimeOutputEvent(Guid BrainId, uint OutputIndex, ulong TickId, float Value);
+
 public interface IBasicsRuntimeClient : IAsyncDisposable
 {
     Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default);
@@ -38,11 +40,17 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
 
     Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default);
 
+    Task SubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default);
+
     Task UnsubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default);
+
+    Task UnsubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default);
 
     Task SendInputVectorAsync(Guid brainId, IReadOnlyList<float> values, CancellationToken cancellationToken = default);
 
     void ResetOutputBuffer(Guid brainId);
+
+    void ResetOutputEventBuffer(Guid brainId);
 
     Task<BasicsRuntimeOutputVector?> WaitForOutputVectorAsync(
         Guid brainId,
@@ -50,7 +58,17 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
 
+    Task<BasicsRuntimeOutputEvent?> WaitForOutputEventAsync(
+        Guid brainId,
+        ulong afterTickExclusive,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
+
     Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default);
+
+    Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
+        Nbn.Proto.Control.OutputVectorSource outputVectorSource,
+        CancellationToken cancellationToken = default);
 
     Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByArtifactsAsync(
         ReproduceByArtifactsRequest request,
@@ -75,6 +93,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     private readonly PID _receiverPid;
     private readonly TimeSpan _requestTimeout;
     private readonly ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>> _outputBuffers;
+    private readonly ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputEvent>> _outputEventBuffers;
     private bool _disposed;
 
     private BasicsRuntimeClient(
@@ -88,6 +107,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         _receiverPid = receiverPid;
         _requestTimeout = requestTimeout;
         _outputBuffers = new ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>>();
+        _outputEventBuffers = new ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputEvent>>();
     }
 
     public static async Task<BasicsRuntimeClient> StartAsync(
@@ -113,6 +133,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             new PID(options.IoAddress.Trim(), options.IoGatewayName.Trim()),
             receiverPid,
             options.RequestTimeout);
+        runtimeEventSink.OnSingleOutput = client.OnOutputEvent;
         runtimeEventSink.OnOutput = client.OnOutputVectorEvent;
         system.Root.Send(receiverPid, new BasicsSetIoGatewayPid(client._ioPid));
         return client;
@@ -219,6 +240,19 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         return Task.CompletedTask;
     }
 
+    public Task SubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return Task.CompletedTask;
+        }
+
+        EnsureOutputEventBuffer(brainId);
+        _system.Root.Send(_receiverPid, new BasicsSubscribeOutputsCommand(brainId));
+        return Task.CompletedTask;
+    }
+
     public Task UnsubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -228,6 +262,18 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         }
 
         _system.Root.Send(_receiverPid, new BasicsUnsubscribeOutputsVectorCommand(brainId));
+        return Task.CompletedTask;
+    }
+
+    public Task UnsubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return Task.CompletedTask;
+        }
+
+        _system.Root.Send(_receiverPid, new BasicsUnsubscribeOutputsCommand(brainId));
         return Task.CompletedTask;
     }
 
@@ -255,6 +301,23 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         }
 
         if (!_outputBuffers.TryGetValue(brainId, out var channel))
+        {
+            return;
+        }
+
+        while (channel.Reader.TryRead(out _))
+        {
+        }
+    }
+
+    public void ResetOutputEventBuffer(Guid brainId)
+    {
+        if (brainId == Guid.Empty)
+        {
+            return;
+        }
+
+        if (!_outputEventBuffers.TryGetValue(brainId, out var channel))
         {
             return;
         }
@@ -303,6 +366,45 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         }
     }
 
+    public async Task<BasicsRuntimeOutputEvent?> WaitForOutputEventAsync(
+        Guid brainId,
+        ulong afterTickExclusive,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var channel = EnsureOutputEventBuffer(brainId);
+        using var timeoutCts = timeout > TimeSpan.Zero
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : null;
+        if (timeoutCts is not null)
+        {
+            timeoutCts.CancelAfter(timeout);
+        }
+
+        var effectiveToken = timeoutCts?.Token ?? cancellationToken;
+        try
+        {
+            while (true)
+            {
+                var output = await channel.Reader.ReadAsync(effectiveToken).ConfigureAwait(false);
+                if (output.TickId > afterTickExclusive)
+                {
+                    return output;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (effectiveToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
     public async Task<KillBrainViaIOAck?> KillBrainAsync(
         Guid brainId,
         string reason,
@@ -325,6 +427,30 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                             BrainId = brainId.ToProtoUuid(),
                             Reason = reason ?? string.Empty
                         }
+                    },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
+        Nbn.Proto.Control.OutputVectorSource outputVectorSource,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+
+        try
+        {
+            return await _system.Root.RequestAsync<Nbn.Proto.Io.SetOutputVectorSourceAck>(
+                    _ioPid,
+                    new Nbn.Proto.Io.SetOutputVectorSource
+                    {
+                        OutputVectorSource = outputVectorSource
                     },
                     _requestTimeout)
                 .WaitAsync(cancellationToken)
@@ -446,13 +572,34 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             channel.Writer.TryComplete();
         }
 
+        foreach (var channel in _outputEventBuffers.Values)
+        {
+            channel.Writer.TryComplete();
+        }
+
         await _system.Remote().ShutdownAsync(graceful: true).ConfigureAwait(false);
         await _system.ShutdownAsync().ConfigureAwait(false);
+    }
+
+    void IBasicsRuntimeEventSink.OnOutputEvent(OutputEvent output)
+    {
+        OnOutputEvent(output);
     }
 
     void IBasicsRuntimeEventSink.OnOutputVectorEvent(OutputVectorEvent output)
     {
         OnOutputVectorEvent(output);
+    }
+
+    private void OnOutputEvent(OutputEvent output)
+    {
+        if (output.BrainId?.TryToGuid(out var brainId) != true || brainId == Guid.Empty)
+        {
+            return;
+        }
+
+        var channel = EnsureOutputEventBuffer(brainId);
+        channel.Writer.TryWrite(new BasicsRuntimeOutputEvent(brainId, output.OutputIndex, output.TickId, output.Value));
     }
 
     private void OnOutputVectorEvent(OutputVectorEvent output)
@@ -474,6 +621,18 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         return _outputBuffers.GetOrAdd(
             brainId,
             static _ => Channel.CreateUnbounded<BasicsRuntimeOutputVector>(
+                new UnboundedChannelOptions
+                {
+                    SingleReader = false,
+                    SingleWriter = false
+                }));
+    }
+
+    private Channel<BasicsRuntimeOutputEvent> EnsureOutputEventBuffer(Guid brainId)
+    {
+        return _outputEventBuffers.GetOrAdd(
+            brainId,
+            static _ => Channel.CreateUnbounded<BasicsRuntimeOutputEvent>(
                 new UnboundedChannelOptions
                 {
                     SingleReader = false,
@@ -528,7 +687,13 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
     private sealed class RuntimeEventSinkProxy : IBasicsRuntimeEventSink
     {
+        public Action<OutputEvent>? OnSingleOutput { get; set; }
         public Action<OutputVectorEvent>? OnOutput { get; set; }
+
+        public void OnOutputEvent(OutputEvent output)
+        {
+            OnSingleOutput?.Invoke(output);
+        }
 
         public void OnOutputVectorEvent(OutputVectorEvent output)
         {

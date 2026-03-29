@@ -1,6 +1,7 @@
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Shared;
+using ProtoControl = Nbn.Proto.Control;
 using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Demos.Basics.Environment;
@@ -324,6 +325,24 @@ public sealed record BasicsReproductionPolicy
     }
 }
 
+public enum BasicsOutputObservationMode
+{
+    VectorPotential = 0,
+    EventedOutput = 1,
+    VectorBuffer = 2
+}
+
+public static class BasicsOutputObservationModeExtensions
+{
+    public static bool UsesVectorSubscription(this BasicsOutputObservationMode mode)
+        => mode is BasicsOutputObservationMode.VectorPotential or BasicsOutputObservationMode.VectorBuffer;
+
+    public static ProtoControl.OutputVectorSource ResolveVectorSource(this BasicsOutputObservationMode mode)
+        => mode == BasicsOutputObservationMode.VectorBuffer
+            ? ProtoControl.OutputVectorSource.Buffer
+            : ProtoControl.OutputVectorSource.Potential;
+}
+
 public sealed record BasicsEnvironmentOptions
 {
     public string ClientName { get; init; } = "nbn.basics.environment";
@@ -337,6 +356,7 @@ public sealed record BasicsEnvironmentOptions
     public BasicsSeedTemplateContract SeedTemplate { get; init; } = BasicsSeedTemplateContract.CreateDefault();
     public BasicsSizingOverrides SizingOverrides { get; init; } = new();
     public BasicsMetricsContract Metrics { get; init; } = BasicsMetricsContract.Default;
+    public BasicsOutputObservationMode OutputObservationMode { get; init; } = BasicsOutputObservationMode.VectorPotential;
     public BasicsReproductionPolicy Reproduction { get; init; } = BasicsReproductionPolicy.CreateDefault();
     public BasicsReproductionSchedulingPolicy Scheduling { get; init; } = BasicsReproductionSchedulingPolicy.Default;
 
@@ -383,6 +403,7 @@ public sealed record BasicsEnvironmentPlan(
     BasicsTaskContract SelectedTask,
     BasicsSeedTemplateContract SeedTemplate,
     BasicsCapacityRecommendation Capacity,
+    BasicsOutputObservationMode OutputObservationMode,
     BasicsReproductionPolicy Reproduction,
     BasicsReproductionSchedulingPolicy Scheduling,
     BasicsMetricsContract Metrics,

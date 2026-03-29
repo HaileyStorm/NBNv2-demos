@@ -94,13 +94,23 @@ public sealed class BasicsEnvironmentPlannerTests
         public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
+        public Task SubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
         public Task UnsubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task UnsubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
         public Task SendInputVectorAsync(Guid brainId, IReadOnlyList<float> values, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
         public void ResetOutputBuffer(Guid brainId)
+        {
+        }
+
+        public void ResetOutputEventBuffer(Guid brainId)
         {
         }
 
@@ -111,8 +121,20 @@ public sealed class BasicsEnvironmentPlannerTests
             CancellationToken cancellationToken = default)
             => Task.FromResult<BasicsRuntimeOutputVector?>(null);
 
+        public Task<BasicsRuntimeOutputEvent?> WaitForOutputEventAsync(
+            Guid brainId,
+            ulong afterTickExclusive,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<BasicsRuntimeOutputEvent?>(null);
+
         public Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default)
             => Task.FromResult<KillBrainViaIOAck?>(null);
+
+        public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
+            Nbn.Proto.Control.OutputVectorSource outputVectorSource,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<Nbn.Proto.Io.SetOutputVectorSourceAck?>(null);
 
         public Task<Repro.ReproduceResult?> ReproduceByArtifactsAsync(
             Repro.ReproduceByArtifactsRequest request,

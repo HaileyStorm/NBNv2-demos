@@ -29,6 +29,7 @@ public sealed class BasicsEnvironmentPlanner
             SelectedTask: options.SelectedTask,
             SeedTemplate: options.SeedTemplate,
             Capacity: capacity,
+            OutputObservationMode: options.OutputObservationMode,
             Reproduction: options.Reproduction,
             Scheduling: options.Scheduling,
             Metrics: options.Metrics,

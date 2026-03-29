@@ -95,6 +95,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 accuracyHistory,
                 fitnessHistory);
             await EnsureFreshSpeciationEpochAsync(cancellationToken).ConfigureAwait(false);
+            await ConfigureOutputObservationModeAsync(plan.OutputObservationMode, cancellationToken).ConfigureAwait(false);
 
             var targetPopulation = Math.Max(1, plan.Capacity.RecommendedInitialPopulationCount);
             var population = await SeedInitialPopulationAsync(
@@ -131,6 +132,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                         taskPlugin,
                         generation,
                         population,
+                        plan.OutputObservationMode,
                         effectiveTemplateDefinition,
                         seedShape,
                         reproductionCalls,
@@ -315,6 +317,28 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
         }
     }
 
+    private async Task ConfigureOutputObservationModeAsync(
+        BasicsOutputObservationMode mode,
+        CancellationToken cancellationToken)
+    {
+        if (!mode.UsesVectorSubscription())
+        {
+            return;
+        }
+
+        var ack = await _runtimeClient.SetOutputVectorSourceAsync(mode.ResolveVectorSource(), cancellationToken).ConfigureAwait(false);
+        if (ack is null)
+        {
+            throw new InvalidOperationException("Output vector source update returned no response.");
+        }
+
+        if (!ack.Success)
+        {
+            throw new InvalidOperationException(
+                $"Output vector source update failed: {ack.FailureReasonCode} {ack.FailureMessage}".Trim());
+        }
+    }
+
     private async Task<(ArtifactRef TemplateDefinition, BasicsResolvedSeedShape? SeedShape)> ResolveTemplateDefinitionAsync(
         BasicsSeedTemplateContract template,
         CancellationToken cancellationToken)
@@ -420,6 +444,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
         IBasicsTaskPlugin taskPlugin,
         int generation,
         IReadOnlyList<PopulationMember> population,
+        BasicsOutputObservationMode outputObservationMode,
         ArtifactRef? effectiveTemplateDefinition,
         BasicsResolvedSeedShape? seedShape,
         ulong reproductionCalls,
@@ -453,7 +478,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 fitnessHistory));
 
             var batchEvaluations = await Task.WhenAll(
-                    batch.Select(member => EvaluateMemberAsync(taskPlugin, member, cancellationToken)))
+                    batch.Select(member => EvaluateMemberAsync(taskPlugin, member, outputObservationMode, cancellationToken)))
                 .ConfigureAwait(false);
             evaluated.AddRange(batchEvaluations);
         }
@@ -464,6 +489,7 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
     private async Task<PopulationMember> EvaluateMemberAsync(
         IBasicsTaskPlugin taskPlugin,
         PopulationMember member,
+        BasicsOutputObservationMode outputObservationMode,
         CancellationToken cancellationToken)
     {
         Guid brainId = Guid.Empty;
@@ -497,23 +523,34 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 };
             }
 
-            await _runtimeClient.SubscribeOutputsVectorAsync(brainId, cancellationToken).ConfigureAwait(false);
-            _runtimeClient.ResetOutputBuffer(brainId);
+            if (outputObservationMode.UsesVectorSubscription())
+            {
+                await _runtimeClient.SubscribeOutputsVectorAsync(brainId, cancellationToken).ConfigureAwait(false);
+                _runtimeClient.ResetOutputBuffer(brainId);
+            }
+            else
+            {
+                await _runtimeClient.SubscribeOutputsAsync(brainId, cancellationToken).ConfigureAwait(false);
+                _runtimeClient.ResetOutputEventBuffer(brainId);
+            }
 
             var observations = new List<BasicsTaskObservation>();
             var samples = taskPlugin.BuildDeterministicDataset();
             ulong lastTick = 0;
 
-            await _runtimeClient.SendInputVectorAsync(brainId, PrimeInputVector, cancellationToken).ConfigureAwait(false);
-            var baseline = await _runtimeClient.WaitForOutputVectorAsync(
-                    brainId,
-                    afterTickExclusive: 0,
-                    timeout: EvaluationOutputTimeout,
-                    cancellationToken)
-                .ConfigureAwait(false);
-            if (baseline is not null)
+            if (outputObservationMode.UsesVectorSubscription())
             {
-                lastTick = baseline.TickId;
+                await _runtimeClient.SendInputVectorAsync(brainId, PrimeInputVector, cancellationToken).ConfigureAwait(false);
+                var baseline = await _runtimeClient.WaitForOutputVectorAsync(
+                        brainId,
+                        afterTickExclusive: 0,
+                        timeout: EvaluationOutputTimeout,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (baseline is not null)
+                {
+                    lastTick = baseline.TickId;
+                }
             }
 
             foreach (var sample in samples)
@@ -523,22 +560,44 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                         new[] { sample.InputA, sample.InputB },
                         cancellationToken)
                     .ConfigureAwait(false);
-                var output = await _runtimeClient.WaitForOutputVectorAsync(
-                        brainId,
-                        lastTick,
-                        EvaluationOutputTimeout,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-                if (output is null || output.Values.Count < taskPlugin.Contract.OutputWidth)
+                if (outputObservationMode.UsesVectorSubscription())
                 {
-                    return member with
+                    var output = await _runtimeClient.WaitForOutputVectorAsync(
+                            brainId,
+                            lastTick,
+                            EvaluationOutputTimeout,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    if (output is null || output.Values.Count < taskPlugin.Contract.OutputWidth)
                     {
-                        LastEvaluation = CreateTransportFailure("output_timeout_or_width_mismatch")
-                    };
-                }
+                        return member with
+                        {
+                            LastEvaluation = CreateTransportFailure("output_timeout_or_width_mismatch")
+                        };
+                    }
 
-                observations.Add(new BasicsTaskObservation(output.TickId, output.Values[0]));
-                lastTick = output.TickId;
+                    observations.Add(new BasicsTaskObservation(output.TickId, output.Values[0]));
+                    lastTick = output.TickId;
+                }
+                else
+                {
+                    var output = await _runtimeClient.WaitForOutputEventAsync(
+                            brainId,
+                            lastTick,
+                            EvaluationOutputTimeout,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    if (output is null)
+                    {
+                        lastTick++;
+                        observations.Add(new BasicsTaskObservation(lastTick, 0f));
+                    }
+                    else
+                    {
+                        lastTick = Math.Max(lastTick + 1, output.TickId);
+                        observations.Add(new BasicsTaskObservation(lastTick, output.Value));
+                    }
+                }
             }
 
             var evaluation = taskPlugin.Evaluate(
@@ -568,7 +627,15 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
             {
                 try
                 {
-                    await _runtimeClient.UnsubscribeOutputsVectorAsync(brainId, cancellationToken).ConfigureAwait(false);
+                    if (outputObservationMode.UsesVectorSubscription())
+                    {
+                        await _runtimeClient.UnsubscribeOutputsVectorAsync(brainId, cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await _runtimeClient.UnsubscribeOutputsAsync(brainId, cancellationToken).ConfigureAwait(false);
+                    }
+
                     await _runtimeClient.KillBrainAsync(brainId, "basics_evaluation_complete", cancellationToken).ConfigureAwait(false);
                 }
                 catch

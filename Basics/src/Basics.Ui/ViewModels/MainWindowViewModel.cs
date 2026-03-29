@@ -105,6 +105,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _metricsSecondaryStatus = "Population and resource summaries update when capacity is fetched or a run is active.";
     private TaskOption? _selectedTask;
     private StrengthSourceOption? _selectedStrengthSource;
+    private OutputObservationModeOption? _selectedOutputObservationMode;
 
     public MainWindowViewModel(UiDispatcher dispatcher)
     {
@@ -115,6 +116,9 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         StrengthSources = new ObservableCollection<StrengthSourceOption>(BuildStrengthSources());
         SelectedStrengthSource = StrengthSources.First(static option => option.Value == Repro.StrengthSource.StrengthBaseOnly);
+
+        OutputObservationModes = new ObservableCollection<OutputObservationModeOption>(BuildOutputObservationModes());
+        SelectedOutputObservationMode = OutputObservationModes.First(static option => option.Mode == BasicsOutputObservationMode.VectorPotential);
 
         ValidationErrors = new ObservableCollection<string>();
         MetricSummaries = new ObservableCollection<MetricSummaryItemViewModel>(BuildMetricSummaryItems());
@@ -147,6 +151,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     public ObservableCollection<TaskOption> Tasks { get; }
 
     public ObservableCollection<StrengthSourceOption> StrengthSources { get; }
+
+    public ObservableCollection<OutputObservationModeOption> OutputObservationModes { get; }
 
     public ObservableCollection<string> ValidationErrors { get; }
 
@@ -416,6 +422,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _selectedStrengthSource;
         set => SetProperty(ref _selectedStrengthSource, value);
+    }
+
+    public OutputObservationModeOption? SelectedOutputObservationMode
+    {
+        get => _selectedOutputObservationMode;
+        set => SetProperty(ref _selectedOutputObservationMode, value);
     }
 
     public string ProtectIoRegionNeuronCountsDisplay => "true";
@@ -735,12 +747,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         MetricsStatus = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
             ? $"{plan.SelectedTask.DisplayName} plugin is available; Start will seed an artifact pool, evaluate live brains, and update metrics here."
             : $"{plan.SelectedTask.DisplayName} plugin is not implemented yet.";
-        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, run count {plan.Capacity.RecommendedReproductionRunCount}.";
+        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, run count {plan.Capacity.RecommendedReproductionRunCount}, output mode {FormatOutputObservationMode(plan.OutputObservationMode)}.";
         if (!IsExecutionRunning)
         {
             ExecutionStatus = "Ready to start.";
             ExecutionDetail = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
-                ? $"Template {plan.SeedTemplate.TemplateId} will be published automatically if no artifact ref is supplied."
+                ? $"Template {plan.SeedTemplate.TemplateId} will be published automatically if no artifact ref is supplied. Output mode: {FormatOutputObservationMode(plan.OutputObservationMode)}."
                 : $"{plan.SelectedTask.DisplayName} cannot start until its plugin issue is implemented.";
         }
 
@@ -955,6 +967,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 Description: "Boolean AND over canonical 0/1 inputs and outputs."),
             SeedTemplate = seedTemplate,
             SizingOverrides = overrides,
+            OutputObservationMode = SelectedOutputObservationMode?.Mode ?? BasicsOutputObservationMode.VectorPotential,
             Reproduction = new BasicsReproductionPolicy
             {
                 StrengthSource = SelectedStrengthSource?.Value ?? Repro.StrengthSource.StrengthBaseOnly
@@ -1276,6 +1289,22 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return new StrengthSourceOption(Repro.StrengthSource.StrengthLiveCodes, "Base + live overlay codes");
     }
 
+    private static IEnumerable<OutputObservationModeOption> BuildOutputObservationModes()
+    {
+        yield return new OutputObservationModeOption(
+            BasicsOutputObservationMode.VectorPotential,
+            "Continuous potential",
+            "Recommended default for automated scoring; full vector every tick from activation/potential.");
+        yield return new OutputObservationModeOption(
+            BasicsOutputObservationMode.EventedOutput,
+            "OutputEvent",
+            "Sparse fire-only outputs; zeros are inferred when no event arrives.");
+        yield return new OutputObservationModeOption(
+            BasicsOutputObservationMode.VectorBuffer,
+            "Continuous buffer",
+            "Full vector every tick from persistent buffer values.");
+    }
+
     private static IEnumerable<MetricSummaryItemViewModel> BuildMetricSummaryItems()
     {
         yield return new MetricSummaryItemViewModel(BasicsMetricId.Accuracy, "Accuracy", "—", "No runtime samples yet.");
@@ -1288,6 +1317,16 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return new MetricSummaryItemViewModel(BasicsMetricId.ReproductionRunsObserved, "Runs per pair", "—", "Plan-derived once capacity is fetched.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.CapacityUtilization, "Capacity score", "—", "Filled from IO capacity planning.");
     }
+
+    private static string FormatOutputObservationMode(BasicsOutputObservationMode mode)
+    {
+        return mode switch
+        {
+            BasicsOutputObservationMode.EventedOutput => "OutputEvent",
+            BasicsOutputObservationMode.VectorBuffer => "continuous buffer",
+            _ => "continuous potential"
+        };
+    }
 }
 
 public sealed record TaskOption(BasicsTaskContract Contract, string StatusText)
@@ -1298,6 +1337,11 @@ public sealed record TaskOption(BasicsTaskContract Contract, string StatusText)
 }
 
 public sealed record StrengthSourceOption(Repro.StrengthSource Value, string DisplayName);
+
+public sealed record OutputObservationModeOption(
+    BasicsOutputObservationMode Mode,
+    string DisplayName,
+    string DetailText);
 
 public sealed class MetricSummaryItemViewModel : ViewModelBase
 {
