@@ -12,8 +12,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 {
     private static readonly TimeSpan EvaluationOutputTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
     private static readonly IReadOnlyList<float> PrimeInputVector = new[] { 0f, 0f };
     private const int MaxObservationAttempts = 3;
 
@@ -542,6 +542,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var evaluated = new List<PopulationMember>(population.Count);
         var maxConcurrent = Math.Max(1, plan.Capacity.RecommendedMaxConcurrentBrains);
         var chunkCount = (int)Math.Ceiling(population.Count / (double)maxConcurrent);
+        var setupConcurrency = ResolveSetupConcurrency(plan.Capacity.EligibleWorkerCount, maxConcurrent);
+        using var setupGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
 
         for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++)
         {
@@ -564,7 +566,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 fitnessHistory));
 
             var batchEvaluations = await Task.WhenAll(
-                    batch.Select(member => EvaluateMemberAsync(taskPlugin, member, outputObservationMode, cancellationToken)))
+                    batch.Select(member => EvaluateMemberAsync(taskPlugin, member, outputObservationMode, setupGate, cancellationToken)))
                 .ConfigureAwait(false);
             evaluated.AddRange(batchEvaluations);
         }
@@ -576,11 +578,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IBasicsTaskPlugin taskPlugin,
         PopulationMember member,
         BasicsOutputObservationMode outputObservationMode,
+        SemaphoreSlim setupGate,
         CancellationToken cancellationToken)
     {
         Guid brainId = Guid.Empty;
+        var setupSlotHeld = false;
         try
         {
+            await setupGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            setupSlotHeld = true;
+
             var spawnAck = await _runtimeClient.SpawnBrainAsync(
                     new SpawnBrain
                     {
@@ -592,10 +599,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 .ConfigureAwait(false);
             if (spawnAck?.Ack is null || !spawnAck.Ack.BrainId.TryToGuid(out brainId) || brainId == Guid.Empty)
             {
+                var failureCode = spawnAck?.FailureReasonCode ?? spawnAck?.Ack?.FailureReasonCode ?? "unknown";
+                var failureDetail = TrimDiagnosticDetail(spawnAck?.FailureMessage ?? spawnAck?.Ack?.FailureMessage);
                 return member with
                 {
                     LastEvaluation = CreateTransportFailure(
-                        $"spawn_failed:{spawnAck?.FailureReasonCode ?? spawnAck?.Ack?.FailureReasonCode ?? "unknown"}")
+                        string.IsNullOrWhiteSpace(failureDetail)
+                            ? $"spawn_failed:{failureCode}"
+                            : $"spawn_failed:{failureCode}:{failureDetail}")
                 };
             }
 
@@ -621,6 +632,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 await _runtimeClient.SubscribeOutputsAsync(brainId, cancellationToken).ConfigureAwait(false);
                 _runtimeClient.ResetOutputEventBuffer(brainId);
             }
+
+            setupGate.Release();
+            setupSlotHeld = false;
 
             var observations = new List<BasicsTaskObservation>();
             var samples = taskPlugin.BuildDeterministicDataset();
@@ -686,6 +700,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
         finally
         {
+            if (setupSlotHeld)
+            {
+                setupGate.Release();
+            }
+
             if (brainId != Guid.Empty)
             {
                 try
@@ -708,6 +727,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 }
             }
         }
+    }
+
+    private static int ResolveSetupConcurrency(int eligibleWorkerCount, int maxConcurrent)
+    {
+        var workerScaled = Math.Max(1, eligibleWorkerCount) * 2;
+        return Math.Max(1, Math.Min(maxConcurrent, workerScaled));
     }
 
     private async Task<BasicsTaskObservation?> ObserveSampleAsync(
@@ -1190,6 +1215,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ["truth_table_coverage"] = 0f
             },
             Diagnostics: new[] { diagnostic });
+
+    private static string TrimDiagnosticDetail(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var collapsed = string.Join(" ", value.Split(default(string[]), StringSplitOptions.RemoveEmptyEntries));
+        return collapsed.Length <= 96 ? collapsed : collapsed[..96];
+    }
 
     private static BasicsExecutionSnapshot CreateFinalSnapshot(
         Action<BasicsExecutionSnapshot> onSnapshot,

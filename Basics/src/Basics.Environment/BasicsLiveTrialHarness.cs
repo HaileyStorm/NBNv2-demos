@@ -370,7 +370,12 @@ public sealed class BasicsLiveTrialHarness
                                 .ConfigureAwait(false);
 
                             terminalSnapshot = CreateSnapshotRecord(finalSnapshot);
-                            if (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                            if (IsDecisiveTerminalSnapshot(terminalSnapshot))
+                            {
+                                outcome = TranslateOutcome(finalSnapshot.State);
+                                outcomeDetail = finalSnapshot.DetailText;
+                            }
+                            else if (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                             {
                                 outcome = BasicsLiveTrialOutcome.TimedOut;
                                 outcomeDetail = "trial_timeout";
@@ -384,8 +389,16 @@ public sealed class BasicsLiveTrialHarness
                         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                         {
                             terminalSnapshot = lastSnapshot;
-                            outcome = BasicsLiveTrialOutcome.TimedOut;
-                            outcomeDetail = "trial_timeout";
+                            if (terminalSnapshot is not null && IsDecisiveTerminalSnapshot(terminalSnapshot))
+                            {
+                                outcome = TranslateOutcome(terminalSnapshot.State);
+                                outcomeDetail = terminalSnapshot.DetailText;
+                            }
+                            else
+                            {
+                                outcome = BasicsLiveTrialOutcome.TimedOut;
+                                outcomeDetail = "trial_timeout";
+                            }
                         }
                     }
 
@@ -550,6 +563,10 @@ public sealed class BasicsLiveTrialHarness
         BasicsLiveTrialStabilityCriteria criteria)
         => snapshot.BestAccuracy >= criteria.TargetAccuracy
            && snapshot.BestFitness >= criteria.TargetFitness;
+
+    private static bool IsDecisiveTerminalSnapshot(BasicsLiveTrialSnapshotRecord snapshot)
+        => snapshot.State is BasicsExecutionState.Succeeded
+            or BasicsExecutionState.Failed;
 
     private static BasicsLiveTrialPlanSummary CreatePlanSummary(BasicsEnvironmentPlan plan)
         => new(

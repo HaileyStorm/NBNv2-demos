@@ -268,6 +268,48 @@ public sealed class BasicsExecutionSessionTests
         }
     }
 
+    [Fact]
+    public async Task ExecutionSession_ThrottlesSetupConcurrency_ByEligibleWorkerCount()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            SpawnDelay = TimeSpan.FromMilliseconds(50)
+        };
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var final = await session.RunAsync(
+                new BasicsEnvironmentPlan(
+                    SelectedTask: new AndTaskPlugin().Contract,
+                    SeedTemplate: BasicsSeedTemplateContract.CreateDefault(),
+                    Capacity: new BasicsCapacityRecommendation(
+                        Source: BasicsCapacitySource.RuntimePlacementInventory,
+                        EligibleWorkerCount: 1,
+                        RecommendedInitialPopulationCount: 4,
+                        RecommendedReproductionRunCount: 1,
+                        RecommendedMaxConcurrentBrains: 4,
+                        CapacityScore: 1f,
+                        EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                        Summary: "test"),
+                    OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
+                    Reproduction: BasicsReproductionPolicy.CreateDefault(),
+                    Scheduling: BasicsReproductionSchedulingPolicy.Default,
+                    Metrics: BasicsMetricsContract.Default,
+                    PlannedAtUtc: DateTimeOffset.UtcNow),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.InRange(runtimeClient.MaxObservedConcurrentSpawnRequests, 1, 2);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
     private static BasicsEnvironmentPlan CreatePlan(BasicsOutputObservationMode outputObservationMode)
         => new(
             SelectedTask: new AndTaskPlugin().Contract,
@@ -304,8 +346,12 @@ public sealed class BasicsExecutionSessionTests
         public int VectorSubscriptionCount { get; private set; }
         public int SingleSubscriptionCount { get; private set; }
         public int? ThrowOnReproduceCallNumber { get; init; }
+        public TimeSpan SpawnDelay { get; init; }
+        public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
+        private int _activeSpawnRequests;
+        private int _maxObservedConcurrentSpawnRequests;
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
             => Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = clientName, ServerTimeMs = 1 });
@@ -314,7 +360,8 @@ public sealed class BasicsExecutionSessionTests
             => Task.FromResult<PlacementWorkerInventoryResult?>(null);
 
         public Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId, CancellationToken cancellationToken = default)
-            => Task.FromResult<BrainInfo?>(_brainDefinitions.ContainsKey(brainId)
+        {
+            return Task.FromResult<BrainInfo?>(_brainDefinitions.ContainsKey(brainId)
                 ? new BrainInfo
                 {
                     BrainId = brainId.ToProtoUuid(),
@@ -327,21 +374,36 @@ public sealed class BasicsExecutionSessionTests
                     InputWidth = 0,
                     OutputWidth = 0
                 });
+        }
 
-        public Task<SpawnBrainViaIOAck?> SpawnBrainAsync(SpawnBrain request, CancellationToken cancellationToken = default)
+        public async Task<SpawnBrainViaIOAck?> SpawnBrainAsync(SpawnBrain request, CancellationToken cancellationToken = default)
         {
-            var brainId = Guid.NewGuid();
-            _brainDefinitions[brainId] = request.BrainDef.Clone();
-            _outputs[brainId] = new Queue<BasicsRuntimeOutputVector>();
-            _outputEvents[brainId] = new Queue<BasicsRuntimeOutputEvent>();
-            _ticks[brainId] = 0;
-            return Task.FromResult<SpawnBrainViaIOAck?>(new SpawnBrainViaIOAck
+            var active = Interlocked.Increment(ref _activeSpawnRequests);
+            UpdateMaxObservedConcurrentSpawnRequests(active);
+            try
             {
-                Ack = new SpawnBrainAck
+                if (SpawnDelay > TimeSpan.Zero)
                 {
-                    BrainId = brainId.ToProtoUuid()
+                    await Task.Delay(SpawnDelay, cancellationToken);
                 }
-            });
+
+                var brainId = Guid.NewGuid();
+                _brainDefinitions[brainId] = request.BrainDef.Clone();
+                _outputs[brainId] = new Queue<BasicsRuntimeOutputVector>();
+                _outputEvents[brainId] = new Queue<BasicsRuntimeOutputEvent>();
+                _ticks[brainId] = 0;
+                return new SpawnBrainViaIOAck
+                {
+                    Ack = new SpawnBrainAck
+                    {
+                        BrainId = brainId.ToProtoUuid()
+                    }
+                };
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeSpawnRequests);
+            }
         }
 
         public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
@@ -597,6 +659,23 @@ public sealed class BasicsExecutionSessionTests
             var artifact = sha.ToArtifactRef(256, "application/x-nbn", $"http://fake-store/{index}");
             _behaviorByArtifactSha[artifact.ToSha256Hex()] = behavior;
             return artifact;
+        }
+
+        private void UpdateMaxObservedConcurrentSpawnRequests(int active)
+        {
+            while (true)
+            {
+                var current = MaxObservedConcurrentSpawnRequests;
+                if (active <= current)
+                {
+                    return;
+                }
+
+                if (Interlocked.CompareExchange(ref _maxObservedConcurrentSpawnRequests, active, current) == current)
+                {
+                    return;
+                }
+            }
         }
     }
 }

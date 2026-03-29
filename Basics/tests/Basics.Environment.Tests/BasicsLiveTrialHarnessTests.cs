@@ -239,6 +239,35 @@ public sealed class BasicsLiveTrialHarnessTests
         Assert.Equal("trial_timeout", trial.OutcomeDetail);
     }
 
+    [Fact]
+    public async Task LiveTrialHarness_PreservesTerminalSuccess_WhenTimeoutHitsAfterTerminalSnapshot()
+    {
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient()),
+            executionRunnerFactory: (_, _) => new TerminalSnapshotThenTimeoutRunner(
+                CreateSnapshot(
+                    BasicsExecutionState.Succeeded,
+                    statusText: "Execution reached a perfect candidate.",
+                    detailText: "Generation 1 achieved perfect AND accuracy.",
+                    generation: 1,
+                    speciesCount: 1,
+                    bestAccuracy: 1f,
+                    bestFitness: 1f)));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1) with
+            {
+                TrialTimeout = TimeSpan.FromMilliseconds(200)
+            },
+            new AndTaskPlugin());
+
+        var trial = Assert.Single(report.Trials);
+        Assert.Equal(BasicsLiveTrialOutcome.Succeeded, trial.Outcome);
+        Assert.Equal("Generation 1 achieved perfect AND accuracy.", trial.OutcomeDetail);
+        Assert.NotNull(trial.TerminalSnapshot);
+        Assert.Equal(BasicsExecutionState.Succeeded, trial.TerminalSnapshot!.State);
+    }
+
     private static BasicsLiveTrialHarnessOptions CreateOptions(int maxTrialCount, int requiredSuccessfulTrials)
         => new()
         {
@@ -489,6 +518,29 @@ public sealed class BasicsLiveTrialHarnessTests
                 return _terminal;
             }
 
+            return _terminal;
+        }
+    }
+
+    private sealed class TerminalSnapshotThenTimeoutRunner : IBasicsExecutionRunner
+    {
+        private readonly BasicsExecutionSnapshot _terminal;
+
+        public TerminalSnapshotThenTimeoutRunner(BasicsExecutionSnapshot terminal)
+        {
+            _terminal = terminal;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        public async Task<BasicsExecutionSnapshot> RunAsync(
+            BasicsEnvironmentPlan plan,
+            IBasicsTaskPlugin taskPlugin,
+            Action<BasicsExecutionSnapshot>? onSnapshot,
+            CancellationToken cancellationToken = default)
+        {
+            onSnapshot?.Invoke(_terminal);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return _terminal;
         }
     }

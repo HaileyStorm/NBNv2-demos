@@ -240,31 +240,33 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
+            var detail = BuildFailureDetail(ex);
             return new SpawnBrainViaIOAck
             {
                 FailureReasonCode = "spawn_request_canceled",
-                FailureMessage = "Spawn request was canceled.",
+                FailureMessage = detail,
                 Ack = new SpawnBrainAck
                 {
                     BrainId = Guid.Empty.ToProtoUuid(),
                     FailureReasonCode = "spawn_request_canceled",
-                    FailureMessage = "Spawn request was canceled."
+                    FailureMessage = detail
                 }
             };
         }
-        catch
+        catch (Exception ex)
         {
+            var detail = BuildFailureDetail(ex);
             return new SpawnBrainViaIOAck
             {
                 FailureReasonCode = "spawn_request_failed",
-                FailureMessage = "Spawn request forwarding failed.",
+                FailureMessage = detail,
                 Ack = new SpawnBrainAck
                 {
                     BrainId = Guid.Empty.ToProtoUuid(),
                     FailureReasonCode = "spawn_request_failed",
-                    FailureMessage = "Spawn request forwarding failed."
+                    FailureMessage = detail
                 }
             };
         }
@@ -535,26 +537,28 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
+            var detail = BuildFailureDetail(ex, "Output vector source update request was canceled.");
             return new Nbn.Proto.Io.SetOutputVectorSourceAck
             {
                 Success = false,
                 FailureReasonCode = "output_vector_source_request_canceled",
-                FailureMessage = "Output vector source update request was canceled.",
+                FailureMessage = detail,
                 OutputVectorSource = outputVectorSource,
                 BrainId = brainId.HasValue && brainId.Value != Guid.Empty
                     ? brainId.Value.ToProtoUuid()
                     : null
             };
         }
-        catch
+        catch (Exception ex)
         {
+            var detail = BuildFailureDetail(ex, "Output vector source update request failed.");
             return new Nbn.Proto.Io.SetOutputVectorSourceAck
             {
                 Success = false,
                 FailureReasonCode = "output_vector_source_request_failed",
-                FailureMessage = "Output vector source update request failed.",
+                FailureMessage = detail,
                 OutputVectorSource = outputVectorSource,
                 BrainId = brainId.HasValue && brainId.Value != Guid.Empty
                     ? brainId.Value.ToProtoUuid()
@@ -848,6 +852,15 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             NbnSettingsReflection.Descriptor,
             NbnReproReflection.Descriptor,
             NbnSpeciationReflection.Descriptor);
+    }
+
+    private static string BuildFailureDetail(Exception ex, string fallback = "Request forwarding failed.")
+    {
+        var baseException = ex.GetBaseException();
+        var message = string.IsNullOrWhiteSpace(baseException.Message)
+            ? fallback
+            : baseException.Message.Trim();
+        return $"{baseException.GetType().Name}: {message}";
     }
 
     private sealed class RuntimeEventSinkProxy : IBasicsRuntimeEventSink
