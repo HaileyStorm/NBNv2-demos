@@ -108,6 +108,8 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     private readonly Channel<ConnectAck> _connectAcks;
     private readonly ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>> _outputBuffers;
     private readonly ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputEvent>> _outputEventBuffers;
+    private readonly ConcurrentDictionary<Guid, int> _outputWidths;
+    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<ulong, PendingOutputVector>> _pendingOutputSegments;
     private readonly ConcurrentDictionary<Guid, Channel<BrainTerminated>> _terminationBuffers;
     private bool _disposed;
 
@@ -128,6 +130,8 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         });
         _outputBuffers = new ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>>();
         _outputEventBuffers = new ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputEvent>>();
+        _outputWidths = new ConcurrentDictionary<Guid, int>();
+        _pendingOutputSegments = new ConcurrentDictionary<Guid, ConcurrentDictionary<ulong, PendingOutputVector>>();
         _terminationBuffers = new ConcurrentDictionary<Guid, Channel<BrainTerminated>>();
     }
 
@@ -157,6 +161,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         runtimeEventSink.OnConnect = client.OnConnectAck;
         runtimeEventSink.OnSingleOutput = client.OnOutputEvent;
         runtimeEventSink.OnOutput = client.OnOutputVectorEvent;
+        runtimeEventSink.OnOutputSegment = client.OnOutputVectorSegment;
         runtimeEventSink.OnTermination = client.OnBrainTerminated;
         system.Root.Send(receiverPid, new BasicsSetIoGatewayPid(client._ioPid));
         return client;
@@ -218,12 +223,14 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
         try
         {
-            return await _system.Root.RequestAsync<BrainInfo>(
+            var info = await _system.Root.RequestAsync<BrainInfo>(
                     _ioPid,
                     new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
                     _requestTimeout)
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
+            RememberOutputWidth(brainId, info);
+            return info;
         }
         catch
         {
@@ -416,6 +423,8 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         while (channel.Reader.TryRead(out _))
         {
         }
+
+        _pendingOutputSegments.TryRemove(brainId, out _);
     }
 
     public void ResetOutputEventBuffer(Guid brainId)
@@ -771,6 +780,11 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         OnOutputVectorEvent(output);
     }
 
+    void IBasicsRuntimeEventSink.OnOutputVectorSegment(OutputVectorSegment output)
+    {
+        OnOutputVectorSegment(output);
+    }
+
     void IBasicsRuntimeEventSink.OnBrainTerminated(BrainTerminated terminated)
     {
         OnBrainTerminated(terminated);
@@ -799,11 +813,97 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             return;
         }
 
-        var channel = EnsureOutputBuffer(brainId);
         var values = output.Values.Count == 0
             ? Array.Empty<float>()
             : output.Values.ToArray();
-        channel.Writer.TryWrite(new BasicsRuntimeOutputVector(brainId, output.TickId, values));
+        RememberOutputWidth(brainId, values.Length);
+        if (_pendingOutputSegments.TryGetValue(brainId, out var pendingByTick))
+        {
+            pendingByTick.TryRemove(output.TickId, out _);
+        }
+
+        WriteOutputVector(brainId, output.TickId, values);
+    }
+
+    private void OnOutputVectorSegment(OutputVectorSegment output)
+    {
+        if (output.BrainId?.TryToGuid(out var brainId) != true || brainId == Guid.Empty || output.Values.Count == 0)
+        {
+            return;
+        }
+
+        var outputWidth = ResolveOutputWidth(brainId, output);
+        if (outputWidth <= 0)
+        {
+            return;
+        }
+
+        if (output.OutputIndexStart > int.MaxValue)
+        {
+            return;
+        }
+
+        var startIndex = checked((int)output.OutputIndexStart);
+        if (startIndex < 0 || startIndex >= outputWidth)
+        {
+            return;
+        }
+
+        if ((long)startIndex + output.Values.Count > outputWidth)
+        {
+            return;
+        }
+
+        if (startIndex == 0 && output.Values.Count == outputWidth)
+        {
+            if (_pendingOutputSegments.TryGetValue(brainId, out var pendingByTick))
+            {
+                pendingByTick.TryRemove(output.TickId, out _);
+            }
+
+            WriteOutputVector(brainId, output.TickId, output.Values.ToArray());
+            return;
+        }
+
+        var pending = GetOrCreatePendingOutputVector(brainId, output.TickId, outputWidth);
+        float[]? completedValues = null;
+        lock (pending)
+        {
+            for (var i = 0; i < output.Values.Count; i++)
+            {
+                var outputIndex = startIndex + i;
+                if (pending.Filled[outputIndex])
+                {
+                    if (pending.Values[outputIndex] != output.Values[i])
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+
+                pending.Values[outputIndex] = output.Values[i];
+                pending.Filled[outputIndex] = true;
+                pending.FilledCount++;
+            }
+
+            if (pending.FilledCount >= outputWidth)
+            {
+                completedValues = (float[])pending.Values.Clone();
+            }
+        }
+
+        if (completedValues is null)
+        {
+            return;
+        }
+
+        if (_pendingOutputSegments.TryGetValue(brainId, out var completedByTick))
+        {
+            completedByTick.TryRemove(output.TickId, out _);
+        }
+
+        WriteOutputVector(brainId, output.TickId, completedValues);
     }
 
     private void OnBrainTerminated(BrainTerminated terminated)
@@ -813,8 +913,16 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             return;
         }
 
+        _pendingOutputSegments.TryRemove(brainId, out _);
+        _outputWidths.TryRemove(brainId, out _);
         var channel = EnsureTerminationBuffer(brainId);
         channel.Writer.TryWrite(terminated.Clone());
+    }
+
+    private void WriteOutputVector(Guid brainId, ulong tickId, IReadOnlyList<float> values)
+    {
+        var channel = EnsureOutputBuffer(brainId);
+        channel.Writer.TryWrite(new BasicsRuntimeOutputVector(brainId, tickId, values));
     }
 
     private Channel<BasicsRuntimeOutputVector> EnsureOutputBuffer(Guid brainId)
@@ -863,6 +971,55 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         while (channel.Reader.TryRead(out _))
         {
         }
+    }
+
+    private void RememberOutputWidth(Guid brainId, BrainInfo? info)
+    {
+        if (info is null)
+        {
+            return;
+        }
+
+        RememberOutputWidth(brainId, checked((int)info.OutputWidth));
+    }
+
+    private void RememberOutputWidth(Guid brainId, int outputWidth)
+    {
+        if (brainId == Guid.Empty || outputWidth <= 0)
+        {
+            return;
+        }
+
+        _outputWidths[brainId] = outputWidth;
+    }
+
+    private int ResolveOutputWidth(Guid brainId, OutputVectorSegment output)
+    {
+        if (_outputWidths.TryGetValue(brainId, out var outputWidth) && outputWidth > 0)
+        {
+            return outputWidth;
+        }
+
+        if (output.OutputIndexStart == 0 && output.Values.Count > 0)
+        {
+            outputWidth = output.Values.Count;
+            RememberOutputWidth(brainId, outputWidth);
+            return outputWidth;
+        }
+
+        return 0;
+    }
+
+    private PendingOutputVector GetOrCreatePendingOutputVector(Guid brainId, ulong tickId, int outputWidth)
+    {
+        var pendingByTick = _pendingOutputSegments.GetOrAdd(
+            brainId,
+            static _ => new ConcurrentDictionary<ulong, PendingOutputVector>());
+        return pendingByTick.AddOrUpdate(
+            tickId,
+            static (_, width) => new PendingOutputVector(width),
+            static (_, existing, width) => existing.Values.Length == width ? existing : new PendingOutputVector(width),
+            outputWidth);
     }
 
     private void ResetConnectAckBuffer()
@@ -931,6 +1088,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         public Action<ConnectAck>? OnConnect { get; set; }
         public Action<OutputEvent>? OnSingleOutput { get; set; }
         public Action<OutputVectorEvent>? OnOutput { get; set; }
+        public Action<OutputVectorSegment>? OnOutputSegment { get; set; }
         public Action<BrainTerminated>? OnTermination { get; set; }
 
         public void OnConnectAck(ConnectAck ack)
@@ -948,9 +1106,29 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             OnOutput?.Invoke(output);
         }
 
+        public void OnOutputVectorSegment(OutputVectorSegment output)
+        {
+            OnOutputSegment?.Invoke(output);
+        }
+
         public void OnBrainTerminated(BrainTerminated terminated)
         {
             OnTermination?.Invoke(terminated);
         }
+    }
+
+    private sealed class PendingOutputVector
+    {
+        public PendingOutputVector(int outputWidth)
+        {
+            Values = new float[outputWidth];
+            Filled = new bool[outputWidth];
+        }
+
+        public float[] Values { get; }
+
+        public bool[] Filled { get; }
+
+        public int FilledCount { get; set; }
     }
 }

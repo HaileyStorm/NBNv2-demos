@@ -13,6 +13,8 @@ internal interface IBasicsRuntimeEventSink
 
     void OnOutputVectorEvent(OutputVectorEvent output);
 
+    void OnOutputVectorSegment(OutputVectorSegment output);
+
     void OnBrainTerminated(BrainTerminated terminated);
 }
 
@@ -83,6 +85,9 @@ internal sealed class BasicsRuntimeReceiverActor : IActor
                 break;
             case OutputVectorEvent outputVector:
                 _sink.OnOutputVectorEvent(outputVector.Clone());
+                break;
+            case OutputVectorSegment outputVectorSegment:
+                _sink.OnOutputVectorSegment(outputVectorSegment.Clone());
                 break;
             case BrainTerminated terminated:
                 _sink.OnBrainTerminated(terminated.Clone());
