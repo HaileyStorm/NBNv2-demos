@@ -500,7 +500,7 @@ public sealed class BasicsLiveTrialHarness
 
     private static TimeSpan ResolveConnectTimeout(TimeSpan trialTimeout)
     {
-        var seconds = Math.Clamp(trialTimeout.TotalSeconds * 0.10d, 1d, 5d);
+        var seconds = Math.Clamp(trialTimeout.TotalSeconds * 0.10d, 1d, 15d);
         return TimeSpan.FromSeconds(seconds);
     }
 
@@ -515,13 +515,20 @@ public sealed class BasicsLiveTrialHarness
 
         while (!timeoutCts.IsCancellationRequested)
         {
-            var ack = await runtimeClient.ConnectAsync(clientName, timeoutCts.Token).ConfigureAwait(false);
-            if (ack is not null)
+            try
             {
-                return ack;
-            }
+                var ack = await runtimeClient.ConnectAsync(clientName, timeoutCts.Token).ConfigureAwait(false);
+                if (ack is not null)
+                {
+                    return ack;
+                }
 
-            await Task.Delay(200, timeoutCts.Token).ConfigureAwait(false);
+                await Task.Delay(200, timeoutCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                return null;
+            }
         }
 
         return null;

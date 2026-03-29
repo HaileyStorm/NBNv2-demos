@@ -165,6 +165,80 @@ public sealed class BasicsLiveTrialHarnessTests
         Assert.Contains("allow_function_mutation=true", decision.Changes);
     }
 
+    [Fact]
+    public async Task LiveTrialHarness_ReturnsConnectFailed_WhenConnectRetryWindowExpires()
+    {
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient
+            {
+                ConnectAckToReturn = null
+            }),
+            executionRunnerFactory: (_, _) => throw new InvalidOperationException("Execution runner should not be created when connect never succeeds."));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1) with
+            {
+                TrialTimeout = TimeSpan.FromSeconds(2)
+            },
+            new AndTaskPlugin());
+
+        var trial = Assert.Single(report.Trials);
+        Assert.Equal(BasicsLiveTrialOutcome.ConnectFailed, trial.Outcome);
+        Assert.Equal("connect_failed", trial.OutcomeDetail);
+    }
+
+    [Fact]
+    public async Task LiveTrialHarness_ReturnsConnectFailed_WhenConnectWindowCancellationThrows()
+    {
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient
+            {
+                ConnectBehavior = async (_, cancellationToken) =>
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    return new ConnectAck { ServerName = "nbn.io", ServerTimeMs = 1 };
+                }
+            }),
+            executionRunnerFactory: (_, _) => throw new InvalidOperationException("Execution runner should not be created when connect never succeeds."));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1) with
+            {
+                TrialTimeout = TimeSpan.FromSeconds(20)
+            },
+            new AndTaskPlugin());
+
+        var trial = Assert.Single(report.Trials);
+        Assert.Equal(BasicsLiveTrialOutcome.ConnectFailed, trial.Outcome);
+        Assert.Equal("connect_failed", trial.OutcomeDetail);
+    }
+
+    [Fact]
+    public async Task LiveTrialHarness_TreatsTrialTimeoutDuringConnectAsTimedOut()
+    {
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient
+            {
+                ConnectBehavior = async (_, cancellationToken) =>
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    return new ConnectAck { ServerName = "nbn.io", ServerTimeMs = 1 };
+                }
+            }),
+            executionRunnerFactory: (_, _) => throw new InvalidOperationException("Execution runner should not be created when connect never succeeds."));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1) with
+            {
+                TrialTimeout = TimeSpan.FromMilliseconds(200)
+            },
+            new AndTaskPlugin());
+
+        var trial = Assert.Single(report.Trials);
+        Assert.Equal(BasicsLiveTrialOutcome.TimedOut, trial.Outcome);
+        Assert.Equal("trial_timeout", trial.OutcomeDetail);
+    }
+
     private static BasicsLiveTrialHarnessOptions CreateOptions(int maxTrialCount, int requiredSuccessfulTrials)
         => new()
         {
@@ -282,13 +356,20 @@ public sealed class BasicsLiveTrialHarnessTests
     private sealed class FakeHarnessRuntimeClient : IBasicsRuntimeClient
     {
         public string? ConnectedClientName { get; private set; }
+        public ConnectAck? ConnectAckToReturn { get; init; } = new ConnectAck { ServerName = "nbn.io", ServerTimeMs = 1 };
+        public Func<string, CancellationToken, Task<ConnectAck?>>? ConnectBehavior { get; init; }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-        public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
+        public async Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
         {
             ConnectedClientName = clientName;
-            return Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = "nbn.io", ServerTimeMs = 1 });
+            if (ConnectBehavior is not null)
+            {
+                return await ConnectBehavior(clientName, cancellationToken).ConfigureAwait(false);
+            }
+
+            return ConnectAckToReturn;
         }
 
         public Task<PlacementWorkerInventoryResult?> GetPlacementWorkerInventoryAsync(CancellationToken cancellationToken = default)
