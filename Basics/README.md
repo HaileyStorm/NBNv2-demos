@@ -66,4 +66,13 @@ dotnet run --project src/Basics.Harness/Basics.Harness.csproj -- --config ./arti
 
 The harness writes a JSON report under `artifacts/live-trials/`, replays the shared `BasicsExecutionSession` against real IO, captures per-generation snapshots, and can apply simple follow-up tuning between trials while staying on the IO-only demo contract.
 
+Run a one-command local smoke validation with a temporary in-process runtime stack:
+
+```bash
+cd /home/hailey/AI/NBNv2-demos/Basics
+dotnet run --project src/Basics.Harness/Basics.Harness.csproj -- smoke-local
+```
+
+`smoke-local` boots a temporary HiveMind/IO/Reproduction/Speciation/Worker stack in-process, waits for IO readiness, runs a reduced one-trial Basics harness profile, writes a report under `artifacts/live-trials/local-smoke/`, and then tears the stack down. It validates startup, readiness, IO wiring, and harness execution flow; it is intentionally a smoke check, not a guarantee that the AND task converges to a perfect candidate within one short local run.
+
 Later issues will add the remaining task plugins and broader operator workflows on top of this shared environment, task library, UI shell, and live harness.

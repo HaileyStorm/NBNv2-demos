@@ -12,6 +12,11 @@
   <ItemGroup>
     <ProjectReference Include="..\Basics.Environment\Basics.Environment.csproj" />
     <ProjectReference Include="..\Basics.Tasks\Basics.Tasks.csproj" />
+    <ProjectReference Include="..\..\..\..\NBNv2\src\Nbn.Runtime.HiveMind\Nbn.Runtime.HiveMind.csproj" />
+    <ProjectReference Include="..\..\..\..\NBNv2\src\Nbn.Runtime.IO\Nbn.Runtime.IO.csproj" />
+    <ProjectReference Include="..\..\..\..\NBNv2\src\Nbn.Runtime.Reproduction\Nbn.Runtime.Reproduction.csproj" />
+    <ProjectReference Include="..\..\..\..\NBNv2\src\Nbn.Runtime.Speciation\Nbn.Runtime.Speciation.csproj" />
+    <ProjectReference Include="..\..\..\..\NBNv2\src\Nbn.Runtime.WorkerNode\Nbn.Runtime.WorkerNode.csproj" />
   </ItemGroup>
 
 </Project>
