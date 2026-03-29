@@ -1330,7 +1330,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return new OutputObservationModeOption(
             BasicsOutputObservationMode.VectorPotential,
             "Continuous potential",
-            "Recommended default for automated scoring; full vector every tick from activation/potential.");
+            "Recommended default for automated scoring; full vector every tick from activation/potential, applied per spawned brain.");
         yield return new OutputObservationModeOption(
             BasicsOutputObservationMode.EventedOutput,
             "OutputEvent",
@@ -1338,7 +1338,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return new OutputObservationModeOption(
             BasicsOutputObservationMode.VectorBuffer,
             "Continuous buffer",
-            "Full vector every tick from persistent buffer values.");
+            "Full vector every tick from persistent buffer values, applied per spawned brain.");
     }
 
     private static IEnumerable<MetricSummaryItemViewModel> BuildMetricSummaryItems()

@@ -104,7 +104,6 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                 accuracyHistory,
                 fitnessHistory);
             speciationEpochId = await EnsureFreshSpeciationEpochAsync(cancellationToken).ConfigureAwait(false);
-            await ConfigureOutputObservationModeAsync(plan.OutputObservationMode, cancellationToken).ConfigureAwait(false);
 
             var targetPopulation = Math.Max(1, plan.Capacity.RecommendedInitialPopulationCount);
             var population = await SeedInitialPopulationAsync(
@@ -345,16 +344,21 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
         return currentEpochId;
     }
 
-    private async Task ConfigureOutputObservationModeAsync(
+    private async Task ConfigureBrainOutputObservationModeAsync(
+        Guid brainId,
         BasicsOutputObservationMode mode,
         CancellationToken cancellationToken)
     {
-        if (!mode.UsesVectorSubscription())
+        if (brainId == Guid.Empty || !mode.UsesVectorSubscription())
         {
             return;
         }
 
-        var ack = await _runtimeClient.SetOutputVectorSourceAsync(mode.ResolveVectorSource(), cancellationToken).ConfigureAwait(false);
+        var ack = await _runtimeClient.SetOutputVectorSourceAsync(
+                mode.ResolveVectorSource(),
+                brainId,
+                cancellationToken)
+            .ConfigureAwait(false);
         if (ack is null)
         {
             throw new InvalidOperationException("Output vector source update returned no response.");
@@ -364,6 +368,14 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
         {
             throw new InvalidOperationException(
                 $"Output vector source update failed: {ack.FailureReasonCode} {ack.FailureMessage}".Trim());
+        }
+
+        if (ack.BrainId is not null
+            && ack.BrainId.TryToGuid(out var acknowledgedBrainId)
+            && acknowledgedBrainId != brainId)
+        {
+            throw new InvalidOperationException(
+                $"Output vector source update targeted brain {brainId} but acknowledged {acknowledgedBrainId}.");
         }
     }
 
@@ -542,6 +554,8 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
                         $"spawn_failed:{spawnAck?.FailureReasonCode ?? spawnAck?.Ack?.FailureReasonCode ?? "unknown"}")
                 };
             }
+
+            await ConfigureBrainOutputObservationModeAsync(brainId, outputObservationMode, cancellationToken).ConfigureAwait(false);
 
             var geometry = BasicsIoGeometry.Validate(
                 await _runtimeClient.RequestBrainInfoAsync(brainId, cancellationToken).ConfigureAwait(false));

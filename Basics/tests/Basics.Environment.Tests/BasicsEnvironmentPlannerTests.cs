@@ -133,6 +133,7 @@ public sealed class BasicsEnvironmentPlannerTests
 
         public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
             Nbn.Proto.Control.OutputVectorSource outputVectorSource,
+            Guid? brainId = null,
             CancellationToken cancellationToken = default)
             => Task.FromResult<Nbn.Proto.Io.SetOutputVectorSourceAck?>(null);
 

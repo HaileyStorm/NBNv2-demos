@@ -68,6 +68,7 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
 
     Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
         Nbn.Proto.Control.OutputVectorSource outputVectorSource,
+        Guid? brainId = null,
         CancellationToken cancellationToken = default);
 
     Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByArtifactsAsync(
@@ -440,6 +441,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
     public async Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
         Nbn.Proto.Control.OutputVectorSource outputVectorSource,
+        Guid? brainId = null,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -450,7 +452,10 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                     _ioPid,
                     new Nbn.Proto.Io.SetOutputVectorSource
                     {
-                        OutputVectorSource = outputVectorSource
+                        OutputVectorSource = outputVectorSource,
+                        BrainId = brainId.HasValue && brainId.Value != Guid.Empty
+                            ? brainId.Value.ToProtoUuid()
+                            : null
                     },
                     _requestTimeout)
                 .WaitAsync(cancellationToken)

@@ -121,7 +121,9 @@ public sealed class BasicsExecutionSessionTests
             Assert.Equal(1, runtimeClient.GetSpeciationConfigCallCount);
             Assert.Equal(1, runtimeClient.SetSpeciationConfigCallCount);
             Assert.True(runtimeClient.SpeciationEpochStartedBeforeFirstReproduce);
-            Assert.Contains(OutputVectorSource.Potential, runtimeClient.SetOutputVectorSourceRequests);
+            Assert.Contains(
+                runtimeClient.SetOutputVectorSourceRequests,
+                static request => request.BrainId != Guid.Empty && request.OutputVectorSource == OutputVectorSource.Potential);
             Assert.True(runtimeClient.VectorSubscriptionCount > 0);
             Assert.Contains(snapshots, snapshot => snapshot.State == BasicsExecutionState.Running);
             Assert.True(final.AccuracyHistory.Count >= 2);
@@ -172,7 +174,9 @@ public sealed class BasicsExecutionSessionTests
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
             Assert.Equal(BasicsExecutionState.Succeeded, final.State);
-            Assert.Contains(OutputVectorSource.Buffer, runtimeClient.SetOutputVectorSourceRequests);
+            Assert.Contains(
+                runtimeClient.SetOutputVectorSourceRequests,
+                static request => request.BrainId != Guid.Empty && request.OutputVectorSource == OutputVectorSource.Buffer);
             Assert.True(runtimeClient.VectorSubscriptionCount > 0);
         }
         finally
@@ -216,7 +220,7 @@ public sealed class BasicsExecutionSessionTests
         public bool SpeciationEpochStartedBeforeFirstReproduce { get; private set; }
         public int VectorSubscriptionCount { get; private set; }
         public int SingleSubscriptionCount { get; private set; }
-        public List<OutputVectorSource> SetOutputVectorSourceRequests { get; } = new();
+        public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
             => Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = clientName, ServerTimeMs = 1 });
@@ -355,13 +359,15 @@ public sealed class BasicsExecutionSessionTests
 
         public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
             OutputVectorSource outputVectorSource,
+            Guid? brainId = null,
             CancellationToken cancellationToken = default)
         {
-            SetOutputVectorSourceRequests.Add(outputVectorSource);
+            SetOutputVectorSourceRequests.Add((brainId ?? Guid.Empty, outputVectorSource));
             return Task.FromResult<Nbn.Proto.Io.SetOutputVectorSourceAck?>(new Nbn.Proto.Io.SetOutputVectorSourceAck
             {
                 Success = true,
-                OutputVectorSource = outputVectorSource
+                OutputVectorSource = outputVectorSource,
+                BrainId = brainId.HasValue && brainId.Value != Guid.Empty ? brainId.Value.ToProtoUuid() : null
             });
         }
 
