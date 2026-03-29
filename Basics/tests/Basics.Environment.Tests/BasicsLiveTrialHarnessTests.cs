@@ -269,8 +269,59 @@ public sealed class BasicsLiveTrialHarnessTests
         Assert.Equal(BasicsExecutionState.Succeeded, trial.TerminalSnapshot!.State);
     }
 
-    private static BasicsLiveTrialHarnessOptions CreateOptions(int maxTrialCount, int requiredSuccessfulTrials)
-        => new()
+    [Fact]
+    public async Task LiveTrialHarness_PreservesNonAndScoreBreakdown_InSnapshotReportPlumbing()
+    {
+        var plugin = new OrTaskPlugin();
+        var scoreBreakdown = new Dictionary<string, float>(StringComparer.Ordinal)
+        {
+            ["task_accuracy"] = 1f,
+            ["classification_accuracy"] = 1f,
+            ["truth_table_coverage"] = 1f,
+            ["dataset_coverage"] = 1f,
+            ["target_proximity_fitness"] = 1f
+        };
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient()),
+            executionRunnerFactory: (_, _) => new ScriptedExecutionRunner(new[]
+            {
+                CreateSnapshot(
+                    BasicsExecutionState.Succeeded,
+                    statusText: "Execution reached a perfect candidate.",
+                    detailText: "Generation 1 achieved perfect OR accuracy.",
+                    generation: 1,
+                    speciesCount: 1,
+                    bestAccuracy: 1f,
+                    bestFitness: 1f,
+                    scoreBreakdown: scoreBreakdown)
+            }));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1, taskPlugin: plugin),
+            plugin);
+
+        Assert.True(report.StabilityTargetMet);
+        Assert.Equal("or", report.InitialConfiguration.TaskId);
+        Assert.Equal("OR", report.FinalConfiguration.TaskDisplayName);
+
+        var trial = Assert.Single(report.Trials);
+        Assert.Equal("or", trial.AppliedConfiguration.TaskId);
+        Assert.Equal("or", trial.PlanSummary!.TaskId);
+        Assert.NotNull(trial.TerminalSnapshot);
+        Assert.NotNull(trial.TerminalSnapshot!.BestCandidate);
+        Assert.Equal(1f, trial.TerminalSnapshot.BestCandidate!.ScoreBreakdown["task_accuracy"]);
+        Assert.Equal(1f, trial.TerminalSnapshot.BestCandidate.ScoreBreakdown["truth_table_coverage"]);
+        Assert.Equal(1f, trial.Snapshots[^1].BestCandidate!.ScoreBreakdown["dataset_coverage"]);
+    }
+
+    private static BasicsLiveTrialHarnessOptions CreateOptions(
+        int maxTrialCount,
+        int requiredSuccessfulTrials,
+        IBasicsTaskPlugin? taskPlugin = null)
+    {
+        taskPlugin ??= new AndTaskPlugin();
+
+        return new()
         {
             RuntimeClient = new BasicsRuntimeClientOptions
             {
@@ -280,7 +331,7 @@ public sealed class BasicsLiveTrialHarnessTests
             Environment = new BasicsEnvironmentOptions
             {
                 ClientName = "nbn.basics.harness",
-                SelectedTask = new AndTaskPlugin().Contract,
+                SelectedTask = taskPlugin.Contract,
                 SeedTemplate = BasicsSeedTemplateContract.CreateDefault(),
                 SizingOverrides = new BasicsSizingOverrides
                 {
@@ -319,6 +370,7 @@ public sealed class BasicsLiveTrialHarnessTests
                 RequiredSuccessfulTrials = requiredSuccessfulTrials
             }
         };
+    }
 
     private static IReadOnlyList<BasicsExecutionSnapshot> CreateSuccessfulSnapshots(int generation)
         => new[]
@@ -350,7 +402,8 @@ public sealed class BasicsLiveTrialHarnessTests
         int evaluationFailureCount = 0,
         string evaluationFailureSummary = "",
         float bestAccuracy = 1f,
-        float bestFitness = 1f)
+        float bestFitness = 1f,
+        IReadOnlyDictionary<string, float>? scoreBreakdown = null)
         => new(
             State: state,
             StatusText: statusText,
@@ -378,7 +431,7 @@ public sealed class BasicsLiveTrialHarnessTests
                 Accuracy: bestAccuracy,
                 Fitness: bestFitness,
                 Complexity: new BasicsDefinitionComplexitySummary(1, 1, 3),
-                ScoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+                ScoreBreakdown: scoreBreakdown ?? new Dictionary<string, float>(StringComparer.Ordinal)
                 {
                     ["task_accuracy"] = bestAccuracy,
                     ["classification_accuracy"] = bestAccuracy

@@ -136,6 +136,51 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_SucceedsForOrTask_ThroughFakeRuntimePath()
+    {
+        var plugin = new OrTaskPlugin();
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = plugin.Contract.TaskId
+        };
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var plan = CreatePlan(BasicsOutputObservationMode.VectorPotential, taskPlugin: plugin) with
+            {
+                Capacity = new BasicsCapacityRecommendation(
+                    Source: BasicsCapacitySource.RuntimePlacementInventory,
+                    EligibleWorkerCount: 1,
+                    RecommendedInitialPopulationCount: 1,
+                    RecommendedReproductionRunCount: 1,
+                    RecommendedMaxConcurrentBrains: 1,
+                    CapacityScore: 1f,
+                    EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                    Summary: "test")
+            };
+            var final = await session.RunAsync(
+                plan,
+                plugin,
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.Equal(1, final.Generation);
+            Assert.True(final.BestAccuracy >= 1f);
+            Assert.True(final.BestFitness >= 1f);
+            Assert.NotNull(final.BestCandidate);
+            Assert.Equal(1f, final.BestCandidate.ScoreBreakdown["task_accuracy"]);
+            Assert.Equal(1f, final.BestCandidate.ScoreBreakdown["truth_table_coverage"]);
+            Assert.Equal(0, runtimeClient.ReproduceCallCount);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_UsesEventedOutputMode_WhenConfigured()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
@@ -377,9 +422,13 @@ public sealed class BasicsExecutionSessionTests
 
     private static BasicsEnvironmentPlan CreatePlan(
         BasicsOutputObservationMode outputObservationMode,
-        BasicsExecutionStopCriteria? stopCriteria = null)
-        => new(
-            SelectedTask: new AndTaskPlugin().Contract,
+        BasicsExecutionStopCriteria? stopCriteria = null,
+        IBasicsTaskPlugin? taskPlugin = null)
+    {
+        taskPlugin ??= new AndTaskPlugin();
+
+        return new(
+            SelectedTask: taskPlugin.Contract,
             SeedTemplate: BasicsSeedTemplateContract.CreateDefault(),
             Capacity: new BasicsCapacityRecommendation(
                 Source: BasicsCapacitySource.RuntimePlacementInventory,
@@ -396,6 +445,7 @@ public sealed class BasicsExecutionSessionTests
             Metrics: BasicsMetricsContract.Default,
             StopCriteria: stopCriteria ?? new BasicsExecutionStopCriteria(),
             PlannedAtUtc: DateTimeOffset.UtcNow);
+    }
 
     private sealed class FakeBasicsRuntimeClient : IBasicsRuntimeClient
     {
@@ -426,6 +476,7 @@ public sealed class BasicsExecutionSessionTests
         public int LiveBrainCount => _brainDefinitions.Count;
         public int? ThrowOnReproduceCallNumber { get; init; }
         public TimeSpan SpawnDelay { get; init; }
+        public string DefaultBehavior { get; init; } = "zero";
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
@@ -549,11 +600,7 @@ public sealed class BasicsExecutionSessionTests
             var artifact = _brainDefinitions[brainId];
             var tick = ++_ticks[brainId];
             var behavior = ResolveBehavior(artifact);
-            var output = behavior switch
-            {
-                "and" => values.Count >= 2 && values[0] >= 0.5f && values[1] >= 0.5f ? 1f : 0f,
-                _ => 0f
-            };
+            var output = ComputeOutput(behavior, values);
 
             _outputs[brainId].Enqueue(new BasicsRuntimeOutputVector(brainId, tick, new[] { output }));
             if (output >= 0.5f)
@@ -769,8 +816,8 @@ public sealed class BasicsExecutionSessionTests
                 return behavior;
             }
 
-            _behaviorByArtifactSha[sha] = "zero";
-            return "zero";
+            _behaviorByArtifactSha[sha] = DefaultBehavior;
+            return DefaultBehavior;
         }
 
         private ArtifactRef CreateArtifactRef(int index, string behavior)
@@ -813,6 +860,26 @@ public sealed class BasicsExecutionSessionTests
                     return;
                 }
             }
+        }
+
+        private static float ComputeOutput(string behavior, IReadOnlyList<float> values)
+        {
+            if (values.Count < 2)
+            {
+                return 0f;
+            }
+
+            var a = values[0];
+            var b = values[1];
+            return behavior switch
+            {
+                "and" => a >= 0.5f && b >= 0.5f ? 1f : 0f,
+                "or" => a >= 0.5f || b >= 0.5f ? 1f : 0f,
+                "xor" => (a >= 0.5f) ^ (b >= 0.5f) ? 1f : 0f,
+                "gt" => a > b ? 1f : 0f,
+                "multiplication" => Math.Clamp(a * b, 0f, 1f),
+                _ => 0f
+            };
         }
     }
 }
