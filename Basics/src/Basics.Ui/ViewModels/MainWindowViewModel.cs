@@ -124,14 +124,14 @@ public sealed class MainWindowViewModel : ViewModelBase
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _artifactExportService = artifactExportService ?? throw new ArgumentNullException(nameof(artifactExportService));
 
+        OutputObservationModes = new ObservableCollection<OutputObservationModeOption>(BuildOutputObservationModes());
+        SelectedOutputObservationMode = OutputObservationModes.First(static option => option.Mode == BasicsOutputObservationMode.VectorPotential);
+
         Tasks = new ObservableCollection<TaskOption>(BuildTasks());
         SelectedTask = Tasks.FirstOrDefault();
 
         StrengthSources = new ObservableCollection<StrengthSourceOption>(BuildStrengthSources());
         SelectedStrengthSource = StrengthSources.First(static option => option.Value == Repro.StrengthSource.StrengthBaseOnly);
-
-        OutputObservationModes = new ObservableCollection<OutputObservationModeOption>(BuildOutputObservationModes());
-        SelectedOutputObservationMode = OutputObservationModes.First(static option => option.Mode == BasicsOutputObservationMode.VectorPotential);
 
         ValidationErrors = new ObservableCollection<string>();
         MetricSummaries = new ObservableCollection<MetricSummaryItemViewModel>(BuildMetricSummaryItems());
@@ -276,7 +276,15 @@ public sealed class MainWindowViewModel : ViewModelBase
     public TaskOption? SelectedTask
     {
         get => _selectedTask;
-        set => SetProperty(ref _selectedTask, value);
+        set
+        {
+            if (!SetProperty(ref _selectedTask, value))
+            {
+                return;
+            }
+
+            ApplyTaskDefaults(value);
+        }
     }
 
     public string TemplateId
@@ -687,6 +695,58 @@ public sealed class MainWindowViewModel : ViewModelBase
             InitialPopulationOverrideText = _lastPlan.Capacity.RecommendedInitialPopulationCount.ToString(CultureInfo.InvariantCulture);
             ReproductionRunCountOverrideText = _lastPlan.Capacity.RecommendedReproductionRunCount.ToString(CultureInfo.InvariantCulture);
             MaxConcurrentBrainsOverrideText = _lastPlan.Capacity.RecommendedMaxConcurrentBrains.ToString(CultureInfo.InvariantCulture);
+        }
+        finally
+        {
+            _suppressValidationRefresh = false;
+        }
+
+        RefreshValidationState();
+    }
+
+    private void ApplyTaskDefaults(TaskOption? task)
+    {
+        if (task is null)
+        {
+            return;
+        }
+
+        var profile = BasicsTaskExecutionProfiles.Resolve(task.TaskId);
+        _suppressValidationRefresh = true;
+        try
+        {
+            MaxInternalNeuronDeltaText = profile.VariationBand.MaxInternalNeuronDelta.ToString(CultureInfo.InvariantCulture);
+            MaxAxonDeltaText = profile.VariationBand.MaxAxonDelta.ToString(CultureInfo.InvariantCulture);
+            MaxStrengthCodeDeltaText = profile.VariationBand.MaxStrengthCodeDelta.ToString(CultureInfo.InvariantCulture);
+            MaxParameterCodeDeltaText = profile.VariationBand.MaxParameterCodeDelta.ToString(CultureInfo.InvariantCulture);
+            AllowFunctionMutation = profile.VariationBand.AllowFunctionMutation;
+            AllowAxonReroute = profile.VariationBand.AllowAxonReroute;
+            AllowRegionSetChange = profile.VariationBand.AllowRegionSetChange;
+
+            MinActiveInternalRegionCountText = FormatOptionalInt(profile.SeedShape.MinActiveInternalRegionCount);
+            MaxActiveInternalRegionCountText = FormatOptionalInt(profile.SeedShape.MaxActiveInternalRegionCount);
+            MinInternalNeuronCountText = FormatOptionalInt(profile.SeedShape.MinInternalNeuronCount);
+            MaxInternalNeuronCountText = FormatOptionalInt(profile.SeedShape.MaxInternalNeuronCount);
+            MinAxonCountText = FormatOptionalInt(profile.SeedShape.MinAxonCount);
+            MaxAxonCountText = FormatOptionalInt(profile.SeedShape.MaxAxonCount);
+
+            InitialPopulationOverrideText = FormatOptionalInt(profile.Sizing.InitialPopulationCount);
+            ReproductionRunCountOverrideText = FormatOptionalUInt(profile.Sizing.ReproductionRunCount);
+            MaxConcurrentBrainsOverrideText = FormatOptionalInt(profile.Sizing.MaxConcurrentBrains);
+
+            FitnessWeightText = profile.Scheduling.ParentSelection.FitnessWeight.ToString("0.##", CultureInfo.InvariantCulture);
+            DiversityWeightText = profile.Scheduling.ParentSelection.DiversityWeight.ToString("0.##", CultureInfo.InvariantCulture);
+            SpeciesBalanceWeightText = profile.Scheduling.ParentSelection.SpeciesBalanceWeight.ToString("0.##", CultureInfo.InvariantCulture);
+            EliteFractionText = profile.Scheduling.ParentSelection.EliteFraction.ToString("0.##", CultureInfo.InvariantCulture);
+            ExplorationFractionText = profile.Scheduling.ParentSelection.ExplorationFraction.ToString("0.##", CultureInfo.InvariantCulture);
+            MaxParentsPerSpeciesText = profile.Scheduling.ParentSelection.MaxParentsPerSpecies.ToString(CultureInfo.InvariantCulture);
+            MinRunsPerPairText = profile.Scheduling.RunAllocation.MinRunsPerPair.ToString(CultureInfo.InvariantCulture);
+            MaxRunsPerPairText = profile.Scheduling.RunAllocation.MaxRunsPerPair.ToString(CultureInfo.InvariantCulture);
+            FitnessExponentText = profile.Scheduling.RunAllocation.FitnessExponent.ToString("0.##", CultureInfo.InvariantCulture);
+            DiversityBoostText = profile.Scheduling.RunAllocation.DiversityBoost.ToString("0.##", CultureInfo.InvariantCulture);
+
+            SelectedOutputObservationMode = OutputObservationModes.FirstOrDefault(option => option.Mode == profile.OutputObservationMode)
+                ?? SelectedOutputObservationMode;
         }
         finally
         {
@@ -1488,6 +1548,12 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         return value;
     }
+
+    private static string FormatOptionalInt(int? value)
+        => value.HasValue ? value.Value.ToString(CultureInfo.InvariantCulture) : string.Empty;
+
+    private static string FormatOptionalUInt(uint? value)
+        => value.HasValue ? value.Value.ToString(CultureInfo.InvariantCulture) : string.Empty;
 
     private void ResetCharts()
     {

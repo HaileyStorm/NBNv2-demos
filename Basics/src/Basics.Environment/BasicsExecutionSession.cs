@@ -11,7 +11,8 @@ namespace Nbn.Demos.Basics.Environment;
 
 public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 {
-    private static readonly TimeSpan EvaluationOutputTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan VectorObservationTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan EventedObservationTimeout = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
@@ -693,7 +694,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 var baseline = await _runtimeClient.WaitForOutputVectorAsync(
                         brainId,
                         afterTickExclusive: 0,
-                        timeout: EvaluationOutputTimeout,
+                        timeout: VectorObservationTimeout,
                         cancellationToken)
                     .ConfigureAwait(false);
                 if (baseline is not null)
@@ -879,7 +880,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 var output = await _runtimeClient.WaitForOutputVectorAsync(
                         brainId,
                         tickCursor,
-                        EvaluationOutputTimeout,
+                        ResolveObservationTimeout(outputObservationMode),
                         cancellationToken)
                     .ConfigureAwait(false);
                 if (output is not null && output.Values.Count >= expectedOutputWidth)
@@ -892,7 +893,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 var output = await _runtimeClient.WaitForOutputEventAsync(
                         brainId,
                         tickCursor,
-                        EvaluationOutputTimeout,
+                        ResolveObservationTimeout(outputObservationMode),
                         cancellationToken)
                     .ConfigureAwait(false);
                 if (output is not null)
@@ -913,7 +914,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     var separatorOutput = await _runtimeClient.WaitForOutputVectorAsync(
                             brainId,
                             tickCursor,
-                            EvaluationOutputTimeout,
+                            ResolveObservationTimeout(outputObservationMode),
                             cancellationToken)
                         .ConfigureAwait(false);
                     if (separatorOutput is not null)
@@ -928,6 +929,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         return null;
     }
+
+    private static TimeSpan ResolveObservationTimeout(BasicsOutputObservationMode mode)
+        => mode == BasicsOutputObservationMode.EventedOutput
+            ? EventedObservationTimeout
+            : VectorObservationTimeout;
 
     private async Task WaitForBrainTerminationAsync(Guid brainId, CancellationToken cancellationToken)
     {

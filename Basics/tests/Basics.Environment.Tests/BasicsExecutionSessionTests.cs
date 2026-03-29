@@ -244,6 +244,9 @@ public sealed class BasicsExecutionSessionTests
             Assert.True(runtimeClient.SingleSubscriptionCount > 0);
             Assert.Equal(0, runtimeClient.VectorSubscriptionCount);
             Assert.Empty(runtimeClient.SetOutputVectorSourceRequests);
+            Assert.NotEmpty(runtimeClient.EventWaitTimeouts);
+            Assert.All(runtimeClient.EventWaitTimeouts, timeout => Assert.Equal(TimeSpan.FromSeconds(1), timeout));
+            Assert.Empty(runtimeClient.VectorWaitTimeouts);
         }
         finally
         {
@@ -527,6 +530,8 @@ public sealed class BasicsExecutionSessionTests
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
+        public List<TimeSpan> VectorWaitTimeouts { get; } = new();
+        public List<TimeSpan> EventWaitTimeouts { get; } = new();
         private int _activeSpawnRequests;
         private int _maxObservedConcurrentSpawnRequests;
         private readonly Dictionary<Guid, float> _lastVectorOutputByBrain = new();
@@ -689,6 +694,7 @@ public sealed class BasicsExecutionSessionTests
             TimeSpan timeout,
             CancellationToken cancellationToken = default)
         {
+            VectorWaitTimeouts.Add(timeout);
             if (_outputs.TryGetValue(brainId, out var queue))
             {
                 while (queue.Count > 0)
@@ -710,6 +716,7 @@ public sealed class BasicsExecutionSessionTests
             TimeSpan timeout,
             CancellationToken cancellationToken = default)
         {
+            EventWaitTimeouts.Add(timeout);
             if (_outputEvents.TryGetValue(brainId, out var queue))
             {
                 while (queue.Count > 0)
