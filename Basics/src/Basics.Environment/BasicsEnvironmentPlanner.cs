@@ -33,6 +33,7 @@ public sealed class BasicsEnvironmentPlanner
             Reproduction: options.Reproduction,
             Scheduling: options.Scheduling,
             Metrics: options.Metrics,
+            StopCriteria: options.StopCriteria,
             PlannedAtUtc: DateTimeOffset.UtcNow);
     }
 

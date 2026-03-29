@@ -306,7 +306,7 @@
                                    TextWrapping="Wrap"
                                    Foreground="#425466" />
                         <Grid ColumnDefinitions="Auto,110,Auto,110"
-                              RowDefinitions="Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Initial population" VerticalAlignment="Center" />
@@ -323,6 +323,11 @@
                             <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxConcurrentBrainsOverrideText}" Watermark="auto" />
                             <TextBlock Grid.Row="2" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
                             <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding RecommendedMaxConcurrentBrainsText}" VerticalAlignment="Center" />
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Stop accuracy" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding TargetAccuracyText}" />
+                            <TextBlock Grid.Row="3" Grid.Column="2" Text="Stop fitness" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding TargetFitnessText}" />
                         </Grid>
 
                         <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*"
@@ -349,6 +354,25 @@
                                        VerticalAlignment="Center"
                                        Foreground="#425466" />
                         </Grid>
+                        <Grid ColumnDefinitions="Auto,Auto,*"
+                              ColumnSpacing="12">
+                            <Button Grid.Column="0"
+                                    Content="Export .nbn"
+                                    Command="{Binding ExportDefinitionCommand}"
+                                    MinWidth="120" />
+                            <Button Grid.Column="1"
+                                    Content="Export .nbs"
+                                    Command="{Binding ExportSnapshotCommand}"
+                                    MinWidth="120" />
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding WinnerExportStatus}"
+                                       TextWrapping="Wrap"
+                                       VerticalAlignment="Center"
+                                       Foreground="#425466" />
+                        </Grid>
+                        <TextBlock Text="{Binding WinnerExportDetail}"
+                                   TextWrapping="Wrap"
+                                   Foreground="#6C7A89" />
                         <TextBlock Text="{Binding LastPlanSummary}"
                                    TextWrapping="Wrap"
                                    Foreground="#6C7A89" />

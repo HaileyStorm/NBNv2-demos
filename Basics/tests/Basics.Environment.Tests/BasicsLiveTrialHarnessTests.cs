@@ -4,6 +4,7 @@ using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Speciation;
+using Nbn.Shared;
 using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Demos.Basics.Environment.Tests;
@@ -370,10 +371,13 @@ public sealed class BasicsLiveTrialHarnessTests
             EffectiveTemplateDefinition: null,
             SeedShape: new BasicsResolvedSeedShape(1, 1, 3),
             BestCandidate: new BasicsExecutionBestCandidateSummary(
-                ArtifactSha256: new string('a', 64),
+                DefinitionArtifact: new string('a', 64).ToArtifactRef(256, "application/x-nbn", "http://fake-store/winner"),
+                SnapshotArtifact: null,
+                ActiveBrainId: null,
                 SpeciesId: "species.default",
                 Accuracy: bestAccuracy,
                 Fitness: bestFitness,
+                Complexity: new BasicsDefinitionComplexitySummary(1, 1, 3),
                 ScoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
                 {
                     ["classification_accuracy"] = bestAccuracy
@@ -409,6 +413,15 @@ public sealed class BasicsLiveTrialHarnessTests
 
         public Task<SpawnBrainViaIOAck?> SpawnBrainAsync(SpawnBrain request, CancellationToken cancellationToken = default)
             => Task.FromResult<SpawnBrainViaIOAck?>(null);
+
+        public Task<BrainDefinitionReady?> ExportBrainDefinitionAsync(
+            Guid brainId,
+            bool rebaseOverlays,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<BrainDefinitionReady?>(null);
+
+        public Task<SnapshotReady?> RequestSnapshotAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.FromResult<SnapshotReady?>(null);
 
         public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
             => Task.CompletedTask;

@@ -6,7 +6,7 @@
 
 - A shared environment library in `src/Basics.Environment`.
 - A task-plugin library in `src/Basics.Tasks`.
-- A small Avalonia desktop UI in `src/Basics.Ui`.
+- A small Avalonia desktop UI in `src/Basics.Ui`, including target accuracy/fitness stop controls and winning-artifact export (`.nbn` and, when available, `.nbs`).
 - A headless live-trial harness in `src/Basics.Harness`.
 - A test project in `tests/Basics.Environment.Tests`.
 - A task-plugin test project in `tests/Basics.Tasks.Tests`.
@@ -31,7 +31,7 @@
 - `Basics.sln`: local solution for the Basics demo.
 - `src/Basics.Environment`: shared environment contract, sizing heuristics, runtime client, and planner.
 - `src/Basics.Tasks`: concrete Basics task plugins plus the plugin registry.
-- `src/Basics.Ui`: small operator UI for connection/configuration, capacity fetch, task selection, scheduling settings, and metric surfaces.
+- `src/Basics.Ui`: small operator UI for connection/configuration, capacity fetch, task selection, stop targets, scheduling settings, metric surfaces, and winning-artifact export.
 - `src/Basics.Harness`: console entrypoint for repeatable live-runtime trial runs, JSON reports, and simple auto-tuning.
 - `tests/Basics.Environment.Tests`: contract and planner tests.
 - `tests/Basics.Tasks.Tests`: task-plugin evaluation tests.

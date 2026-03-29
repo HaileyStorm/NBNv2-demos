@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
@@ -21,6 +22,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private readonly BasicsTemplatePublishingOptions _publishingOptions;
     private readonly ReachableArtifactStorePublisher _artifactPublisher = new();
     private readonly Random _random = new(1701);
+    private readonly ConcurrentDictionary<Guid, byte> _trackedBrains = new();
+    private readonly ConcurrentDictionary<string, BasicsDefinitionComplexitySummary?> _definitionComplexityCache = new(StringComparer.OrdinalIgnoreCase);
 
     public BasicsExecutionSession(
         IBasicsRuntimeClient runtimeClient,
@@ -118,6 +121,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             var population = await SeedInitialPopulationAsync(
                     plan,
                     template.TemplateDefinition,
+                    template.Complexity,
                     targetPopulation,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -125,6 +129,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             if (population.Count == 0)
             {
                 return CreateFinalSnapshot(
+                    plan.StopCriteria,
                     publishSnapshot,
                     BasicsExecutionState.Failed,
                     "Execution failed.",
@@ -163,10 +168,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                var generationMetrics = BuildGenerationMetrics(population);
+                var generationMetrics = BuildGenerationMetrics(population, plan.StopCriteria, includeWinnerRuntimeState: true);
                 if (IsGenerationFullyFailed(population))
                 {
+                    population = await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
+
                     return CreateFinalSnapshot(
+                        plan.StopCriteria,
                         publishSnapshot,
                         BasicsExecutionState.Failed,
                         "Execution failed.",
@@ -175,7 +183,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             : $"Generation {generation} produced no viable evaluations. {generationMetrics.EvaluationFailureSummary}.",
                         speciationEpochId,
                         generation,
-                        Array.Empty<PopulationMember>(),
+                        population,
                         0,
                         reproductionCalls,
                         reproductionRunsObserved,
@@ -190,6 +198,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 fitnessHistory.Add(generationMetrics.BestFitness);
 
                 var generationSummary = CreateSnapshot(
+                    plan.StopCriteria,
                     BasicsExecutionState.Running,
                     $"Generation {generation} evaluated.",
                     BuildGenerationDetail(generation, generationMetrics),
@@ -205,17 +214,25 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     fitnessHistory);
                 publishSnapshot(generationSummary);
 
-                if (generationMetrics.BestAccuracy >= 1f && generationMetrics.BestFitness >= 0.999f)
+                if (plan.StopCriteria.IsSatisfied(generationMetrics.BestAccuracy, generationMetrics.BestFitness))
                 {
+                    population = await RetainWinningCandidateAsync(
+                            population,
+                            generationMetrics.BestCandidate,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                    var retainedWinnerCount = population.Count(member => member.ActiveBrainId != Guid.Empty);
                     return CreateFinalSnapshot(
+                        plan.StopCriteria,
                         publishSnapshot,
                         BasicsExecutionState.Succeeded,
-                        "Execution reached a perfect candidate.",
-                        $"Generation {generation} achieved perfect {taskPlugin.Contract.DisplayName} accuracy.",
+                        "Execution reached the configured stop target.",
+                        BuildStopTargetDetail(generation, taskPlugin.Contract.DisplayName, plan.StopCriteria, generationMetrics.BestCandidate),
                         speciationEpochId,
                         generation,
                         population,
-                        0,
+                        retainedWinnerCount,
                         reproductionCalls,
                         reproductionRunsObserved,
                         effectiveTemplateDefinition,
@@ -225,6 +242,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         lastObservedSnapshot);
                 }
 
+                population = await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
+
                 var nextGeneration = await BreedNextGenerationAsync(
                         plan,
                         population,
@@ -233,6 +252,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         onBreedProgress: (detail, activePopulationCount) =>
                         {
                             publishSnapshot(CreateSnapshot(
+                                plan.StopCriteria,
                                 BasicsExecutionState.Running,
                                 $"Breeding generation {generation + 1}...",
                                 detail,
@@ -257,6 +277,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 if (nextGeneration.Count == 0)
                 {
                     return CreateFinalSnapshot(
+                        plan.StopCriteria,
                         publishSnapshot,
                         BasicsExecutionState.Failed,
                         "Execution failed.",
@@ -277,7 +298,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 population = nextGeneration;
             }
 
+            population = await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
             return CreateFinalSnapshot(
+                plan.StopCriteria,
                 publishSnapshot,
                 BasicsExecutionState.Stopped,
                 "Execution stopped.",
@@ -297,6 +320,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return CreateFinalSnapshot(
+                plan.StopCriteria,
                 publishSnapshot,
                 BasicsExecutionState.Stopped,
                 "Execution stopped.",
@@ -316,6 +340,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         catch (Exception ex)
         {
             return CreateFinalSnapshot(
+                plan.StopCriteria,
                 publishSnapshot,
                 BasicsExecutionState.Failed,
                 "Execution failed.",
@@ -331,6 +356,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 accuracyHistory,
                 fitnessHistory,
                 lastObservedSnapshot);
+        }
+        finally
+        {
+            await CleanupTrackedBrainsAsync(CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -422,13 +451,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
     }
 
-    private async Task<(ArtifactRef TemplateDefinition, BasicsResolvedSeedShape? SeedShape)> ResolveTemplateDefinitionAsync(
+    private async Task<(ArtifactRef TemplateDefinition, BasicsResolvedSeedShape? SeedShape, BasicsDefinitionComplexitySummary? Complexity)> ResolveTemplateDefinitionAsync(
         BasicsSeedTemplateContract template,
         CancellationToken cancellationToken)
     {
         if (template.TemplateDefinition is not null)
         {
-            return (template.TemplateDefinition.Clone(), null);
+            var templateDefinition = template.TemplateDefinition.Clone();
+            var complexity = await ResolveDefinitionComplexityAsync(templateDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
+            return (templateDefinition, null, complexity);
         }
 
         var build = BasicsTemplateArtifactBuilder.Build(template);
@@ -440,22 +471,29 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 advertisedHost: _publishingOptions.AdvertiseHost,
                 cancellationToken: cancellationToken)
             .ConfigureAwait(false);
-        return (publication.ArtifactRef.Clone(), build.Shape);
+        return (
+            publication.ArtifactRef.Clone(),
+            build.Shape,
+            BuildComplexityFromSeedShape(build.Shape));
     }
 
     private async Task<List<PopulationMember>> SeedInitialPopulationAsync(
         BasicsEnvironmentPlan plan,
         ArtifactRef templateDefinition,
+        BasicsDefinitionComplexitySummary? templateComplexity,
         int targetPopulation,
         CancellationToken cancellationToken)
     {
         var bootstrapSpeciesId = BuildBootstrapSpeciesId(plan.SeedTemplate.TemplateId);
         var bootstrapSpeciesDisplayName = $"{plan.SeedTemplate.TemplateId} bootstrap";
+        var resolvedTemplateComplexity = templateComplexity
+                                         ?? await ResolveDefinitionComplexityAsync(templateDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
 
         var templateMember = new PopulationMember(
             templateDefinition.Clone(),
             bootstrapSpeciesId,
             bootstrapSpeciesDisplayName,
+            resolvedTemplateComplexity,
             LastEvaluation: null);
         await CommitArtifactMembershipAsync(
                 templateMember.Definition,
@@ -504,10 +542,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     decisionReason: "basics_seed_child",
                     cancellationToken)
                 .ConfigureAwait(false);
+            var childComplexity = await ResolveDefinitionComplexityAsync(childDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
             population.Add(new PopulationMember(
                 childDefinition.Clone(),
                 membership.SpeciesId,
                 membership.SpeciesDisplayName,
+                childComplexity,
                 LastEvaluation: null));
         }
 
@@ -517,6 +557,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 templateDefinition.Clone(),
                 bootstrapSpeciesId,
                 bootstrapSpeciesDisplayName,
+                resolvedTemplateComplexity,
                 LastEvaluation: null));
         }
 
@@ -551,6 +592,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
             var batch = population.Skip(chunkIndex * maxConcurrent).Take(maxConcurrent).ToArray();
             onSnapshot?.Invoke(CreateSnapshot(
+                plan.StopCriteria,
                 BasicsExecutionState.Running,
                 $"Evaluating generation {generation}...",
                 $"Batch {chunkIndex + 1}/{chunkCount} with {batch.Length} active brain(s).",
@@ -583,6 +625,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         Guid brainId = Guid.Empty;
         var setupSlotHeld = false;
+        var subscribed = false;
         try
         {
             await setupGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -610,13 +653,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 };
             }
 
+            _trackedBrains.TryAdd(brainId, 0);
+
             var brainInfo = await _runtimeClient.RequestBrainInfoAsync(brainId, cancellationToken).ConfigureAwait(false);
             var geometry = BasicsIoGeometry.Validate(brainInfo);
             if (!geometry.IsValid)
             {
                 return member with
                 {
-                    LastEvaluation = CreateTransportFailure($"geometry_invalid:{geometry.FailureReason}")
+                    LastEvaluation = CreateTransportFailure($"geometry_invalid:{geometry.FailureReason}"),
+                    ActiveBrainId = brainId
                 };
             }
 
@@ -632,6 +678,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 await _runtimeClient.SubscribeOutputsAsync(brainId, cancellationToken).ConfigureAwait(false);
                 _runtimeClient.ResetOutputEventBuffer(brainId);
             }
+            subscribed = true;
 
             setupGate.Release();
             setupSlotHeld = false;
@@ -669,7 +716,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 {
                     return member with
                     {
-                        LastEvaluation = CreateTransportFailure("output_timeout_or_width_mismatch")
+                        LastEvaluation = CreateTransportFailure("output_timeout_or_width_mismatch"),
+                        ActiveBrainId = brainId
                     };
                 }
 
@@ -685,17 +733,35 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     TickBase: observations.Count == 0 ? 0UL : observations[0].TickId),
                 samples,
                 observations);
-            return member with { LastEvaluation = evaluation };
+            return member with
+            {
+                LastEvaluation = evaluation,
+                ActiveBrainId = brainId
+            };
         }
         catch (OperationCanceledException)
         {
+            if (brainId != Guid.Empty)
+            {
+                try
+                {
+                    await TeardownBrainAsync(brainId, CancellationToken.None).ConfigureAwait(false);
+                    brainId = Guid.Empty;
+                }
+                catch
+                {
+                    // Best-effort cancellation cleanup only.
+                }
+            }
+
             throw;
         }
         catch (Exception ex)
         {
             return member with
             {
-                LastEvaluation = CreateTransportFailure($"evaluation_failed:{ex.GetBaseException().Message}")
+                LastEvaluation = CreateTransportFailure($"evaluation_failed:{ex.GetBaseException().Message}"),
+                ActiveBrainId = brainId
             };
         }
         finally
@@ -705,25 +771,22 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 setupGate.Release();
             }
 
-            if (brainId != Guid.Empty)
+            if (brainId != Guid.Empty && subscribed)
             {
                 try
                 {
                     if (outputObservationMode.UsesVectorSubscription())
                     {
-                        await _runtimeClient.UnsubscribeOutputsVectorAsync(brainId, cancellationToken).ConfigureAwait(false);
+                        await _runtimeClient.UnsubscribeOutputsVectorAsync(brainId, CancellationToken.None).ConfigureAwait(false);
                     }
                     else
                     {
-                        await _runtimeClient.UnsubscribeOutputsAsync(brainId, cancellationToken).ConfigureAwait(false);
+                        await _runtimeClient.UnsubscribeOutputsAsync(brainId, CancellationToken.None).ConfigureAwait(false);
                     }
-
-                    await _runtimeClient.KillBrainAsync(brainId, "basics_evaluation_complete", cancellationToken).ConfigureAwait(false);
-                    await WaitForBrainTerminationAsync(brainId, cancellationToken).ConfigureAwait(false);
                 }
                 catch
                 {
-                    // Best-effort teardown only.
+                    // Best-effort unsubscribe only.
                 }
             }
         }
@@ -815,6 +878,108 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
     }
 
+    private async Task<List<PopulationMember>> RetainWinningCandidateAsync(
+        IReadOnlyList<PopulationMember> population,
+        BasicsExecutionBestCandidateSummary? winner,
+        CancellationToken cancellationToken)
+    {
+        if (winner?.ActiveBrainId is not Guid retainedBrainId || retainedBrainId == Guid.Empty)
+        {
+            return await TeardownPopulationBrainsAsync(population, cancellationToken).ConfigureAwait(false);
+        }
+
+        var snapshotArtifact = await TryRequestSnapshotArtifactAsync(retainedBrainId, cancellationToken).ConfigureAwait(false);
+        var updated = new List<PopulationMember>(population.Count);
+        foreach (var member in population)
+        {
+            if (member.ActiveBrainId == retainedBrainId)
+            {
+                _trackedBrains.TryRemove(retainedBrainId, out _);
+                updated.Add(member with
+                {
+                    SnapshotArtifact = snapshotArtifact?.Clone()
+                });
+                continue;
+            }
+
+            if (member.ActiveBrainId != Guid.Empty)
+            {
+                await TeardownBrainAsync(member.ActiveBrainId, cancellationToken).ConfigureAwait(false);
+            }
+
+            updated.Add(member with
+            {
+                ActiveBrainId = Guid.Empty,
+                SnapshotArtifact = null
+            });
+        }
+
+        return updated;
+    }
+
+    private async Task<List<PopulationMember>> TeardownPopulationBrainsAsync(
+        IReadOnlyList<PopulationMember> population,
+        CancellationToken cancellationToken)
+    {
+        var updated = new List<PopulationMember>(population.Count);
+        foreach (var member in population)
+        {
+            if (member.ActiveBrainId != Guid.Empty)
+            {
+                await TeardownBrainAsync(member.ActiveBrainId, cancellationToken).ConfigureAwait(false);
+            }
+
+            updated.Add(member with
+            {
+                ActiveBrainId = Guid.Empty,
+                SnapshotArtifact = null
+            });
+        }
+
+        return updated;
+    }
+
+    private async Task<ArtifactRef?> TryRequestSnapshotArtifactAsync(Guid brainId, CancellationToken cancellationToken)
+    {
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var ready = await _runtimeClient.RequestSnapshotAsync(brainId, cancellationToken).ConfigureAwait(false);
+        return HasArtifactRef(ready?.Snapshot) ? ready!.Snapshot.Clone() : null;
+    }
+
+    private async Task CleanupTrackedBrainsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var brainId in _trackedBrains.Keys.ToArray())
+        {
+            await TeardownBrainAsync(brainId, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task TeardownBrainAsync(Guid brainId, CancellationToken cancellationToken)
+    {
+        if (brainId == Guid.Empty)
+        {
+            return;
+        }
+
+        try
+        {
+            await _runtimeClient.KillBrainAsync(brainId, "basics_evaluation_complete", cancellationToken).ConfigureAwait(false);
+            await WaitForBrainTerminationAsync(brainId, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort teardown only.
+        }
+        finally
+        {
+            _trackedBrains.TryRemove(brainId, out _);
+        }
+    }
+
     private async Task<List<PopulationMember>> BreedNextGenerationAsync(
         BasicsEnvironmentPlan plan,
         IReadOnlyList<PopulationMember> population,
@@ -903,10 +1068,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         decisionReason: "basics_generation_child",
                         cancellationToken)
                     .ConfigureAwait(false);
+                var childComplexity = await ResolveDefinitionComplexityAsync(childDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
                 nextGeneration.Add(new PopulationMember(
                     childDefinition.Clone(),
                     membership.SpeciesId,
                     membership.SpeciesDisplayName,
+                    childComplexity,
                     LastEvaluation: null));
             }
         }
@@ -1176,6 +1343,44 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return root;
     }
 
+    private async Task<BasicsDefinitionComplexitySummary?> ResolveDefinitionComplexityAsync(
+        ArtifactRef definition,
+        BasicsResolvedSeedShape? knownShape,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+
+        if (knownShape is not null)
+        {
+            return BuildComplexityFromSeedShape(knownShape);
+        }
+
+        var sha = definition.ToSha256Hex();
+        if (_definitionComplexityCache.TryGetValue(sha, out var cached))
+        {
+            return cached;
+        }
+
+        var complexity = await BasicsArtifactStoreReader.TryReadDefinitionComplexityAsync(
+                definition,
+                ResolveArtifactFallbackRoot(),
+                cancellationToken)
+            .ConfigureAwait(false);
+        _definitionComplexityCache[sha] = complexity;
+        return complexity;
+    }
+
+    private string ResolveArtifactFallbackRoot()
+        => string.IsNullOrWhiteSpace(_publishingOptions.BackingStoreRoot)
+            ? ArtifactStoreResolverOptions.ResolveDefaultArtifactRootPath()
+            : _publishingOptions.BackingStoreRoot!;
+
+    private static BasicsDefinitionComplexitySummary BuildComplexityFromSeedShape(BasicsResolvedSeedShape shape)
+        => new(
+            ActiveInternalRegionCount: shape.ActiveInternalRegionCount,
+            InternalNeuronCount: shape.InternalNeuronCount,
+            AxonCount: shape.AxonCount);
+
     private ulong NextSeed()
     {
         var buffer = new byte[8];
@@ -1227,7 +1432,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return collapsed.Length <= 96 ? collapsed : collapsed[..96];
     }
 
-    private static BasicsExecutionSnapshot CreateFinalSnapshot(
+    private BasicsExecutionSnapshot CreateFinalSnapshot(
+        BasicsExecutionStopCriteria stopCriteria,
         Action<BasicsExecutionSnapshot> onSnapshot,
         BasicsExecutionState state,
         string statusText,
@@ -1245,6 +1451,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionSnapshot? baselineSnapshot)
     {
         var snapshot = CreateTerminalSnapshot(
+            stopCriteria,
             state,
             statusText,
             detailText,
@@ -1263,7 +1470,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return snapshot;
     }
 
-    private static BasicsExecutionSnapshot CreateTerminalSnapshot(
+    private BasicsExecutionSnapshot CreateTerminalSnapshot(
+        BasicsExecutionStopCriteria stopCriteria,
         BasicsExecutionState state,
         string statusText,
         string detailText,
@@ -1282,6 +1490,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         if (!ShouldUseBaselineSnapshot(population, baselineSnapshot))
         {
             return CreateSnapshot(
+                stopCriteria,
                 state,
                 statusText,
                 detailText,
@@ -1294,7 +1503,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 effectiveTemplateDefinition,
                 seedShape,
                 accuracyHistory,
-                fitnessHistory);
+                fitnessHistory,
+                includeWinnerRuntimeState: state == BasicsExecutionState.Succeeded && activeBrainCount > 0);
         }
 
         var baseline = baselineSnapshot!;
@@ -1380,10 +1590,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         => candidate is null
             ? null
             : new BasicsExecutionBestCandidateSummary(
-                candidate.ArtifactSha256,
+                candidate.DefinitionArtifact.Clone(),
+                candidate.SnapshotArtifact?.Clone(),
+                candidate.ActiveBrainId,
                 candidate.SpeciesId,
                 candidate.Accuracy,
                 candidate.Fitness,
+                candidate.Complexity,
                 new Dictionary<string, float>(candidate.ScoreBreakdown, StringComparer.Ordinal),
                 candidate.Diagnostics.ToArray());
 
@@ -1392,7 +1605,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<float> baseline)
         => current.Count > 0 ? current.ToArray() : baseline.ToArray();
 
-    private static BasicsExecutionSnapshot CreateSnapshot(
+    private BasicsExecutionSnapshot CreateSnapshot(
+        BasicsExecutionStopCriteria stopCriteria,
         BasicsExecutionState state,
         string statusText,
         string detailText,
@@ -1405,9 +1619,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         ArtifactRef? effectiveTemplateDefinition,
         BasicsResolvedSeedShape? seedShape,
         IReadOnlyList<float> accuracyHistory,
-        IReadOnlyList<float> fitnessHistory)
+        IReadOnlyList<float> fitnessHistory,
+        bool includeWinnerRuntimeState = false)
     {
-        var metrics = BuildGenerationMetrics(population);
+        var metrics = BuildGenerationMetrics(population, stopCriteria, includeWinnerRuntimeState);
         return new BasicsExecutionSnapshot(
             state,
             statusText,
@@ -1432,7 +1647,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             fitnessHistory.ToArray());
     }
 
-    private static GenerationMetrics BuildGenerationMetrics(IReadOnlyList<PopulationMember> population)
+    private GenerationMetrics BuildGenerationMetrics(
+        IReadOnlyList<PopulationMember> population,
+        BasicsExecutionStopCriteria? stopCriteria,
+        bool includeWinnerRuntimeState = false)
     {
         if (population.Count == 0)
         {
@@ -1447,17 +1665,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 EvaluationFailureSummary: string.Empty);
         }
 
-        var evaluated = population.Select(member => member.LastEvaluation ?? CreateTransportFailure("evaluation_missing")).ToArray();
-        var bestIndex = Array.FindIndex(evaluated, evaluation =>
-            evaluation.Fitness == evaluated.Max(candidate => candidate.Fitness)
-            && evaluation.Accuracy == evaluated.Max(candidate => candidate.Accuracy));
-        if (bestIndex < 0)
-        {
-            bestIndex = 0;
-        }
-
-        var bestMember = population[bestIndex];
-        var bestEvaluation = evaluated[bestIndex];
+        var candidates = population
+            .Select(member => new CandidateSelection(
+                Member: member,
+                Evaluation: member.LastEvaluation ?? CreateTransportFailure("evaluation_missing"),
+                TieBreakRank: ComputeTieBreakRank(member.Definition.ToSha256Hex())))
+            .ToArray();
+        var winningCandidate = SelectWinningCandidate(candidates, stopCriteria);
         var speciesCount = population.Select(member => NormalizeSpeciesId(member.SpeciesId)).Distinct(StringComparer.OrdinalIgnoreCase).Count();
         var failureDiagnostics = population
             .SelectMany(member => member.LastEvaluation?.Diagnostics ?? Array.Empty<string>())
@@ -1478,20 +1692,67 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         return new GenerationMetrics(
-            BestAccuracy: evaluated.Max(candidate => candidate.Accuracy),
-            BestFitness: evaluated.Max(candidate => candidate.Fitness),
-            MeanFitness: evaluated.Average(candidate => candidate.Fitness),
+            BestAccuracy: candidates.Max(candidate => candidate.Evaluation.Accuracy),
+            BestFitness: candidates.Max(candidate => candidate.Evaluation.Fitness),
+            MeanFitness: candidates.Average(candidate => candidate.Evaluation.Fitness),
             SpeciesCount: speciesCount,
             CapacityUtilization: 0f,
             BestCandidate: new BasicsExecutionBestCandidateSummary(
-                bestMember.Definition.ToSha256Hex(),
-                NormalizeSpeciesId(bestMember.SpeciesId),
-                bestEvaluation.Accuracy,
-                bestEvaluation.Fitness,
-                new Dictionary<string, float>(bestEvaluation.ScoreBreakdown, StringComparer.Ordinal),
-                bestEvaluation.Diagnostics.ToArray()),
+                winningCandidate.Member.Definition.Clone(),
+                includeWinnerRuntimeState ? winningCandidate.Member.SnapshotArtifact?.Clone() : null,
+                includeWinnerRuntimeState && winningCandidate.Member.ActiveBrainId != Guid.Empty ? winningCandidate.Member.ActiveBrainId : null,
+                NormalizeSpeciesId(winningCandidate.Member.SpeciesId),
+                winningCandidate.Evaluation.Accuracy,
+                winningCandidate.Evaluation.Fitness,
+                winningCandidate.Member.Complexity,
+                new Dictionary<string, float>(winningCandidate.Evaluation.ScoreBreakdown, StringComparer.Ordinal),
+                winningCandidate.Evaluation.Diagnostics.ToArray()),
             EvaluationFailureCount: failureCount,
             EvaluationFailureSummary: failureSummary);
+    }
+
+    private CandidateSelection SelectWinningCandidate(
+        IReadOnlyList<CandidateSelection> candidates,
+        BasicsExecutionStopCriteria? stopCriteria)
+    {
+        var stopTargetMatches = stopCriteria is null
+            ? Array.Empty<CandidateSelection>()
+            : candidates
+                .Where(candidate => stopCriteria.IsSatisfied(candidate.Evaluation.Accuracy, candidate.Evaluation.Fitness))
+                .ToArray();
+        if (stopTargetMatches.Length > 0)
+        {
+            return stopTargetMatches
+                .OrderBy(candidate => candidate.Member.Complexity?.InternalNeuronCount ?? int.MaxValue)
+                .ThenBy(candidate => candidate.Member.Complexity?.AxonCount ?? int.MaxValue)
+                .ThenBy(candidate => candidate.Member.Complexity?.ActiveInternalRegionCount ?? int.MaxValue)
+                .ThenBy(candidate => candidate.TieBreakRank)
+                .First();
+        }
+
+        return candidates
+            .OrderByDescending(candidate => candidate.Evaluation.Fitness)
+            .ThenByDescending(candidate => candidate.Evaluation.Accuracy)
+            .ThenBy(candidate => candidate.Member.Complexity?.InternalNeuronCount ?? int.MaxValue)
+            .ThenBy(candidate => candidate.Member.Complexity?.AxonCount ?? int.MaxValue)
+            .ThenBy(candidate => candidate.Member.Complexity?.ActiveInternalRegionCount ?? int.MaxValue)
+            .ThenBy(candidate => candidate.TieBreakRank)
+            .First();
+    }
+
+    private static int ComputeTieBreakRank(string artifactSha)
+    {
+        unchecked
+        {
+            uint hash = 2166136261u ^ 1701u;
+            foreach (var ch in artifactSha)
+            {
+                hash ^= ch;
+                hash *= 16777619u;
+            }
+
+            return (int)(hash & 0x7FFFFFFF);
+        }
     }
 
     private static string BuildGenerationDetail(int generation, GenerationMetrics metrics)
@@ -1505,10 +1766,39 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return summary;
     }
 
+    private static string BuildStopTargetDetail(
+        int generation,
+        string taskDisplayName,
+        BasicsExecutionStopCriteria stopCriteria,
+        BasicsExecutionBestCandidateSummary? winningCandidate)
+    {
+        var summary = $"Generation {generation} met the {taskDisplayName} stop target (accuracy >= {stopCriteria.TargetAccuracy:0.###}, fitness >= {stopCriteria.TargetFitness:0.###}).";
+        if (winningCandidate?.Complexity is not null)
+        {
+            summary += $" Retained winner simplicity: internal_neurons={winningCandidate.Complexity.InternalNeuronCount}, axons={winningCandidate.Complexity.AxonCount}, internal_regions={winningCandidate.Complexity.ActiveInternalRegionCount}.";
+        }
+
+        if (winningCandidate?.HasSnapshotArtifact == true)
+        {
+            summary += " Snapshot export is available.";
+        }
+        else if (winningCandidate?.HasRetainedBrain == true)
+        {
+            summary += " Definition export is available.";
+        }
+
+        return summary;
+    }
+
     private static string NormalizeSpeciesId(string? value)
         => string.IsNullOrWhiteSpace(value) ? "species.default" : value.Trim();
 
     private readonly record struct RankedParent(PopulationMember Member, BasicsParentSelectionScore Score);
+
+    private readonly record struct CandidateSelection(
+        PopulationMember Member,
+        BasicsTaskEvaluationResult Evaluation,
+        int TieBreakRank);
 
     private readonly record struct GenerationMetrics(
         float BestAccuracy,
@@ -1524,5 +1814,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         ArtifactRef Definition,
         string SpeciesId,
         string SpeciesDisplayName,
-        BasicsTaskEvaluationResult? LastEvaluation);
+        BasicsDefinitionComplexitySummary? Complexity,
+        BasicsTaskEvaluationResult? LastEvaluation,
+        Guid ActiveBrainId = default,
+        ArtifactRef? SnapshotArtifact = null);
 }

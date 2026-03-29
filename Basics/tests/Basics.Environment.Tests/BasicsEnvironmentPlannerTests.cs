@@ -91,6 +91,15 @@ public sealed class BasicsEnvironmentPlannerTests
         public Task<SpawnBrainViaIOAck?> SpawnBrainAsync(SpawnBrain request, CancellationToken cancellationToken = default)
             => Task.FromResult<SpawnBrainViaIOAck?>(null);
 
+        public Task<BrainDefinitionReady?> ExportBrainDefinitionAsync(
+            Guid brainId,
+            bool rebaseOverlays,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<BrainDefinitionReady?>(null);
+
+        public Task<SnapshotReady?> RequestSnapshotAsync(Guid brainId, CancellationToken cancellationToken = default)
+            => Task.FromResult<SnapshotReady?>(null);
+
         public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 

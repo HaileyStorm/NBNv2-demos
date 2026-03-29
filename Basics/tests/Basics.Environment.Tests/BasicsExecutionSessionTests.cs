@@ -4,6 +4,7 @@ using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Speciation;
+using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Validation;
@@ -108,6 +109,7 @@ public sealed class BasicsExecutionSessionTests
                     Reproduction: BasicsReproductionPolicy.CreateDefault(),
                     Scheduling: BasicsReproductionSchedulingPolicy.Default,
                     Metrics: BasicsMetricsContract.Default,
+                    StopCriteria: new BasicsExecutionStopCriteria(),
                     PlannedAtUtc: DateTimeOffset.UtcNow),
                 new AndTaskPlugin(),
                 snapshots.Add,
@@ -176,6 +178,43 @@ public sealed class BasicsExecutionSessionTests
                 runtimeClient.SetOutputVectorSourceRequests,
                 static request => request.BrainId != Guid.Empty && request.OutputVectorSource == OutputVectorSource.Buffer);
             Assert.True(runtimeClient.VectorSubscriptionCount > 0);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_StopsAtConfiguredTarget_RetainsWinner_AndPrefersSimplerStructure()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient();
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        TargetAccuracy = 0.75f,
+                        TargetFitness = 0.75f
+                    }),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.Equal(1, final.Generation);
+            Assert.Equal(1, final.ActiveBrainCount);
+            Assert.NotNull(final.EffectiveTemplateDefinition);
+            Assert.NotNull(final.BestCandidate);
+            Assert.True(final.BestCandidate.HasRetainedBrain);
+            Assert.True(final.BestCandidate.HasSnapshotArtifact);
+            Assert.Equal(final.EffectiveTemplateDefinition.ToSha256Hex(), final.BestCandidate.ArtifactSha256);
+            Assert.Equal(1, runtimeClient.LiveBrainCount);
+            Assert.Equal(1, runtimeClient.SnapshotRequestCount);
         }
         finally
         {
@@ -296,6 +335,7 @@ public sealed class BasicsExecutionSessionTests
                     Reproduction: BasicsReproductionPolicy.CreateDefault(),
                     Scheduling: BasicsReproductionSchedulingPolicy.Default,
                     Metrics: BasicsMetricsContract.Default,
+                    StopCriteria: new BasicsExecutionStopCriteria(),
                     PlannedAtUtc: DateTimeOffset.UtcNow),
                 new AndTaskPlugin(),
                 _ => { },
@@ -310,7 +350,9 @@ public sealed class BasicsExecutionSessionTests
         }
     }
 
-    private static BasicsEnvironmentPlan CreatePlan(BasicsOutputObservationMode outputObservationMode)
+    private static BasicsEnvironmentPlan CreatePlan(
+        BasicsOutputObservationMode outputObservationMode,
+        BasicsExecutionStopCriteria? stopCriteria = null)
         => new(
             SelectedTask: new AndTaskPlugin().Contract,
             SeedTemplate: BasicsSeedTemplateContract.CreateDefault(),
@@ -327,17 +369,27 @@ public sealed class BasicsExecutionSessionTests
             Reproduction: BasicsReproductionPolicy.CreateDefault(),
             Scheduling: BasicsReproductionSchedulingPolicy.Default,
             Metrics: BasicsMetricsContract.Default,
+            StopCriteria: stopCriteria ?? new BasicsExecutionStopCriteria(),
             PlannedAtUtc: DateTimeOffset.UtcNow);
 
     private sealed class FakeBasicsRuntimeClient : IBasicsRuntimeClient
     {
         private readonly Dictionary<Guid, ArtifactRef> _brainDefinitions = new();
+        private readonly Dictionary<Guid, ArtifactRef> _brainSnapshots = new();
         private readonly Dictionary<Guid, Queue<BasicsRuntimeOutputVector>> _outputs = new();
         private readonly Dictionary<Guid, Queue<BasicsRuntimeOutputEvent>> _outputEvents = new();
         private readonly Dictionary<Guid, ulong> _ticks = new();
         private readonly Dictionary<string, string> _behaviorByArtifactSha = new(StringComparer.OrdinalIgnoreCase);
+        private readonly string _artifactRoot = Path.Combine(Path.GetTempPath(), "nbn-basics-tests", Guid.NewGuid().ToString("N"));
+        private readonly LocalArtifactStore _artifactStore;
         private int _childIndex;
         private bool _epochStarted;
+
+        public FakeBasicsRuntimeClient()
+        {
+            Directory.CreateDirectory(_artifactRoot);
+            _artifactStore = new LocalArtifactStore(new ArtifactStoreOptions(_artifactRoot));
+        }
 
         public int ReproduceCallCount { get; private set; }
         public int GetSpeciationConfigCallCount { get; private set; }
@@ -345,6 +397,8 @@ public sealed class BasicsExecutionSessionTests
         public bool SpeciationEpochStartedBeforeFirstReproduce { get; private set; }
         public int VectorSubscriptionCount { get; private set; }
         public int SingleSubscriptionCount { get; private set; }
+        public int SnapshotRequestCount { get; private set; }
+        public int LiveBrainCount => _brainDefinitions.Count;
         public int? ThrowOnReproduceCallNumber { get; init; }
         public TimeSpan SpawnDelay { get; init; }
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
@@ -404,6 +458,47 @@ public sealed class BasicsExecutionSessionTests
             {
                 Interlocked.Decrement(ref _activeSpawnRequests);
             }
+        }
+
+        public Task<BrainDefinitionReady?> ExportBrainDefinitionAsync(
+            Guid brainId,
+            bool rebaseOverlays,
+            CancellationToken cancellationToken = default)
+        {
+            var definition = _brainDefinitions.TryGetValue(brainId, out var artifact)
+                ? artifact.Clone()
+                : null;
+            return Task.FromResult<BrainDefinitionReady?>(new BrainDefinitionReady
+            {
+                BrainId = brainId.ToProtoUuid(),
+                BrainDef = definition
+            });
+        }
+
+        public Task<SnapshotReady?> RequestSnapshotAsync(Guid brainId, CancellationToken cancellationToken = default)
+        {
+            SnapshotRequestCount++;
+            if (!_brainDefinitions.ContainsKey(brainId))
+            {
+                return Task.FromResult<SnapshotReady?>(new SnapshotReady
+                {
+                    BrainId = brainId.ToProtoUuid()
+                });
+            }
+
+            if (!_brainSnapshots.TryGetValue(brainId, out var snapshot))
+            {
+                snapshot = StoreArtifact(
+                    new byte[] { 0x4E, 0x42, 0x4E, 0x53, 0x01, 0x00, 0x00, 0x00 },
+                    "application/x-nbs");
+                _brainSnapshots[brainId] = snapshot;
+            }
+
+            return Task.FromResult<SnapshotReady?>(new SnapshotReady
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Snapshot = snapshot.Clone()
+            });
         }
 
         public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
@@ -505,6 +600,7 @@ public sealed class BasicsExecutionSessionTests
         public Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default)
         {
             _brainDefinitions.Remove(brainId);
+            _brainSnapshots.Remove(brainId);
             _outputs.Remove(brainId);
             _outputEvents.Remove(brainId);
             _ticks.Remove(brainId);
@@ -654,11 +750,27 @@ public sealed class BasicsExecutionSessionTests
 
         private ArtifactRef CreateArtifactRef(int index, string behavior)
         {
-            var hexChar = index % 2 == 0 ? 'a' : 'b';
-            var sha = new string(hexChar, 63) + ((char)('0' + (index % 10)));
-            var artifact = sha.ToArtifactRef(256, "application/x-nbn", $"http://fake-store/{index}");
+            var template = BasicsSeedTemplateContract.CreateDefault() with
+            {
+                InitialSeedShapeConstraints = index % 2 == 0
+                    ? new BasicsSeedShapeConstraints()
+                    : new BasicsSeedShapeConstraints
+                    {
+                        MinInternalNeuronCount = 2,
+                        MinAxonCount = 5
+                    }
+            };
+            var build = BasicsTemplateArtifactBuilder.Build(template);
+            var artifact = StoreArtifact(build.Bytes, "application/x-nbn");
             _behaviorByArtifactSha[artifact.ToSha256Hex()] = behavior;
             return artifact;
+        }
+
+        private ArtifactRef StoreArtifact(byte[] bytes, string mediaType)
+        {
+            using var stream = new MemoryStream(bytes, writable: false);
+            var manifest = _artifactStore.StoreAsync(stream, mediaType).GetAwaiter().GetResult();
+            return manifest.ArtifactId.ToHex().ToArtifactRef((ulong)manifest.ByteLength, mediaType, _artifactRoot);
         }
 
         private void UpdateMaxObservedConcurrentSpawnRequests(int active)

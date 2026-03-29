@@ -359,6 +359,7 @@ public sealed record BasicsEnvironmentOptions
     public BasicsOutputObservationMode OutputObservationMode { get; init; } = BasicsOutputObservationMode.VectorPotential;
     public BasicsReproductionPolicy Reproduction { get; init; } = BasicsReproductionPolicy.CreateDefault();
     public BasicsReproductionSchedulingPolicy Scheduling { get; init; } = BasicsReproductionSchedulingPolicy.Default;
+    public BasicsExecutionStopCriteria StopCriteria { get; init; } = new();
 
     public BasicsContractValidationResult Validate()
     {
@@ -382,6 +383,7 @@ public sealed record BasicsEnvironmentOptions
         AddValidationErrors(SizingOverrides.Validate(), errors);
         AddValidationErrors(Reproduction.Validate(), errors);
         AddValidationErrors(Scheduling.Validate(), errors);
+        AddValidationErrors(StopCriteria.Validate(), errors);
         return BasicsContractValidationResult.FromErrors(errors);
     }
 
@@ -407,6 +409,7 @@ public sealed record BasicsEnvironmentPlan(
     BasicsReproductionPolicy Reproduction,
     BasicsReproductionSchedulingPolicy Scheduling,
     BasicsMetricsContract Metrics,
+    BasicsExecutionStopCriteria StopCriteria,
     DateTimeOffset PlannedAtUtc);
 
 public sealed record BasicsTaskContract(

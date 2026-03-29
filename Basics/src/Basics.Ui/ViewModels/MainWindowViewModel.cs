@@ -36,10 +36,13 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(ExecutionDetail),
         nameof(IsExecutionRunning),
         nameof(MetricsStatus),
-        nameof(MetricsSecondaryStatus)
+        nameof(MetricsSecondaryStatus),
+        nameof(WinnerExportStatus),
+        nameof(WinnerExportDetail)
     };
 
     private readonly UiDispatcher _dispatcher;
+    private readonly IBasicsArtifactExportService _artifactExportService;
     private IBasicsRuntimeClient? _runtimeClient;
     private BasicsExecutionSession? _executionSession;
     private CancellationTokenSource? _executionCts;
@@ -88,6 +91,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _recommendedInitialPopulationText = "—";
     private string _recommendedRunCountText = "—";
     private string _recommendedMaxConcurrentBrainsText = "—";
+    private string _targetAccuracyText = "1.0";
+    private string _targetFitnessText = "0.999";
     private string _fitnessWeightText = "0.55";
     private string _diversityWeightText = "0.35";
     private string _speciesBalanceWeightText = "0.15";
@@ -103,13 +108,21 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _executionDetail = "Connect to IO, build capacity bounds, then start an implemented task plugin.";
     private string _metricsStatus = "Connect to IO, fetch capacity, and start an implemented task to populate live metrics.";
     private string _metricsSecondaryStatus = "Population and resource summaries update when capacity is fetched or a run is active.";
+    private string _winnerExportStatus = "No winning brain retained.";
+    private string _winnerExportDetail = "When a run meets the stop target, the simplest qualifying winner stays active for export.";
+    private ArtifactRef? _winnerDefinitionArtifact;
+    private ArtifactRef? _winnerSnapshotArtifact;
+    private Guid _retainedWinnerBrainId;
     private TaskOption? _selectedTask;
     private StrengthSourceOption? _selectedStrengthSource;
     private OutputObservationModeOption? _selectedOutputObservationMode;
 
-    public MainWindowViewModel(UiDispatcher dispatcher)
+    public MainWindowViewModel(
+        UiDispatcher dispatcher,
+        IBasicsArtifactExportService artifactExportService)
     {
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        _artifactExportService = artifactExportService ?? throw new ArgumentNullException(nameof(artifactExportService));
 
         Tasks = new ObservableCollection<TaskOption>(BuildTasks());
         SelectedTask = Tasks.FirstOrDefault();
@@ -128,6 +141,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         FetchCapacityCommand = new AsyncRelayCommand(FetchCapacityAsync, CanBuildPlan);
         StartCommand = new AsyncRelayCommand(StartAsync, CanStart);
         StopCommand = new AsyncRelayCommand(StopAsync, CanStop);
+        ExportDefinitionCommand = new AsyncRelayCommand(ExportWinningDefinitionAsync, CanExportWinnerDefinition);
+        ExportSnapshotCommand = new AsyncRelayCommand(ExportWinningSnapshotAsync, CanExportWinnerSnapshot);
         ApplySuggestedBoundsCommand = new RelayCommand(ApplySuggestedBounds, () => _lastPlan is not null);
 
         PropertyChanged += (_, args) =>
@@ -167,6 +182,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AsyncRelayCommand StartCommand { get; }
 
     public AsyncRelayCommand StopCommand { get; }
+
+    public AsyncRelayCommand ExportDefinitionCommand { get; }
+
+    public AsyncRelayCommand ExportSnapshotCommand { get; }
 
     public RelayCommand ApplySuggestedBoundsCommand { get; }
 
@@ -430,6 +449,18 @@ public sealed class MainWindowViewModel : ViewModelBase
         private set => SetProperty(ref _recommendedMaxConcurrentBrainsText, value);
     }
 
+    public string TargetAccuracyText
+    {
+        get => _targetAccuracyText;
+        set => SetProperty(ref _targetAccuracyText, value);
+    }
+
+    public string TargetFitnessText
+    {
+        get => _targetFitnessText;
+        set => SetProperty(ref _targetFitnessText, value);
+    }
+
     public StrengthSourceOption? SelectedStrengthSource
     {
         get => _selectedStrengthSource;
@@ -538,6 +569,18 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _metricsSecondaryStatus;
         private set => SetProperty(ref _metricsSecondaryStatus, value);
+    }
+
+    public string WinnerExportStatus
+    {
+        get => _winnerExportStatus;
+        private set => SetProperty(ref _winnerExportStatus, value);
+    }
+
+    public string WinnerExportDetail
+    {
+        get => _winnerExportDetail;
+        private set => SetProperty(ref _winnerExportDetail, value);
     }
 
     public bool HasAccuracyChartData => _accuracyHistory.Count > 0;
@@ -689,6 +732,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             }
 
             await StopExecutionAsync().ConfigureAwait(false);
+            _dispatcher.Post(() => ClearWinnerState(clearArtifacts: true));
 
             var session = new BasicsExecutionSession(
                 _runtimeClient,
@@ -700,14 +744,14 @@ public sealed class MainWindowViewModel : ViewModelBase
 
             _executionSession = session;
             _executionCts = new CancellationTokenSource();
-            _dispatcher.Post(() =>
-            {
-                ResetCharts();
-                IsExecutionRunning = true;
-                ExecutionStatus = "Starting...";
-                ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}.";
-                RaiseCommandStates();
-            });
+                _dispatcher.Post(() =>
+                {
+                    ResetCharts();
+                    IsExecutionRunning = true;
+                    ExecutionStatus = "Starting...";
+                    ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}.";
+                    RaiseCommandStates();
+                });
 
             try
             {
@@ -759,12 +803,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         MetricsStatus = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
             ? $"{plan.SelectedTask.DisplayName} plugin is available; Start will seed an artifact pool, evaluate live brains, and update metrics here."
             : $"{plan.SelectedTask.DisplayName} plugin is not implemented yet.";
-        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, run count {plan.Capacity.RecommendedReproductionRunCount}, output mode {FormatOutputObservationMode(plan.OutputObservationMode)}.";
+        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, run count {plan.Capacity.RecommendedReproductionRunCount}, output mode {FormatOutputObservationMode(plan.OutputObservationMode)}, stop target {plan.StopCriteria.TargetAccuracy:0.###}/{plan.StopCriteria.TargetFitness:0.###}.";
         if (!IsExecutionRunning)
         {
             ExecutionStatus = "Ready to start.";
             ExecutionDetail = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
-                ? $"Template {plan.SeedTemplate.TemplateId} will be published automatically if no artifact ref is supplied. Output mode: {FormatOutputObservationMode(plan.OutputObservationMode)}."
+                ? $"Template {plan.SeedTemplate.TemplateId} will be published automatically if no artifact ref is supplied. Output mode: {FormatOutputObservationMode(plan.OutputObservationMode)}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}."
                 : $"{plan.SelectedTask.DisplayName} cannot start until its plugin issue is implemented.";
         }
 
@@ -825,7 +869,11 @@ public sealed class MainWindowViewModel : ViewModelBase
                && TaskPluginRegistry.TryGet(SelectedTask.TaskId, out _);
     }
 
-    private bool CanStop() => IsExecutionRunning && _executionCts is not null;
+    private bool CanStop() => (IsExecutionRunning && _executionCts is not null) || _retainedWinnerBrainId != Guid.Empty;
+
+    private bool CanExportWinnerDefinition() => HasArtifactRef(_winnerDefinitionArtifact);
+
+    private bool CanExportWinnerSnapshot() => HasArtifactRef(_winnerSnapshotArtifact);
 
     private void RaiseCommandStates()
     {
@@ -834,6 +882,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         FetchCapacityCommand.RaiseCanExecuteChanged();
         StartCommand.RaiseCanExecuteChanged();
         StopCommand.RaiseCanExecuteChanged();
+        ExportDefinitionCommand.RaiseCanExecuteChanged();
+        ExportSnapshotCommand.RaiseCanExecuteChanged();
         ApplySuggestedBoundsCommand.RaiseCanExecuteChanged();
     }
 
@@ -966,6 +1016,11 @@ public sealed class MainWindowViewModel : ViewModelBase
             InitialVariationBand = variation,
             InitialSeedShapeConstraints = seedShapeConstraints
         };
+        var stopCriteria = new BasicsExecutionStopCriteria
+        {
+            TargetAccuracy = ParseRequiredFloat(TargetAccuracyText, "Stop accuracy target", errors),
+            TargetFitness = ParseRequiredFloat(TargetFitnessText, "Stop fitness target", errors)
+        };
 
         options = new BasicsEnvironmentOptions
         {
@@ -984,7 +1039,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             {
                 StrengthSource = SelectedStrengthSource?.Value ?? Repro.StrengthSource.StrengthBaseOnly
             },
-            Scheduling = scheduling
+            Scheduling = scheduling,
+            StopCriteria = stopCriteria
         };
 
         var validation = options.Validate();
@@ -1036,20 +1092,31 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private async Task StopExecutionAsync()
     {
-        if (_executionCts is null)
+        if (_executionCts is not null)
         {
+            _dispatcher.Post(() =>
+            {
+                ExecutionStatus = "Stopping...";
+                ExecutionDetail = "Canceling the current run and cleaning up evaluation brains.";
+                RaiseCommandStates();
+            });
+
+            _executionCts.Cancel();
+            await Task.Yield();
             return;
         }
 
-        _dispatcher.Post(() =>
+        if (_retainedWinnerBrainId != Guid.Empty)
         {
-            ExecutionStatus = "Stopping...";
-            ExecutionDetail = "Canceling the current run and cleaning up evaluation brains.";
-            RaiseCommandStates();
-        });
+            _dispatcher.Post(() =>
+            {
+                ExecutionStatus = "Stopping...";
+                ExecutionDetail = "Releasing the retained winning brain.";
+                RaiseCommandStates();
+            });
 
-        _executionCts.Cancel();
-        await Task.Yield();
+            await ReleaseRetainedWinnerAsync("basics_ui_release_winner").ConfigureAwait(false);
+        }
     }
 
     private void ApplyExecutionSnapshot(BasicsExecutionSnapshot snapshot, int maxConcurrentBrains)
@@ -1150,6 +1217,168 @@ public sealed class MainWindowViewModel : ViewModelBase
             snapshot.ActiveBrainCount > 0
                 ? "Current evaluation batch utilization."
                 : "Idle between evaluation batches.");
+
+        if (snapshot.State == BasicsExecutionState.Succeeded && snapshot.BestCandidate is not null)
+        {
+            ApplyWinnerArtifacts(snapshot.BestCandidate);
+        }
+        else if (snapshot.State is BasicsExecutionState.Failed or BasicsExecutionState.Stopped)
+        {
+            ClearWinnerState(clearArtifacts: false);
+        }
+    }
+
+    private async Task ExportWinningDefinitionAsync()
+    {
+        if (!HasArtifactRef(_winnerDefinitionArtifact))
+        {
+            WinnerExportStatus = "No winning definition available.";
+            WinnerExportDetail = "Run a session to a stop target before exporting.";
+            return;
+        }
+
+        try
+        {
+            var path = await _artifactExportService.ExportAsync(
+                    _winnerDefinitionArtifact!,
+                    title: "Export winning definition",
+                    suggestedFileName: BuildSuggestedArtifactFileName("winner", "nbn"))
+                .ConfigureAwait(false);
+            _dispatcher.Post(() =>
+            {
+                WinnerExportStatus = path is null ? "Definition export canceled." : "Winning definition exported.";
+                WinnerExportDetail = path is null
+                    ? "The winning .nbn artifact is still available for export."
+                    : path;
+                RaiseCommandStates();
+            });
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(() =>
+            {
+                WinnerExportStatus = "Definition export failed.";
+                WinnerExportDetail = ex.GetBaseException().Message;
+                RaiseCommandStates();
+            });
+        }
+    }
+
+    private async Task ExportWinningSnapshotAsync()
+    {
+        if (!HasArtifactRef(_winnerSnapshotArtifact))
+        {
+            WinnerExportStatus = "No winning snapshot available.";
+            WinnerExportDetail = "Snapshot export is only available when runtime state was captured for the retained winner.";
+            return;
+        }
+
+        try
+        {
+            var path = await _artifactExportService.ExportAsync(
+                    _winnerSnapshotArtifact!,
+                    title: "Export winning snapshot",
+                    suggestedFileName: BuildSuggestedArtifactFileName("winner-state", "nbs"))
+                .ConfigureAwait(false);
+            _dispatcher.Post(() =>
+            {
+                WinnerExportStatus = path is null ? "Snapshot export canceled." : "Winning snapshot exported.";
+                WinnerExportDetail = path is null
+                    ? "The winning .nbs artifact is still available for export."
+                    : path;
+                RaiseCommandStates();
+            });
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(() =>
+            {
+                WinnerExportStatus = "Snapshot export failed.";
+                WinnerExportDetail = ex.GetBaseException().Message;
+                RaiseCommandStates();
+            });
+        }
+    }
+
+    private async Task ReleaseRetainedWinnerAsync(string reason)
+    {
+        var retainedBrainId = _retainedWinnerBrainId;
+        _retainedWinnerBrainId = Guid.Empty;
+
+        if (retainedBrainId != Guid.Empty && _runtimeClient is not null)
+        {
+            try
+            {
+                await _runtimeClient.KillBrainAsync(retainedBrainId, reason).ConfigureAwait(false);
+                await _runtimeClient.WaitForBrainTerminatedAsync(retainedBrainId, TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Best-effort cleanup only.
+            }
+        }
+
+        _dispatcher.Post(() =>
+        {
+            UpdateWinnerExportSummary();
+            RaiseCommandStates();
+        });
+    }
+
+    private void ApplyWinnerArtifacts(BasicsExecutionBestCandidateSummary winner)
+    {
+        _winnerDefinitionArtifact = winner.DefinitionArtifact.Clone();
+        _winnerSnapshotArtifact = winner.SnapshotArtifact?.Clone();
+        _retainedWinnerBrainId = winner.ActiveBrainId ?? Guid.Empty;
+        UpdateWinnerExportSummary();
+        RaiseCommandStates();
+    }
+
+    private void ClearWinnerState(bool clearArtifacts)
+    {
+        _retainedWinnerBrainId = Guid.Empty;
+        if (clearArtifacts)
+        {
+            _winnerDefinitionArtifact = null;
+            _winnerSnapshotArtifact = null;
+        }
+
+        UpdateWinnerExportSummary();
+        RaiseCommandStates();
+    }
+
+    private void UpdateWinnerExportSummary()
+    {
+        if (!HasArtifactRef(_winnerDefinitionArtifact))
+        {
+            WinnerExportStatus = "No winning brain retained.";
+            WinnerExportDetail = "When a run meets the stop target, the simplest qualifying winner stays active for export.";
+            return;
+        }
+
+        WinnerExportStatus = _retainedWinnerBrainId != Guid.Empty
+            ? "Winning brain retained for export."
+            : "Winner artifacts retained.";
+
+        var detailParts = new List<string>
+        {
+            $"Definition .nbn ready ({ShortArtifactSha(_winnerDefinitionArtifact)})."
+        };
+        if (HasArtifactRef(_winnerSnapshotArtifact))
+        {
+            detailParts.Add($"Snapshot .nbs ready ({ShortArtifactSha(_winnerSnapshotArtifact)}).");
+        }
+        else
+        {
+            detailParts.Add("No snapshot artifact was produced for this winner.");
+        }
+
+        if (_retainedWinnerBrainId != Guid.Empty)
+        {
+            detailParts.Add($"Live winner {_retainedWinnerBrainId:N} stays active until Stop, Disconnect, or the next run.");
+        }
+
+        WinnerExportDetail = string.Join(' ', detailParts);
     }
 
     private async Task DisposeRuntimeClientAsync()
@@ -1163,6 +1392,26 @@ public sealed class MainWindowViewModel : ViewModelBase
         _runtimeClient = null;
         await current.DisposeAsync().ConfigureAwait(false);
     }
+
+    private string BuildSuggestedArtifactFileName(string suffix, string extension)
+    {
+        var taskId = SelectedTask?.TaskId ?? _lastPlan?.SelectedTask.TaskId ?? "basics";
+        return $"basics-{taskId}-{suffix}.{extension}";
+    }
+
+    private static string ShortArtifactSha(ArtifactRef? artifact)
+    {
+        if (!HasArtifactRef(artifact))
+        {
+            return "unknown";
+        }
+
+        var sha = artifact!.ToSha256Hex();
+        return sha[..Math.Min(12, sha.Length)];
+    }
+
+    private static bool HasArtifactRef(ArtifactRef? artifact)
+        => artifact is not null && artifact.TryToSha256Bytes(out _);
 
     private static int ParseRequiredInt(string text, string fieldName, ICollection<string> errors)
     {
@@ -1192,6 +1441,17 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             errors.Add($"{fieldName} must be a number.");
             return 0d;
+        }
+
+        return value;
+    }
+
+    private static float ParseRequiredFloat(string text, string fieldName, ICollection<string> errors)
+    {
+        if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            errors.Add($"{fieldName} must be a number.");
+            return 0f;
         }
 
         return value;

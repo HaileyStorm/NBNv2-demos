@@ -38,6 +38,13 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
 
     Task<SpawnBrainViaIOAck?> SpawnBrainAsync(SpawnBrain request, CancellationToken cancellationToken = default);
 
+    Task<BrainDefinitionReady?> ExportBrainDefinitionAsync(
+        Guid brainId,
+        bool rebaseOverlays,
+        CancellationToken cancellationToken = default);
+
+    Task<SnapshotReady?> RequestSnapshotAsync(Guid brainId, CancellationToken cancellationToken = default);
+
     Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default);
 
     Task SubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default);
@@ -269,6 +276,62 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                     FailureMessage = detail
                 }
             };
+        }
+    }
+
+    public async Task<BrainDefinitionReady?> ExportBrainDefinitionAsync(
+        Guid brainId,
+        bool rebaseOverlays,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _system.Root.RequestAsync<BrainDefinitionReady>(
+                    _ioPid,
+                    new ExportBrainDefinition
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        RebaseOverlays = rebaseOverlays
+                    },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<SnapshotReady?> RequestSnapshotAsync(Guid brainId, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _system.Root.RequestAsync<SnapshotReady>(
+                    _ioPid,
+                    new RequestSnapshot
+                    {
+                        BrainId = brainId.ToProtoUuid()
+                    },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
         }
     }
 
