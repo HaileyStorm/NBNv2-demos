@@ -50,6 +50,34 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public void TemplateBuilder_SortsAxonsPerNeuron_ByTargetRegionThenNeuron()
+    {
+        var build = BasicsTemplateArtifactBuilder.Build(BasicsSeedTemplateContract.CreateDefault() with
+        {
+            InitialSeedShapeConstraints = new BasicsSeedShapeConstraints
+            {
+                MinAxonCount = 5
+            }
+        });
+
+        var header = NbnBinary.ReadNbnHeader(build.Bytes);
+        var inputSection = NbnBinary.ReadNbnRegionSection(build.Bytes, header.Regions[NbnConstants.InputRegionId].Offset);
+
+        var axonOffset = 0;
+        foreach (var neuron in inputSection.NeuronRecords)
+        {
+            var outgoing = inputSection.AxonRecords.Skip((int)axonOffset).Take((int)neuron.AxonCount).ToArray();
+            var sorted = outgoing
+                .OrderBy(static axon => axon.TargetRegionId)
+                .ThenBy(static axon => axon.TargetNeuronId)
+                .ThenBy(static axon => axon.StrengthCode)
+                .ToArray();
+            Assert.Equal(sorted, outgoing);
+            axonOffset += neuron.AxonCount;
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_PublishesTemplate_EvaluatesPopulation_AndBreedsTowardSuccess()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
@@ -89,6 +117,9 @@ public sealed class BasicsExecutionSessionTests
             Assert.True(final.BestAccuracy >= 1f);
             Assert.True(final.BestFitness >= 1f);
             Assert.True(runtimeClient.ReproduceCallCount >= 2);
+            Assert.Equal(1, runtimeClient.GetSpeciationConfigCallCount);
+            Assert.Equal(1, runtimeClient.SetSpeciationConfigCallCount);
+            Assert.True(runtimeClient.SpeciationEpochStartedBeforeFirstReproduce);
             Assert.Contains(snapshots, snapshot => snapshot.State == BasicsExecutionState.Running);
             Assert.True(final.AccuracyHistory.Count >= 2);
         }
@@ -105,8 +136,12 @@ public sealed class BasicsExecutionSessionTests
         private readonly Dictionary<Guid, ulong> _ticks = new();
         private readonly Dictionary<string, string> _behaviorByArtifactSha = new(StringComparer.OrdinalIgnoreCase);
         private int _childIndex;
+        private bool _epochStarted;
 
         public int ReproduceCallCount { get; private set; }
+        public int GetSpeciationConfigCallCount { get; private set; }
+        public int SetSpeciationConfigCallCount { get; private set; }
+        public bool SpeciationEpochStartedBeforeFirstReproduce { get; private set; }
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
             => Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = clientName, ServerTimeMs = 1 });
@@ -200,6 +235,11 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             ReproduceCallCount++;
+            if (ReproduceCallCount == 1)
+            {
+                SpeciationEpochStartedBeforeFirstReproduce = _epochStarted;
+            }
+
             var result = new Repro.ReproduceResult
             {
                 RequestedRunCount = request.RunCount == 0 ? 1u : request.RunCount
@@ -246,6 +286,45 @@ public sealed class BasicsExecutionSessionTests
                 }
             };
             return Task.FromResult<SpeciationAssignResponse?>(response);
+        }
+
+        public Task<SpeciationGetConfigResponse?> GetSpeciationConfigAsync(CancellationToken cancellationToken = default)
+        {
+            GetSpeciationConfigCallCount++;
+            return Task.FromResult<SpeciationGetConfigResponse?>(new SpeciationGetConfigResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                Config = new SpeciationRuntimeConfig
+                {
+                    PolicyVersion = "default",
+                    ConfigSnapshotJson = "{}",
+                    DefaultSpeciesId = "species.default",
+                    DefaultSpeciesDisplayName = "Default species",
+                    StartupReconcileDecisionReason = "startup_reconcile"
+                },
+                CurrentEpoch = new SpeciationEpochInfo
+                {
+                    EpochId = 1
+                }
+            });
+        }
+
+        public Task<SpeciationSetConfigResponse?> SetSpeciationConfigAsync(
+            SpeciationRuntimeConfig config,
+            bool startNewEpoch,
+            CancellationToken cancellationToken = default)
+        {
+            SetSpeciationConfigCallCount++;
+            _epochStarted = startNewEpoch;
+            return Task.FromResult<SpeciationSetConfigResponse?>(new SpeciationSetConfigResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                Config = config.Clone(),
+                CurrentEpoch = new SpeciationEpochInfo
+                {
+                    EpochId = startNewEpoch ? 2UL : 1UL
+                }
+            });
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

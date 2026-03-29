@@ -74,6 +74,28 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
             effectiveTemplateDefinition = template.TemplateDefinition;
             seedShape = template.SeedShape;
 
+            PublishSnapshot(
+                onSnapshot,
+                BasicsExecutionState.Starting,
+                statusText: "Preparing speciation epoch...",
+                detailText: "Starting a fresh speciation epoch for this Basics run.",
+                generation: 0,
+                populationCount: 0,
+                activeBrainCount: 0,
+                speciesCount: 0,
+                reproductionCalls,
+                reproductionRunsObserved,
+                capacityUtilization: 0f,
+                bestAccuracy: 0f,
+                bestFitness: 0f,
+                meanFitness: 0f,
+                effectiveTemplateDefinition,
+                seedShape,
+                bestCandidate: null,
+                accuracyHistory,
+                fitnessHistory);
+            await EnsureFreshSpeciationEpochAsync(cancellationToken).ConfigureAwait(false);
+
             var targetPopulation = Math.Max(1, plan.Capacity.RecommendedInitialPopulationCount);
             var population = await SeedInitialPopulationAsync(
                     plan,
@@ -257,6 +279,41 @@ public sealed class BasicsExecutionSession : IAsyncDisposable
     }
 
     public ValueTask DisposeAsync() => _artifactPublisher.DisposeAsync();
+
+    private async Task EnsureFreshSpeciationEpochAsync(CancellationToken cancellationToken)
+    {
+        var current = await _runtimeClient.GetSpeciationConfigAsync(cancellationToken).ConfigureAwait(false);
+        if (current is null)
+        {
+            throw new InvalidOperationException("Speciation config request returned no response.");
+        }
+
+        if (current.FailureReason != ProtoSpec.SpeciationFailureReason.SpeciationFailureNone)
+        {
+            throw new InvalidOperationException(
+                $"Speciation config request failed: {current.FailureReason} {current.FailureDetail}".Trim());
+        }
+
+        var config = current.Config?.Clone() ?? new ProtoSpec.SpeciationRuntimeConfig
+        {
+            PolicyVersion = "default",
+            ConfigSnapshotJson = "{}",
+            DefaultSpeciesId = "species.default",
+            DefaultSpeciesDisplayName = "Default species",
+            StartupReconcileDecisionReason = "startup_reconcile"
+        };
+        var updated = await _runtimeClient.SetSpeciationConfigAsync(config, startNewEpoch: true, cancellationToken).ConfigureAwait(false);
+        if (updated is null)
+        {
+            throw new InvalidOperationException("Speciation epoch start returned no response.");
+        }
+
+        if (updated.FailureReason != ProtoSpec.SpeciationFailureReason.SpeciationFailureNone)
+        {
+            throw new InvalidOperationException(
+                $"Speciation epoch start failed: {updated.FailureReason} {updated.FailureDetail}".Trim());
+        }
+    }
 
     private async Task<(ArtifactRef TemplateDefinition, BasicsResolvedSeedShape? SeedShape)> ResolveTemplateDefinitionAsync(
         BasicsSeedTemplateContract template,

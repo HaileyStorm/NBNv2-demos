@@ -59,6 +59,13 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
     Task<SpeciationAssignResponse?> AssignSpeciationAsync(
         SpeciationAssignRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<SpeciationGetConfigResponse?> GetSpeciationConfigAsync(CancellationToken cancellationToken = default);
+
+    Task<SpeciationSetConfigResponse?> SetSpeciationConfigAsync(
+        SpeciationRuntimeConfig config,
+        bool startNewEpoch,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEventSink
@@ -364,6 +371,57 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             var response = await _system.Root.RequestAsync<SpeciationAssignResult>(
                     _ioPid,
                     new SpeciationAssign { Request = request },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return response?.Response;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<SpeciationGetConfigResponse?> GetSpeciationConfigAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+
+        try
+        {
+            var response = await _system.Root.RequestAsync<SpeciationGetConfigResult>(
+                    _ioPid,
+                    new SpeciationGetConfig { Request = new SpeciationGetConfigRequest() },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return response?.Response;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<SpeciationSetConfigResponse?> SetSpeciationConfigAsync(
+        SpeciationRuntimeConfig config,
+        bool startNewEpoch,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(config);
+
+        try
+        {
+            var response = await _system.Root.RequestAsync<SpeciationSetConfigResult>(
+                    _ioPid,
+                    new SpeciationSetConfig
+                    {
+                        Request = new SpeciationSetConfigRequest
+                        {
+                            Config = config.Clone(),
+                            StartNewEpoch = startNewEpoch
+                        }
+                    },
                     _requestTimeout)
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);

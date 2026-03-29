@@ -124,6 +124,15 @@ public sealed class BasicsEnvironmentPlannerTests
             CancellationToken cancellationToken = default)
             => Task.FromResult<SpeciationAssignResponse?>(null);
 
+        public Task<SpeciationGetConfigResponse?> GetSpeciationConfigAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<SpeciationGetConfigResponse?>(null);
+
+        public Task<SpeciationSetConfigResponse?> SetSpeciationConfigAsync(
+            SpeciationRuntimeConfig config,
+            bool startNewEpoch,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<SpeciationSetConfigResponse?>(null);
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

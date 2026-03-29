@@ -103,4 +103,67 @@ public sealed class AndTaskPluginTests
         Assert.True(TaskPluginRegistry.TryGet("and", out var plugin));
         Assert.Equal("AND", plugin.Contract.DisplayName);
     }
+
+    [Fact]
+    public void Evaluate_RewardsNearZeroNegativeOutputs_WithFinerGrainedFitness()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var nearZero = _plugin.Evaluate(
+            new BasicsTaskEvaluationContext(BasicsIoGeometry.InputWidth, BasicsIoGeometry.OutputWidth, TickAligned: true),
+            dataset,
+            new[]
+            {
+                new BasicsTaskObservation(1, 0.01f),
+                new BasicsTaskObservation(2, 0.02f),
+                new BasicsTaskObservation(3, 0.03f),
+                new BasicsTaskObservation(4, 0.92f)
+            });
+        var fartherFromZero = _plugin.Evaluate(
+            new BasicsTaskEvaluationContext(BasicsIoGeometry.InputWidth, BasicsIoGeometry.OutputWidth, TickAligned: true),
+            dataset,
+            new[]
+            {
+                new BasicsTaskObservation(1, 0.10f),
+                new BasicsTaskObservation(2, 0.20f),
+                new BasicsTaskObservation(3, 0.30f),
+                new BasicsTaskObservation(4, 0.92f)
+            });
+
+        Assert.Equal(1f, nearZero.Accuracy);
+        Assert.Equal(1f, fartherFromZero.Accuracy);
+        Assert.True(nearZero.Fitness > fartherFromZero.Fitness);
+        Assert.True(nearZero.ScoreBreakdown["negative_mean_output"] < fartherFromZero.ScoreBreakdown["negative_mean_output"]);
+        Assert.True(nearZero.ScoreBreakdown["target_proximity_fitness"] > fartherFromZero.ScoreBreakdown["target_proximity_fitness"]);
+    }
+
+    [Fact]
+    public void Evaluate_DistinguishesBoundaryOutputs_BeyondThresholdAccuracy()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var lowConfidence = _plugin.Evaluate(
+            new BasicsTaskEvaluationContext(BasicsIoGeometry.InputWidth, BasicsIoGeometry.OutputWidth, TickAligned: true),
+            dataset,
+            new[]
+            {
+                new BasicsTaskObservation(1, 0.01f),
+                new BasicsTaskObservation(2, 0.01f),
+                new BasicsTaskObservation(3, 0.01f),
+                new BasicsTaskObservation(4, 0.51f)
+            });
+        var highConfidence = _plugin.Evaluate(
+            new BasicsTaskEvaluationContext(BasicsIoGeometry.InputWidth, BasicsIoGeometry.OutputWidth, TickAligned: true),
+            dataset,
+            new[]
+            {
+                new BasicsTaskObservation(1, 0.01f),
+                new BasicsTaskObservation(2, 0.01f),
+                new BasicsTaskObservation(3, 0.01f),
+                new BasicsTaskObservation(4, 0.95f)
+            });
+
+        Assert.Equal(1f, lowConfidence.Accuracy);
+        Assert.Equal(1f, highConfidence.Accuracy);
+        Assert.True(highConfidence.Fitness > lowConfidence.Fitness);
+        Assert.True(highConfidence.ScoreBreakdown["positive_mean_gap"] < lowConfidence.ScoreBreakdown["positive_mean_gap"]);
+    }
 }

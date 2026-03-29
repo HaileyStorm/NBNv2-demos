@@ -59,6 +59,11 @@ public sealed class AndTaskPlugin : IBasicsTaskPlugin
         var correct = 0;
         var absoluteError = 0f;
         var squaredError = 0f;
+        var targetProximityFitnessSum = 0f;
+        var negativeOutputSum = 0f;
+        var positiveGapSum = 0f;
+        var negativeCount = 0;
+        var positiveCount = 0;
         ulong? previousTick = null;
 
         for (var i = 0; i < samples.Count; i++)
@@ -100,9 +105,24 @@ public sealed class AndTaskPlugin : IBasicsTaskPlugin
 
             var predictedTrue = observed >= 0.5f;
             var expectedTrue = expected >= 0.5f;
+            var targetDelta = expectedTrue
+                ? Math.Abs(1f - observed)
+                : Math.Abs(observed);
+            targetProximityFitnessSum += 1f / (1f + (8f * targetDelta));
             if (predictedTrue == expectedTrue)
             {
                 correct++;
+            }
+
+            if (expectedTrue)
+            {
+                positiveGapSum += Math.Abs(1f - observed);
+                positiveCount++;
+            }
+            else
+            {
+                negativeOutputSum += Math.Abs(observed);
+                negativeCount++;
             }
         }
 
@@ -110,7 +130,15 @@ public sealed class AndTaskPlugin : IBasicsTaskPlugin
         var accuracy = correct / (float)sampleCount;
         var meanAbsoluteError = absoluteError / sampleCount;
         var meanSquaredError = squaredError / sampleCount;
-        var fitness = Math.Clamp(1f - meanAbsoluteError, 0f, 1f);
+        var targetProximityFitness = targetProximityFitnessSum / sampleCount;
+        var negativeMeanOutput = negativeCount == 0 ? 0f : negativeOutputSum / negativeCount;
+        var positiveMeanGap = positiveCount == 0 ? 0f : positiveGapSum / positiveCount;
+        var fitness = Math.Clamp(
+            (0.50f * targetProximityFitness)
+            + (0.35f * (1f - meanAbsoluteError))
+            + (0.15f * accuracy),
+            0f,
+            1f);
 
         return new BasicsTaskEvaluationResult(
             Fitness: fitness,
@@ -122,6 +150,9 @@ public sealed class AndTaskPlugin : IBasicsTaskPlugin
                 ["classification_accuracy"] = accuracy,
                 ["mean_absolute_error"] = meanAbsoluteError,
                 ["mean_squared_error"] = meanSquaredError,
+                ["target_proximity_fitness"] = targetProximityFitness,
+                ["negative_mean_output"] = negativeMeanOutput,
+                ["positive_mean_gap"] = positiveMeanGap,
                 ["truth_table_coverage"] = sampleCount / 4f
             },
             Diagnostics: diagnostics);
@@ -138,6 +169,9 @@ public sealed class AndTaskPlugin : IBasicsTaskPlugin
                 ["classification_accuracy"] = 0f,
                 ["mean_absolute_error"] = 1f,
                 ["mean_squared_error"] = 1f,
+                ["target_proximity_fitness"] = 0f,
+                ["negative_mean_output"] = 1f,
+                ["positive_mean_gap"] = 1f,
                 ["truth_table_coverage"] = 0f
             },
             Diagnostics: diagnostics);

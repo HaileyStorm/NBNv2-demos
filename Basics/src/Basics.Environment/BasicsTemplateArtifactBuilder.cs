@@ -322,9 +322,13 @@ public static class BasicsTemplateArtifactBuilder
         var axons = new List<AxonRecord>();
         for (var neuronId = 0; neuronId < neuronCount; neuronId++)
         {
-            var outgoing = neuronAxons[neuronId];
+            var outgoing = neuronAxons[neuronId]
+                .OrderBy(static axon => axon.TargetRegionId)
+                .ThenBy(static axon => axon.TargetNeuronId)
+                .ThenBy(static axon => axon.StrengthCode)
+                .ToArray();
             neurons[neuronId] = new NeuronRecord(
-                axonCount: (ushort)outgoing.Count,
+                axonCount: (ushort)outgoing.Length,
                 paramBCode: 0,
                 paramACode: isInternal ? (byte)8 : (byte)0,
                 activationThresholdCode: 0,
