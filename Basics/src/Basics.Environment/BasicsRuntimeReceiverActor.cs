@@ -7,6 +7,8 @@ namespace Nbn.Demos.Basics.Environment;
 
 internal interface IBasicsRuntimeEventSink
 {
+    void OnConnectAck(ConnectAck ack);
+
     void OnOutputEvent(OutputEvent output);
 
     void OnOutputVectorEvent(OutputVectorEvent output);
@@ -30,6 +32,12 @@ internal sealed class BasicsRuntimeReceiverActor : IActor
         {
             case BasicsSetIoGatewayPid setIo:
                 _ioGateway = setIo.Pid;
+                break;
+            case BasicsConnectCommand connect:
+                RequestToIo(context, new Connect
+                {
+                    ClientName = connect.ClientName
+                });
                 break;
             case BasicsSubscribeOutputsVectorCommand subscribe:
                 SendToIo(context, new SubscribeOutputsVector
@@ -70,6 +78,9 @@ internal sealed class BasicsRuntimeReceiverActor : IActor
             case OutputEvent outputEvent:
                 _sink.OnOutputEvent(outputEvent.Clone());
                 break;
+            case ConnectAck connectAck:
+                _sink.OnConnectAck(connectAck.Clone());
+                break;
             case OutputVectorEvent outputVector:
                 _sink.OnOutputVectorEvent(outputVector.Clone());
                 break;
@@ -91,6 +102,16 @@ internal sealed class BasicsRuntimeReceiverActor : IActor
         context.Send(_ioGateway, message);
     }
 
+    private void RequestToIo(IContext context, object message)
+    {
+        if (_ioGateway is null)
+        {
+            return;
+        }
+
+        context.Request(_ioGateway, message);
+    }
+
     private static string PidLabel(PID pid, string? fallbackAddress = null)
     {
         var address = string.IsNullOrWhiteSpace(pid.Address) ? fallbackAddress : pid.Address;
@@ -99,6 +120,8 @@ internal sealed class BasicsRuntimeReceiverActor : IActor
 }
 
 internal sealed record BasicsSetIoGatewayPid(PID? Pid);
+
+internal sealed record BasicsConnectCommand(string ClientName);
 
 internal sealed record BasicsSubscribeOutputsVectorCommand(Guid BrainId);
 

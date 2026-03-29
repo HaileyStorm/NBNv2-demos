@@ -220,6 +220,56 @@ public sealed class BasicsExecutionSessionTests
         }
     }
 
+    [Fact]
+    public async Task ExecutionSession_MapsVariationBandIntoReproductionConfig()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient();
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var variation = new BasicsSeedVariationBand
+            {
+                MaxInternalNeuronDelta = 3,
+                MaxAxonDelta = 10,
+                MaxStrengthCodeDelta = 6,
+                MaxParameterCodeDelta = 5,
+                AllowFunctionMutation = true,
+                AllowAxonReroute = false,
+                AllowRegionSetChange = true
+            };
+
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential) with
+                {
+                    SeedTemplate = BasicsSeedTemplateContract.CreateDefault() with
+                    {
+                        InitialVariationBand = variation
+                    }
+                },
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.NotEmpty(runtimeClient.ReproduceRequests);
+            var request = runtimeClient.ReproduceRequests[0];
+            Assert.Equal((uint)3, request.Config.Limits.MaxNeuronsAddedAbs);
+            Assert.Equal((uint)3, request.Config.Limits.MaxNeuronsRemovedAbs);
+            Assert.Equal((uint)10, request.Config.Limits.MaxAxonsAddedAbs);
+            Assert.Equal((uint)10, request.Config.Limits.MaxAxonsRemovedAbs);
+            Assert.Equal((uint)1, request.Config.Limits.MaxRegionsAddedAbs);
+            Assert.Equal((uint)1, request.Config.Limits.MaxRegionsRemovedAbs);
+            Assert.True(request.Config.StrengthTransformEnabled);
+            Assert.True(request.Config.ProbMutateFunc > 0f);
+            Assert.Equal(0f, request.Config.ProbRerouteAxon);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
     private static BasicsEnvironmentPlan CreatePlan(BasicsOutputObservationMode outputObservationMode)
         => new(
             SelectedTask: new AndTaskPlugin().Contract,
@@ -257,6 +307,7 @@ public sealed class BasicsExecutionSessionTests
         public int SingleSubscriptionCount { get; private set; }
         public int? ThrowOnReproduceCallNumber { get; init; }
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
+        public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
             => Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = clientName, ServerTimeMs = 1 });
@@ -429,6 +480,7 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             ReproduceCallCount++;
+            ReproduceRequests.Add(request.Clone());
             if (ReproduceCallCount == 1)
             {
                 SpeciationEpochStartedBeforeFirstReproduce = _epochStarted;

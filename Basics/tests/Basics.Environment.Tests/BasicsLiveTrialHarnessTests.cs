@@ -100,6 +100,71 @@ public sealed class BasicsLiveTrialHarnessTests
         Assert.Equal(96, report.FinalConfiguration.Sizing.MaxConcurrentBrains);
     }
 
+    [Fact]
+    public async Task LiveTrialHarness_TreatsCanceledStoppedRunAsTimeout_AndReducesSizing()
+    {
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient()),
+            executionRunnerFactory: (_, _) => new CancelingStoppedExecutionRunner(
+                CreateSnapshot(
+                    BasicsExecutionState.Stopped,
+                    statusText: "Execution stopped.",
+                    detailText: "The run was canceled by the operator.",
+                    generation: 1,
+                    speciesCount: 1,
+                    bestAccuracy: 0.75f,
+                    bestFitness: 0.764f)));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1) with
+            {
+                TrialTimeout = TimeSpan.FromMilliseconds(200)
+            },
+            new AndTaskPlugin());
+
+        var trial = Assert.Single(report.Trials);
+        Assert.Equal(BasicsLiveTrialOutcome.TimedOut, trial.Outcome);
+        Assert.Equal("trial_timeout", trial.OutcomeDetail);
+        Assert.NotNull(trial.TuningDecision);
+        Assert.True(trial.TuningDecision!.Applied);
+        Assert.Contains("initial_population=192", trial.TuningDecision.Changes);
+        Assert.Contains("max_concurrent=96", trial.TuningDecision.Changes);
+    }
+
+    [Fact]
+    public async Task LiveTrialHarness_ExpandsVariationBand_WhenSpeciesCollapsePersists()
+    {
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient()),
+            executionRunnerFactory: (_, _) => new ScriptedExecutionRunner(new[]
+            {
+                CreateSnapshot(
+                    BasicsExecutionState.Failed,
+                    statusText: "Execution failed.",
+                    detailText: "Species collapsed.",
+                    generation: 1,
+                    speciesCount: 1,
+                    bestAccuracy: 0.75f,
+                    bestFitness: 0.80f)
+            }));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1),
+            new AndTaskPlugin());
+
+        var decision = Assert.Single(report.Trials).TuningDecision;
+        Assert.NotNull(decision);
+        Assert.True(decision!.Applied);
+        Assert.Contains("diversity_weight=0.4", decision.Changes);
+        Assert.Contains("exploration_fraction=0.3", decision.Changes);
+        Assert.Contains("diversity_boost=0.4", decision.Changes);
+        Assert.Contains("max_internal_neuron_delta=3", decision.Changes);
+        Assert.Contains("max_axon_delta=10", decision.Changes);
+        Assert.Contains("max_strength_delta=6", decision.Changes);
+        Assert.Contains("max_parameter_delta=6", decision.Changes);
+        Assert.Contains("allow_function_mutation=true", decision.Changes);
+    }
+
     private static BasicsLiveTrialHarnessOptions CreateOptions(int maxTrialCount, int requiredSuccessfulTrials)
         => new()
         {
@@ -313,6 +378,37 @@ public sealed class BasicsLiveTrialHarnessTests
             }
 
             return Task.FromResult(_snapshots[^1]);
+        }
+    }
+
+    private sealed class CancelingStoppedExecutionRunner : IBasicsExecutionRunner
+    {
+        private readonly BasicsExecutionSnapshot _terminal;
+
+        public CancelingStoppedExecutionRunner(BasicsExecutionSnapshot terminal)
+        {
+            _terminal = terminal;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        public async Task<BasicsExecutionSnapshot> RunAsync(
+            BasicsEnvironmentPlan plan,
+            IBasicsTaskPlugin taskPlugin,
+            Action<BasicsExecutionSnapshot>? onSnapshot,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                onSnapshot?.Invoke(_terminal);
+                return _terminal;
+            }
+
+            return _terminal;
         }
     }
 }

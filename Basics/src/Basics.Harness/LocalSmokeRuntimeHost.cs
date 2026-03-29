@@ -268,10 +268,10 @@ internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
             IoName: null,
             WorkerInventoryRefreshMs: 2_000,
             WorkerInventoryStaleAfterMs: 600_000,
-            PlacementAssignmentTimeoutMs: 1_000,
-            PlacementAssignmentRetryBackoffMs: 10,
-            PlacementAssignmentMaxRetries: 1,
-            PlacementReconcileTimeoutMs: 1_000);
+            PlacementAssignmentTimeoutMs: 5_000,
+            PlacementAssignmentRetryBackoffMs: 100,
+            PlacementAssignmentMaxRetries: 2,
+            PlacementReconcileTimeoutMs: 5_000);
 
     private static void PrimeWorkerDiscoveryEndpoints(IRootContext root, PID workerPid, string hiveName, string ioName)
     {

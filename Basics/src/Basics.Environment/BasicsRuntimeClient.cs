@@ -98,6 +98,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     private readonly PID _ioPid;
     private readonly PID _receiverPid;
     private readonly TimeSpan _requestTimeout;
+    private readonly Channel<ConnectAck> _connectAcks;
     private readonly ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>> _outputBuffers;
     private readonly ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputEvent>> _outputEventBuffers;
     private readonly ConcurrentDictionary<Guid, Channel<BrainTerminated>> _terminationBuffers;
@@ -113,6 +114,11 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         _ioPid = ioPid;
         _receiverPid = receiverPid;
         _requestTimeout = requestTimeout;
+        _connectAcks = Channel.CreateUnbounded<ConnectAck>(new UnboundedChannelOptions
+        {
+            SingleReader = false,
+            SingleWriter = false
+        });
         _outputBuffers = new ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>>();
         _outputEventBuffers = new ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputEvent>>();
         _terminationBuffers = new ConcurrentDictionary<Guid, Channel<BrainTerminated>>();
@@ -141,6 +147,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             new PID(options.IoAddress.Trim(), options.IoGatewayName.Trim()),
             receiverPid,
             options.RequestTimeout);
+        runtimeEventSink.OnConnect = client.OnConnectAck;
         runtimeEventSink.OnSingleOutput = client.OnOutputEvent;
         runtimeEventSink.OnOutput = client.OnOutputVectorEvent;
         runtimeEventSink.OnTermination = client.OnBrainTerminated;
@@ -158,12 +165,15 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
         try
         {
-            return await _system.Root.RequestAsync<ConnectAck>(
-                    _ioPid,
-                    new Connect { ClientName = clientName.Trim() },
-                    _requestTimeout)
-                .WaitAsync(cancellationToken)
-                .ConfigureAwait(false);
+            ResetConnectAckBuffer();
+            _system.Root.Send(_receiverPid, new BasicsConnectCommand(clientName.Trim()));
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(_requestTimeout);
+            return await _connectAcks.Reader.ReadAsync(timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
         }
         catch
         {
@@ -627,8 +637,15 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             channel.Writer.TryComplete();
         }
 
+        _connectAcks.Writer.TryComplete();
+
         await _system.Remote().ShutdownAsync(graceful: true).ConfigureAwait(false);
         await _system.ShutdownAsync().ConfigureAwait(false);
+    }
+
+    void IBasicsRuntimeEventSink.OnConnectAck(ConnectAck ack)
+    {
+        OnConnectAck(ack);
     }
 
     void IBasicsRuntimeEventSink.OnOutputEvent(OutputEvent output)
@@ -655,6 +672,11 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
         var channel = EnsureOutputEventBuffer(brainId);
         channel.Writer.TryWrite(new BasicsRuntimeOutputEvent(brainId, output.OutputIndex, output.TickId, output.Value));
+    }
+
+    private void OnConnectAck(ConnectAck ack)
+    {
+        _connectAcks.Writer.TryWrite(ack);
     }
 
     private void OnOutputVectorEvent(OutputVectorEvent output)
@@ -730,6 +752,13 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         }
     }
 
+    private void ResetConnectAckBuffer()
+    {
+        while (_connectAcks.Reader.TryRead(out _))
+        {
+        }
+    }
+
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -777,9 +806,15 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
     private sealed class RuntimeEventSinkProxy : IBasicsRuntimeEventSink
     {
+        public Action<ConnectAck>? OnConnect { get; set; }
         public Action<OutputEvent>? OnSingleOutput { get; set; }
         public Action<OutputVectorEvent>? OnOutput { get; set; }
         public Action<BrainTerminated>? OnTermination { get; set; }
+
+        public void OnConnectAck(ConnectAck ack)
+        {
+            OnConnect?.Invoke(ack);
+        }
 
         public void OnOutputEvent(OutputEvent output)
         {

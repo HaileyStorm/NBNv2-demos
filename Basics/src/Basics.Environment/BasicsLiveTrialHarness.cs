@@ -370,8 +370,16 @@ public sealed class BasicsLiveTrialHarness
                                 .ConfigureAwait(false);
 
                             terminalSnapshot = CreateSnapshotRecord(finalSnapshot);
-                            outcome = TranslateOutcome(finalSnapshot.State);
-                            outcomeDetail = finalSnapshot.DetailText;
+                            if (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                            {
+                                outcome = BasicsLiveTrialOutcome.TimedOut;
+                                outcomeDetail = "trial_timeout";
+                            }
+                            else
+                            {
+                                outcome = TranslateOutcome(finalSnapshot.State);
+                                outcomeDetail = finalSnapshot.DetailText;
+                            }
                         }
                         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                         {
@@ -770,6 +778,7 @@ public sealed class BasicsLiveTrialHarness
             changes.Add($"diversity_weight={next.Scheduling.ParentSelection.DiversityWeight:0.##}");
             changes.Add($"exploration_fraction={next.Scheduling.ParentSelection.ExplorationFraction:0.##}");
             changes.Add($"diversity_boost={next.Scheduling.RunAllocation.DiversityBoost:0.##}");
+            next = ExpandVariationBand(next, changes, allowFunctionMutation: true);
         }
         else if (terminalSnapshot.BestFitness < 0.75f)
         {
@@ -792,6 +801,7 @@ public sealed class BasicsLiveTrialHarness
             changes.Add($"exploration_fraction={next.Scheduling.ParentSelection.ExplorationFraction:0.##}");
             changes.Add($"diversity_weight={next.Scheduling.ParentSelection.DiversityWeight:0.##}");
             changes.Add($"diversity_boost={next.Scheduling.RunAllocation.DiversityBoost:0.##}");
+            next = ExpandVariationBand(next, changes, allowFunctionMutation: false);
         }
         else if (terminalSnapshot.BestAccuracy >= 0.85f || terminalSnapshot.BestFitness >= 0.90f)
         {
@@ -840,6 +850,60 @@ public sealed class BasicsLiveTrialHarness
         {
             EliteFraction = elite,
             ExplorationFraction = exploration
+        };
+    }
+
+    private static BasicsEnvironmentOptions ExpandVariationBand(
+        BasicsEnvironmentOptions next,
+        ICollection<string> changes,
+        bool allowFunctionMutation)
+    {
+        var variation = next.SeedTemplate.InitialVariationBand;
+        var updated = variation with
+        {
+            MaxInternalNeuronDelta = Math.Min(6, variation.MaxInternalNeuronDelta + 1),
+            MaxAxonDelta = Math.Min(16, variation.MaxAxonDelta + 2),
+            MaxStrengthCodeDelta = Math.Min(12, variation.MaxStrengthCodeDelta + 2),
+            MaxParameterCodeDelta = Math.Min(12, variation.MaxParameterCodeDelta + 2),
+            AllowFunctionMutation = variation.AllowFunctionMutation || allowFunctionMutation
+        };
+
+        if (updated == variation)
+        {
+            return next;
+        }
+
+        if (updated.MaxInternalNeuronDelta != variation.MaxInternalNeuronDelta)
+        {
+            changes.Add($"max_internal_neuron_delta={updated.MaxInternalNeuronDelta}");
+        }
+
+        if (updated.MaxAxonDelta != variation.MaxAxonDelta)
+        {
+            changes.Add($"max_axon_delta={updated.MaxAxonDelta}");
+        }
+
+        if (updated.MaxStrengthCodeDelta != variation.MaxStrengthCodeDelta)
+        {
+            changes.Add($"max_strength_delta={updated.MaxStrengthCodeDelta}");
+        }
+
+        if (updated.MaxParameterCodeDelta != variation.MaxParameterCodeDelta)
+        {
+            changes.Add($"max_parameter_delta={updated.MaxParameterCodeDelta}");
+        }
+
+        if (updated.AllowFunctionMutation != variation.AllowFunctionMutation)
+        {
+            changes.Add("allow_function_mutation=true");
+        }
+
+        return next with
+        {
+            SeedTemplate = next.SeedTemplate with
+            {
+                InitialVariationBand = updated
+            }
         };
     }
 }

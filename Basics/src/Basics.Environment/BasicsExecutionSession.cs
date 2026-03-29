@@ -11,8 +11,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 {
     private static readonly TimeSpan EvaluationOutputTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(50);
     private static readonly IReadOnlyList<float> PrimeInputVector = new[] { 0f, 0f };
     private const int MaxObservationAttempts = 3;
 
@@ -466,6 +466,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         var seedingConfig = plan.Reproduction.Config.Clone();
+        ApplyVariationBand(seedingConfig, plan.SeedTemplate.InitialVariationBand);
         seedingConfig.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
 
         var seedResult = await _runtimeClient.ReproduceByArtifactsAsync(
@@ -836,6 +837,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 nextGeneration.Count);
 
             var reproduceConfig = plan.Reproduction.Config.Clone();
+            ApplyVariationBand(reproduceConfig, plan.SeedTemplate.InitialVariationBand);
             reproduceConfig.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
             var result = await _runtimeClient.ReproduceByArtifactsAsync(
                     new Repro.ReproduceByArtifactsRequest
@@ -1032,6 +1034,65 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             ? (explicitSpeciesDisplayName ?? speciesId)
             : decision!.SpeciesDisplayName;
         return (speciesId, displayName);
+    }
+
+    private static void ApplyVariationBand(Repro.ReproduceConfig config, BasicsSeedVariationBand variationBand)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(variationBand);
+
+        config.Limits ??= new Repro.ReproduceLimits();
+        config.Limits.MaxNeuronsAddedAbs = (uint)Math.Max(0, variationBand.MaxInternalNeuronDelta);
+        config.Limits.MaxNeuronsRemovedAbs = (uint)Math.Max(0, variationBand.MaxInternalNeuronDelta);
+        config.Limits.MaxAxonsAddedAbs = (uint)Math.Max(0, variationBand.MaxAxonDelta);
+        config.Limits.MaxAxonsRemovedAbs = (uint)Math.Max(0, variationBand.MaxAxonDelta);
+        config.Limits.MaxRegionsAddedAbs = variationBand.AllowRegionSetChange ? 1u : 0u;
+        config.Limits.MaxRegionsRemovedAbs = variationBand.AllowRegionSetChange ? 1u : 0u;
+
+        config.ProbAddAxon = variationBand.MaxAxonDelta > 0
+            ? Math.Max(config.ProbAddAxon, ResolveMutationProbability(variationBand.MaxAxonDelta, 12, 0.12f))
+            : 0f;
+        config.ProbRemoveAxon = variationBand.MaxAxonDelta > 0
+            ? Math.Max(config.ProbRemoveAxon, ResolveMutationProbability(variationBand.MaxAxonDelta, 12, 0.08f))
+            : 0f;
+        config.ProbRerouteAxon = variationBand.AllowAxonReroute && variationBand.MaxAxonDelta > 0
+            ? Math.Max(config.ProbRerouteAxon, ResolveMutationProbability(variationBand.MaxAxonDelta, 12, 0.08f))
+            : 0f;
+
+        config.ProbDisableNeuron = variationBand.MaxInternalNeuronDelta > 0
+            ? Math.Max(config.ProbDisableNeuron, ResolveMutationProbability(variationBand.MaxInternalNeuronDelta, 4, 0.08f))
+            : 0f;
+        config.ProbReactivateNeuron = variationBand.MaxInternalNeuronDelta > 0
+            ? Math.Max(config.ProbReactivateNeuron, ResolveMutationProbability(variationBand.MaxInternalNeuronDelta, 4, 0.08f))
+            : 0f;
+        config.ProbAddNeuronToEmptyRegion = variationBand.AllowRegionSetChange && variationBand.MaxInternalNeuronDelta > 0
+            ? Math.Max(config.ProbAddNeuronToEmptyRegion, ResolveMutationProbability(variationBand.MaxInternalNeuronDelta, 4, 0.10f))
+            : 0f;
+        config.ProbRemoveLastNeuronFromRegion = variationBand.AllowRegionSetChange && variationBand.MaxInternalNeuronDelta > 0
+            ? Math.Max(config.ProbRemoveLastNeuronFromRegion, ResolveMutationProbability(variationBand.MaxInternalNeuronDelta, 4, 0.05f))
+            : 0f;
+
+        config.ProbMutate = variationBand.MaxParameterCodeDelta > 0
+            ? Math.Max(config.ProbMutate, ResolveMutationProbability(variationBand.MaxParameterCodeDelta, 16, 0.18f))
+            : config.ProbMutate;
+        config.ProbMutateFunc = variationBand.AllowFunctionMutation
+            ? Math.Max(config.ProbMutateFunc, ResolveMutationProbability(variationBand.MaxParameterCodeDelta, 16, 0.10f))
+            : 0f;
+        config.StrengthTransformEnabled = variationBand.MaxStrengthCodeDelta > 0;
+        config.ProbStrengthMutate = variationBand.MaxStrengthCodeDelta > 0
+            ? Math.Max(config.ProbStrengthMutate, ResolveMutationProbability(variationBand.MaxStrengthCodeDelta, 16, 0.18f))
+            : 0f;
+    }
+
+    private static float ResolveMutationProbability(int delta, int maxReference, float ceiling)
+    {
+        if (delta <= 0)
+        {
+            return 0f;
+        }
+
+        var normalized = Math.Clamp(delta / (float)Math.Max(1, maxReference), 0f, 1f);
+        return Math.Clamp(normalized * ceiling, 0.01f, ceiling);
     }
 
     private static IReadOnlyList<ArtifactRef> ExtractChildDefinitions(Repro.ReproduceResult? result)
