@@ -16,7 +16,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
-    private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.FromSeconds(1.5);
+    private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.FromSeconds(2);
     private const int MaxObservationAttempts = 3;
     private const int MinimumPopulationSize = 2;
 
