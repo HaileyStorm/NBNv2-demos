@@ -49,7 +49,8 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
     private static readonly TimeSpan WorkerStartupPollInterval = TimeSpan.FromMilliseconds(200);
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly List<ManagedWorkerProcess> _processes = new();
-    private readonly string _repoRoot;
+    private readonly string _workspaceRoot;
+    private readonly string _basicsRoot;
     private readonly string _workerProjectPath;
     private readonly string _workerAssemblyPath;
     private readonly string _workerLogRoot;
@@ -58,9 +59,9 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
 
     public LocalWorkerProcessService()
     {
-        _repoRoot = ResolveRepoRoot();
-        _workerProjectPath = Path.GetFullPath(Path.Combine(_repoRoot, "..", "NBNv2", "src", "Nbn.Runtime.WorkerNode", "Nbn.Runtime.WorkerNode.csproj"));
-        _workerAssemblyPath = Path.GetFullPath(Path.Combine(_repoRoot, "..", "NBNv2", "src", "Nbn.Runtime.WorkerNode", "bin", "Release", "net8.0", "Nbn.Runtime.WorkerNode.dll"));
+        (_workspaceRoot, _basicsRoot) = ResolveWorkspaceRoots();
+        _workerProjectPath = Path.GetFullPath(Path.Combine(_workspaceRoot, "..", "NBNv2", "src", "Nbn.Runtime.WorkerNode", "Nbn.Runtime.WorkerNode.csproj"));
+        _workerAssemblyPath = Path.GetFullPath(Path.Combine(_workspaceRoot, "..", "NBNv2", "src", "Nbn.Runtime.WorkerNode", "bin", "Release", "net8.0", "Nbn.Runtime.WorkerNode.dll"));
         _workerLogRoot = Path.Combine(Path.GetTempPath(), "nbn-basics-ui-workers");
         Directory.CreateDirectory(_workerLogRoot);
     }
@@ -243,7 +244,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true,
-                WorkingDirectory = _repoRoot
+                WorkingDirectory = _workspaceRoot
             },
             EnableRaisingEvents = true
         };
@@ -479,23 +480,35 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         return string.Join(" ", lines);
     }
 
-    private static string ResolveRepoRoot()
+    private static (string WorkspaceRoot, string BasicsRoot) ResolveWorkspaceRoots()
     {
-        foreach (var start in new[] { AppContext.BaseDirectory, global::System.Environment.CurrentDirectory })
+        var assemblyDirectory = Path.GetDirectoryName(typeof(LocalWorkerProcessService).Assembly.Location) ?? string.Empty;
+        foreach (var start in new[] { assemblyDirectory, AppContext.BaseDirectory, global::System.Environment.CurrentDirectory })
         {
             var current = start;
             while (!string.IsNullOrWhiteSpace(current))
             {
+                var nestedBasicsRoot = Path.Combine(current, "Basics");
+                if (File.Exists(Path.Combine(nestedBasicsRoot, "Basics.sln")))
+                {
+                    return (current, nestedBasicsRoot);
+                }
+
                 if (File.Exists(Path.Combine(current, "Basics.sln")))
                 {
-                    return current;
+                    var basicsRoot = current;
+                    var workspaceRoot = Directory.GetParent(basicsRoot)?.FullName;
+                    if (!string.IsNullOrWhiteSpace(workspaceRoot))
+                    {
+                        return (workspaceRoot, basicsRoot);
+                    }
                 }
 
                 current = Directory.GetParent(current)?.FullName ?? string.Empty;
             }
         }
 
-        throw new DirectoryNotFoundException("Could not locate the Basics repo root from the current process.");
+        throw new DirectoryNotFoundException("Could not locate the Basics workspace roots from the current process.");
     }
 
     private sealed class ManagedWorkerProcess
