@@ -39,17 +39,22 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(MetricsStatus),
         nameof(MetricsSecondaryStatus),
         nameof(WinnerExportStatus),
-        nameof(WinnerExportDetail)
+        nameof(WinnerExportDetail),
+        nameof(WorkerLauncherStatus),
+        nameof(WorkerLauncherDetail),
+        nameof(IsWorkerLauncherBusy)
     };
 
     private readonly UiDispatcher _dispatcher;
     private readonly IBasicsArtifactExportService _artifactExportService;
+    private readonly IBasicsLocalWorkerProcessService _workerProcessService;
     private IBasicsRuntimeClient? _runtimeClient;
     private BasicsExecutionSession? _executionSession;
     private CancellationTokenSource? _executionCts;
     private BasicsEnvironmentPlan? _lastPlan;
     private bool _suppressValidationRefresh;
     private bool _isExecutionRunning;
+    private bool _isWorkerLauncherBusy;
     private readonly List<float> _accuracyHistory = new();
     private readonly List<float> _fitnessHistory = new();
 
@@ -112,6 +117,11 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _metricsSecondaryStatus = "Population and resource summaries update when capacity is fetched or a run is active.";
     private string _winnerExportStatus = "No best-so-far brain retained.";
     private string _winnerExportDetail = "The strongest evaluated candidate is retained for export when a run finishes or reaches a stop target.";
+    private string _workerCountText = "1";
+    private string _workerBasePortText = "12041";
+    private string _workerStoragePctText = "95";
+    private string _workerLauncherStatus = "No workers launched from Basics UI.";
+    private string _workerLauncherDetail = "Starts local WorkerNode processes on consecutive loopback ports. Shared-port multi-worker launch is not supported here yet.";
     private ArtifactRef? _winnerDefinitionArtifact;
     private ArtifactRef? _winnerSnapshotArtifact;
     private Guid _retainedWinnerBrainId;
@@ -121,10 +131,12 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public MainWindowViewModel(
         UiDispatcher dispatcher,
-        IBasicsArtifactExportService artifactExportService)
+        IBasicsArtifactExportService artifactExportService,
+        IBasicsLocalWorkerProcessService workerProcessService)
     {
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _artifactExportService = artifactExportService ?? throw new ArgumentNullException(nameof(artifactExportService));
+        _workerProcessService = workerProcessService ?? throw new ArgumentNullException(nameof(workerProcessService));
 
         OutputObservationModes = new ObservableCollection<OutputObservationModeOption>(BuildOutputObservationModes());
         SelectedOutputObservationMode = OutputObservationModes.First(static option => option.Mode == BasicsOutputObservationMode.VectorPotential);
@@ -145,6 +157,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         ExportDefinitionCommand = new AsyncRelayCommand(ExportWinningDefinitionAsync, CanExportWinnerDefinition);
         ExportSnapshotCommand = new AsyncRelayCommand(ExportWinningSnapshotAsync, CanExportWinnerSnapshot);
         ApplySuggestedBoundsCommand = new RelayCommand(ApplySuggestedBounds, () => _lastPlan is not null);
+        StartWorkersCommand = new AsyncRelayCommand(StartWorkersAsync, CanStartWorkers);
+        StopWorkersCommand = new AsyncRelayCommand(StopWorkersAsync, CanStopWorkers);
 
         SelectedTask = Tasks.FirstOrDefault();
 
@@ -191,6 +205,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AsyncRelayCommand ExportSnapshotCommand { get; }
 
     public RelayCommand ApplySuggestedBoundsCommand { get; }
+
+    public AsyncRelayCommand StartWorkersCommand { get; }
+
+    public AsyncRelayCommand StopWorkersCommand { get; }
 
     public string IoAddress
     {
@@ -250,6 +268,24 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _optionalSettingsActorName;
         set => SetProperty(ref _optionalSettingsActorName, value);
+    }
+
+    public string WorkerCountText
+    {
+        get => _workerCountText;
+        set => SetProperty(ref _workerCountText, value);
+    }
+
+    public string WorkerBasePortText
+    {
+        get => _workerBasePortText;
+        set => SetProperty(ref _workerBasePortText, value);
+    }
+
+    public string WorkerStoragePctText
+    {
+        get => _workerStoragePctText;
+        set => SetProperty(ref _workerStoragePctText, value);
     }
 
     public string ConnectionStatus
@@ -576,6 +612,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         private set => SetProperty(ref _isExecutionRunning, value);
     }
 
+    public bool IsWorkerLauncherBusy
+    {
+        get => _isWorkerLauncherBusy;
+        private set => SetProperty(ref _isWorkerLauncherBusy, value);
+    }
+
     public string MetricsStatus
     {
         get => _metricsStatus;
@@ -598,6 +640,18 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _winnerExportDetail;
         private set => SetProperty(ref _winnerExportDetail, value);
+    }
+
+    public string WorkerLauncherStatus
+    {
+        get => _workerLauncherStatus;
+        private set => SetProperty(ref _workerLauncherStatus, value);
+    }
+
+    public string WorkerLauncherDetail
+    {
+        get => _workerLauncherDetail;
+        private set => SetProperty(ref _workerLauncherDetail, value);
     }
 
     public bool HasAccuracyChartData => _accuracyHistory.Count > 0;
@@ -688,6 +742,111 @@ public sealed class MainWindowViewModel : ViewModelBase
         catch (Exception ex)
         {
             _dispatcher.Post(() => CapacityStatus = $"Plan failed: {ex.GetBaseException().Message}");
+        }
+    }
+
+    private async Task StartWorkersAsync()
+    {
+        if (!TryBuildLocalWorkerLaunchRequest(out var request, out var failureMessage))
+        {
+            WorkerLauncherStatus = "Worker launch blocked.";
+            WorkerLauncherDetail = failureMessage;
+            RaiseCommandStates();
+            return;
+        }
+
+        IsWorkerLauncherBusy = true;
+        WorkerLauncherStatus = "Starting workers...";
+        WorkerLauncherDetail = $"Launching {request.WorkerCount} local worker process(es) from Basics UI.";
+        RaiseCommandStates();
+
+        try
+        {
+            var result = await _workerProcessService.StartWorkersAsync(request).ConfigureAwait(false);
+            _dispatcher.Post(() =>
+            {
+                WorkerLauncherStatus = result.StatusText;
+                WorkerLauncherDetail = result.DetailText;
+                RaiseCommandStates();
+            });
+
+            if (result.StartedCount > 0)
+            {
+                _ = RefreshCapacityAfterWorkerTopologyChangeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(() =>
+            {
+                WorkerLauncherStatus = "Worker launch failed.";
+                WorkerLauncherDetail = ex.GetBaseException().Message;
+                RaiseCommandStates();
+            });
+        }
+        finally
+        {
+            _dispatcher.Post(() =>
+            {
+                IsWorkerLauncherBusy = false;
+                RaiseCommandStates();
+            });
+        }
+    }
+
+    private async Task StopWorkersAsync()
+    {
+        IsWorkerLauncherBusy = true;
+        WorkerLauncherStatus = "Stopping workers...";
+        WorkerLauncherDetail = "Stopping all worker processes launched by Basics UI in this session.";
+        RaiseCommandStates();
+
+        try
+        {
+            var result = await _workerProcessService.StopLaunchedWorkersAsync().ConfigureAwait(false);
+            _dispatcher.Post(() =>
+            {
+                WorkerLauncherStatus = result.StatusText;
+                WorkerLauncherDetail = result.DetailText;
+                RaiseCommandStates();
+            });
+
+            _ = RefreshCapacityAfterWorkerTopologyChangeAsync();
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(() =>
+            {
+                WorkerLauncherStatus = "Worker stop failed.";
+                WorkerLauncherDetail = ex.GetBaseException().Message;
+                RaiseCommandStates();
+            });
+        }
+        finally
+        {
+            _dispatcher.Post(() =>
+            {
+                IsWorkerLauncherBusy = false;
+                RaiseCommandStates();
+            });
+        }
+    }
+
+    private async Task RefreshCapacityAfterWorkerTopologyChangeAsync()
+    {
+        if (_runtimeClient is null || IsExecutionRunning)
+        {
+            return;
+        }
+
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            await FetchCapacityAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort capacity refresh only.
         }
     }
 
@@ -944,6 +1103,10 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private bool CanExportWinnerSnapshot() => HasArtifactRef(_winnerSnapshotArtifact);
 
+    private bool CanStartWorkers() => !IsWorkerLauncherBusy;
+
+    private bool CanStopWorkers() => !IsWorkerLauncherBusy && _workerProcessService.LaunchedWorkerCount > 0;
+
     private void RaiseCommandStates()
     {
         ConnectCommand.RaiseCanExecuteChanged();
@@ -954,6 +1117,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         ExportDefinitionCommand.RaiseCanExecuteChanged();
         ExportSnapshotCommand.RaiseCanExecuteChanged();
         ApplySuggestedBoundsCommand.RaiseCanExecuteChanged();
+        StartWorkersCommand.RaiseCanExecuteChanged();
+        StopWorkersCommand.RaiseCanExecuteChanged();
     }
 
     private bool TryBuildRuntimeClientOptions(
@@ -1016,6 +1181,61 @@ public sealed class MainWindowViewModel : ViewModelBase
             AdvertisePort = advertisePort,
             RequestTimeout = TimeSpan.FromSeconds(requestTimeoutSeconds)
         };
+        return true;
+    }
+
+    private bool TryBuildLocalWorkerLaunchRequest(
+        out BasicsLocalWorkerLaunchRequest request,
+        out string failureMessage)
+    {
+        request = default!;
+        failureMessage = string.Empty;
+
+        if (!int.TryParse(WorkerCountText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var workerCount) || workerCount <= 0)
+        {
+            failureMessage = "Worker count must be a positive integer.";
+            return false;
+        }
+
+        if (!int.TryParse(WorkerBasePortText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var basePort) || basePort <= 0)
+        {
+            failureMessage = "First worker port must be a positive integer.";
+            return false;
+        }
+
+        if (!int.TryParse(WorkerStoragePctText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var storagePercent) || storagePercent < 0 || storagePercent > 100)
+        {
+            failureMessage = "Worker storage % must be an integer between 0 and 100.";
+            return false;
+        }
+
+        var settingsName = string.IsNullOrWhiteSpace(OptionalSettingsActorName)
+            ? "SettingsMonitor"
+            : OptionalSettingsActorName.Trim();
+        var settingsHost = "127.0.0.1";
+        var settingsPort = 12010;
+        if (!string.IsNullOrWhiteSpace(OptionalSettingsAddress))
+        {
+            if (!TryParseHostPort(OptionalSettingsAddress, out settingsHost, out settingsPort))
+            {
+                failureMessage = "Settings address must be empty or use host:port.";
+                return false;
+            }
+        }
+
+        if (!NetworkAddressDefaults.IsLoopbackHost(settingsHost))
+        {
+            failureMessage = "Basics UI worker launch currently supports only local loopback SettingsMonitor endpoints. Use Workbench for remote/shared worker orchestration.";
+            return false;
+        }
+
+        request = new BasicsLocalWorkerLaunchRequest(
+            WorkerCount: workerCount,
+            BasePort: basePort,
+            StoragePercent: storagePercent,
+            SettingsHost: settingsHost,
+            SettingsPort: settingsPort,
+            SettingsName: settingsName);
         return true;
     }
 
@@ -1574,6 +1794,28 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
 
         return value;
+    }
+
+    private static bool TryParseHostPort(string value, out string host, out int port)
+    {
+        host = string.Empty;
+        port = 0;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var separator = trimmed.LastIndexOf(':');
+        if (separator <= 0 || separator >= trimmed.Length - 1)
+        {
+            return false;
+        }
+
+        host = trimmed[..separator].Trim();
+        return host.Length > 0
+               && int.TryParse(trimmed[(separator + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out port)
+               && port > 0;
     }
 
     private static string FormatOptionalInt(int? value)

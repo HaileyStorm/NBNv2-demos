@@ -16,6 +16,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.FromSeconds(1.5);
     private const int MaxObservationAttempts = 3;
     private const int MinimumPopulationSize = 2;
 
@@ -25,13 +26,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private readonly Random _random = new(1701);
     private readonly ConcurrentDictionary<Guid, byte> _trackedBrains = new();
     private readonly ConcurrentDictionary<string, BasicsDefinitionComplexitySummary?> _definitionComplexityCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly TimeSpan _minimumSpawnRequestInterval;
 
     public BasicsExecutionSession(
         IBasicsRuntimeClient runtimeClient,
-        BasicsTemplatePublishingOptions publishingOptions)
+        BasicsTemplatePublishingOptions publishingOptions,
+        TimeSpan? minimumSpawnRequestInterval = null)
     {
         _runtimeClient = runtimeClient ?? throw new ArgumentNullException(nameof(runtimeClient));
         _publishingOptions = publishingOptions ?? throw new ArgumentNullException(nameof(publishingOptions));
+        _minimumSpawnRequestInterval = minimumSpawnRequestInterval ?? DefaultMinimumSpawnRequestInterval;
     }
 
     public async Task<BasicsExecutionSnapshot> RunAsync(
@@ -690,6 +694,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var chunkCount = (int)Math.Ceiling(population.Count / (double)maxConcurrent);
         var setupConcurrency = ResolveSetupConcurrency(plan.Capacity.EligibleWorkerCount, maxConcurrent);
         using var setupGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
+        var spawnPacer = new SpawnRequestPacer(
+            Math.Max(1, plan.Capacity.EligibleWorkerCount),
+            _minimumSpawnRequestInterval);
 
         for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++)
         {
@@ -716,7 +723,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 overallBestCandidate: overallBestCandidate));
 
             var batchEvaluations = await Task.WhenAll(
-                    batch.Select(member => EvaluateMemberAsync(taskPlugin, member, outputObservationMode, setupGate, cancellationToken)))
+                    batch.Select(member => EvaluateMemberAsync(taskPlugin, member, outputObservationMode, setupGate, spawnPacer, cancellationToken)))
                 .ConfigureAwait(false);
             evaluated.AddRange(batchEvaluations);
         }
@@ -729,6 +736,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         PopulationMember member,
         BasicsOutputObservationMode outputObservationMode,
         SemaphoreSlim setupGate,
+        SpawnRequestPacer spawnPacer,
         CancellationToken cancellationToken)
     {
         Guid brainId = Guid.Empty;
@@ -736,6 +744,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var subscribed = false;
         try
         {
+            await spawnPacer.WaitAsync(cancellationToken).ConfigureAwait(false);
             await setupGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             setupSlotHeld = true;
 
@@ -907,6 +916,51 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         var workerScaled = Math.Max(1, eligibleWorkerCount) * 2;
         return Math.Max(1, Math.Min(maxConcurrent, workerScaled));
+    }
+
+    private sealed class SpawnRequestPacer
+    {
+        private readonly TimeSpan _minimumInterval;
+        private readonly DateTimeOffset[] _laneNextAllowedAt;
+        private readonly object _lock = new();
+
+        public SpawnRequestPacer(int laneCount, TimeSpan minimumInterval)
+        {
+            _minimumInterval = minimumInterval <= TimeSpan.Zero ? TimeSpan.Zero : minimumInterval;
+            _laneNextAllowedAt = Enumerable.Repeat(DateTimeOffset.MinValue, Math.Max(1, laneCount)).ToArray();
+        }
+
+        public async Task WaitAsync(CancellationToken cancellationToken)
+        {
+            if (_minimumInterval <= TimeSpan.Zero)
+            {
+                return;
+            }
+
+            TimeSpan delay;
+            lock (_lock)
+            {
+                var now = DateTimeOffset.UtcNow;
+                var selectedLane = 0;
+                for (var lane = 1; lane < _laneNextAllowedAt.Length; lane++)
+                {
+                    if (_laneNextAllowedAt[lane] < _laneNextAllowedAt[selectedLane])
+                    {
+                        selectedLane = lane;
+                    }
+                }
+
+                var earliest = _laneNextAllowedAt[selectedLane];
+                delay = earliest > now ? earliest - now : TimeSpan.Zero;
+                var scheduledStart = delay > TimeSpan.Zero ? earliest : now;
+                _laneNextAllowedAt[selectedLane] = scheduledStart + _minimumInterval;
+            }
+
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     private static IReadOnlyList<float> ResolvePrimeInputVector(IReadOnlyList<BasicsTaskSample> samples)

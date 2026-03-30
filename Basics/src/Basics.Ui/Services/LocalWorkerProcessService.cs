@@ -1,0 +1,572 @@
+using System.Diagnostics;
+using System.Net.NetworkInformation;
+using Nbn.Shared;
+
+namespace Nbn.Demos.Basics.Ui.Services;
+
+public sealed record BasicsLocalWorkerLaunchRequest(
+    int WorkerCount,
+    int BasePort,
+    int StoragePercent,
+    string SettingsHost,
+    int SettingsPort,
+    string SettingsName);
+
+public sealed record BasicsLocalWorkerInfo(
+    int Port,
+    string RootActorName,
+    string LogicalName,
+    int ProcessId,
+    string LogPath);
+
+public sealed record BasicsLocalWorkerLaunchResult(
+    bool Success,
+    int StartedCount,
+    IReadOnlyList<BasicsLocalWorkerInfo> StartedWorkers,
+    string StatusText,
+    string DetailText);
+
+public sealed record BasicsLocalWorkerStopResult(
+    int StoppedCount,
+    string StatusText,
+    string DetailText);
+
+public interface IBasicsLocalWorkerProcessService : IAsyncDisposable
+{
+    int LaunchedWorkerCount { get; }
+
+    Task<BasicsLocalWorkerLaunchResult> StartWorkersAsync(
+        BasicsLocalWorkerLaunchRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<BasicsLocalWorkerStopResult> StopLaunchedWorkersAsync(CancellationToken cancellationToken = default);
+}
+
+public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
+{
+    private static readonly TimeSpan WorkerStartupTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan WorkerStartupPollInterval = TimeSpan.FromMilliseconds(200);
+    private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
+    private readonly List<ManagedWorkerProcess> _processes = new();
+    private readonly string _repoRoot;
+    private readonly string _workerProjectPath;
+    private readonly string _workerAssemblyPath;
+    private readonly string _workerLogRoot;
+    private int _nextWorkerOrdinal = 1;
+    private bool _workerRuntimeBuilt;
+
+    public LocalWorkerProcessService()
+    {
+        _repoRoot = ResolveRepoRoot();
+        _workerProjectPath = Path.GetFullPath(Path.Combine(_repoRoot, "..", "NBNv2", "src", "Nbn.Runtime.WorkerNode", "Nbn.Runtime.WorkerNode.csproj"));
+        _workerAssemblyPath = Path.GetFullPath(Path.Combine(_repoRoot, "..", "NBNv2", "src", "Nbn.Runtime.WorkerNode", "bin", "Release", "net8.0", "Nbn.Runtime.WorkerNode.dll"));
+        _workerLogRoot = Path.Combine(Path.GetTempPath(), "nbn-basics-ui-workers");
+        Directory.CreateDirectory(_workerLogRoot);
+    }
+
+    public int LaunchedWorkerCount
+    {
+        get
+        {
+            lock (_processes)
+            {
+                return _processes.Count;
+            }
+        }
+    }
+
+    public async Task<BasicsLocalWorkerLaunchResult> StartWorkersAsync(
+        BasicsLocalWorkerLaunchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (request.WorkerCount <= 0)
+            {
+                return new BasicsLocalWorkerLaunchResult(
+                    Success: false,
+                    StartedCount: 0,
+                    StartedWorkers: Array.Empty<BasicsLocalWorkerInfo>(),
+                    StatusText: "Worker launch blocked.",
+                    DetailText: "Worker count must be greater than zero.");
+            }
+
+            await EnsureWorkerRuntimeBuiltAsync(cancellationToken).ConfigureAwait(false);
+
+            var started = new List<BasicsLocalWorkerInfo>(request.WorkerCount);
+            var nextPort = request.BasePort;
+            for (var index = 0; index < request.WorkerCount; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var ordinal = _nextWorkerOrdinal++;
+                var port = FindNextAvailablePort(nextPort);
+                nextPort = port + 1;
+                var rootActorName = $"worker-node-ui-{ordinal}";
+                var logicalName = $"nbn.worker.ui.{ordinal}";
+                var startedWorker = await StartWorkerProcessAsync(
+                        ordinal,
+                        port,
+                        rootActorName,
+                        logicalName,
+                        request,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (startedWorker is null)
+                {
+                    return new BasicsLocalWorkerLaunchResult(
+                        Success: started.Count > 0,
+                        StartedCount: started.Count,
+                        StartedWorkers: started.ToArray(),
+                        StatusText: started.Count > 0 ? "Workers partially started." : "Worker launch failed.",
+                        DetailText: started.Count > 0
+                            ? $"Started {started.Count} worker(s) before a launch failed. See log files under {_workerLogRoot}."
+                            : $"No workers started. See log files under {_workerLogRoot}.");
+                }
+
+                started.Add(startedWorker);
+            }
+
+            return new BasicsLocalWorkerLaunchResult(
+                Success: true,
+                StartedCount: started.Count,
+                StartedWorkers: started.ToArray(),
+                StatusText: $"Started {started.Count} worker(s).",
+                DetailText: BuildWorkerDetail(started));
+        }
+        finally
+        {
+            _lifecycleGate.Release();
+        }
+    }
+
+    public async Task<BasicsLocalWorkerStopResult> StopLaunchedWorkersAsync(CancellationToken cancellationToken = default)
+    {
+        await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            List<ManagedWorkerProcess> snapshot;
+            lock (_processes)
+            {
+                snapshot = _processes.ToList();
+                _processes.Clear();
+            }
+
+            foreach (var process in snapshot)
+            {
+                await StopManagedWorkerProcessAsync(process, cancellationToken).ConfigureAwait(false);
+            }
+
+            return new BasicsLocalWorkerStopResult(
+                StoppedCount: snapshot.Count,
+                StatusText: snapshot.Count == 0 ? "No launched workers to stop." : $"Stopped {snapshot.Count} launched worker(s).",
+                DetailText: snapshot.Count == 0
+                    ? "Basics UI is not currently tracking any worker processes."
+                    : "All worker processes started by Basics UI in this session were stopped.");
+        }
+        finally
+        {
+            _lifecycleGate.Release();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await StopLaunchedWorkersAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _lifecycleGate.Dispose();
+        }
+    }
+
+    private async Task EnsureWorkerRuntimeBuiltAsync(CancellationToken cancellationToken)
+    {
+        if (_workerRuntimeBuilt && File.Exists(_workerAssemblyPath))
+        {
+            return;
+        }
+
+        if (!File.Exists(_workerProjectPath))
+        {
+            throw new FileNotFoundException($"WorkerNode project not found at {_workerProjectPath}.");
+        }
+
+        var build = await RunDotnetCommandAsync(
+                startInfo =>
+                {
+                    startInfo.ArgumentList.Add("build");
+                    startInfo.ArgumentList.Add(_workerProjectPath);
+                    startInfo.ArgumentList.Add("-c");
+                    startInfo.ArgumentList.Add("Release");
+                    startInfo.ArgumentList.Add("--disable-build-servers");
+                    startInfo.ArgumentList.Add("--nologo");
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (build.ExitCode != 0 || !File.Exists(_workerAssemblyPath))
+        {
+            throw new InvalidOperationException(
+                $"Worker runtime build failed. {TrimOutputTail(build.CombinedOutput)}");
+        }
+
+        _workerRuntimeBuilt = true;
+    }
+
+    private async Task<BasicsLocalWorkerInfo?> StartWorkerProcessAsync(
+        int ordinal,
+        int port,
+        string rootActorName,
+        string logicalName,
+        BasicsLocalWorkerLaunchRequest request,
+        CancellationToken cancellationToken)
+    {
+        var logPath = Path.Combine(_workerLogRoot, $"worker-{ordinal:D2}-{port}.log");
+        var writer = TextWriter.Synchronized(new StreamWriter(
+            new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+        {
+            AutoFlush = true
+        });
+
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                WorkingDirectory = _repoRoot
+            },
+            EnableRaisingEvents = true
+        };
+        process.StartInfo.ArgumentList.Add(_workerAssemblyPath);
+        process.StartInfo.ArgumentList.Add("--bind-host");
+        process.StartInfo.ArgumentList.Add("127.0.0.1");
+        process.StartInfo.ArgumentList.Add("--advertise-host");
+        process.StartInfo.ArgumentList.Add("127.0.0.1");
+        process.StartInfo.ArgumentList.Add("--port");
+        process.StartInfo.ArgumentList.Add(port.ToString());
+        process.StartInfo.ArgumentList.Add("--logical-name");
+        process.StartInfo.ArgumentList.Add(logicalName);
+        process.StartInfo.ArgumentList.Add("--root-name");
+        process.StartInfo.ArgumentList.Add(rootActorName);
+        process.StartInfo.ArgumentList.Add("--settings-host");
+        process.StartInfo.ArgumentList.Add(request.SettingsHost);
+        process.StartInfo.ArgumentList.Add("--settings-port");
+        process.StartInfo.ArgumentList.Add(request.SettingsPort.ToString());
+        process.StartInfo.ArgumentList.Add("--settings-name");
+        process.StartInfo.ArgumentList.Add(request.SettingsName);
+        process.StartInfo.ArgumentList.Add("--storage-pct");
+        process.StartInfo.ArgumentList.Add(request.StoragePercent.ToString());
+
+        var managed = new ManagedWorkerProcess(process, writer, logPath, port, rootActorName, logicalName);
+        DataReceivedEventHandler outputHandler = (_, args) => AppendWorkerLog(managed, "stdout", args.Data);
+        DataReceivedEventHandler errorHandler = (_, args) => AppendWorkerLog(managed, "stderr", args.Data);
+        EventHandler exitHandler = (_, _) => HandleWorkerExit(managed);
+        process.OutputDataReceived += outputHandler;
+        process.ErrorDataReceived += errorHandler;
+        process.Exited += exitHandler;
+        managed.AttachHandlers(outputHandler, errorHandler, exitHandler);
+
+        try
+        {
+            if (!process.Start())
+            {
+                DisposeManagedWorkerProcess(managed);
+                return null;
+            }
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            var started = await WaitForWorkerPortAsync(process, port, cancellationToken).ConfigureAwait(false);
+            if (!started)
+            {
+                await StopManagedWorkerProcessAsync(managed, cancellationToken).ConfigureAwait(false);
+                return null;
+            }
+
+            lock (_processes)
+            {
+                _processes.Add(managed);
+            }
+
+            return new BasicsLocalWorkerInfo(
+                Port: port,
+                RootActorName: rootActorName,
+                LogicalName: logicalName,
+                ProcessId: process.Id,
+                LogPath: logPath);
+        }
+        catch
+        {
+            await StopManagedWorkerProcessAsync(managed, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task<bool> WaitForWorkerPortAsync(Process process, int port, CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(WorkerStartupTimeout);
+        while (!timeoutCts.IsCancellationRequested)
+        {
+            if (process.HasExited)
+            {
+                return false;
+            }
+
+            if (IsPortInUse(port))
+            {
+                return true;
+            }
+
+            await Task.Delay(WorkerStartupPollInterval, timeoutCts.Token).ConfigureAwait(false);
+        }
+
+        return false;
+    }
+
+    private static void AppendWorkerLog(ManagedWorkerProcess process, string streamName, string? data)
+    {
+        if (string.IsNullOrWhiteSpace(data))
+        {
+            return;
+        }
+
+        lock (process.SyncRoot)
+        {
+            process.LogWriter.WriteLine($"{DateTimeOffset.UtcNow:O} [{streamName}] {data}");
+            process.Tail.Enqueue(data);
+            while (process.Tail.Count > 20)
+            {
+                process.Tail.Dequeue();
+            }
+        }
+    }
+
+    private void HandleWorkerExit(ManagedWorkerProcess process)
+    {
+        lock (_processes)
+        {
+            _processes.Remove(process);
+        }
+
+        DisposeManagedWorkerProcess(process);
+    }
+
+    private async Task StopManagedWorkerProcessAsync(ManagedWorkerProcess process, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!process.Process.HasExited)
+            {
+                process.Process.Kill(entireProcessTree: true);
+                await process.Process.WaitForExitAsync(cancellationToken).WaitAsync(WorkerShutdownTimeout, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // Best-effort process cleanup only.
+        }
+        finally
+        {
+            DisposeManagedWorkerProcess(process);
+        }
+    }
+
+    private static void DisposeManagedWorkerProcess(ManagedWorkerProcess process)
+    {
+        lock (process.SyncRoot)
+        {
+            try
+            {
+                process.DetachHandlers();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                process.LogWriter.Dispose();
+            }
+            catch
+            {
+            }
+
+            process.Process.Dispose();
+        }
+    }
+
+    private static async Task<(int ExitCode, string CombinedOutput)> RunDotnetCommandAsync(
+        Action<ProcessStartInfo> configureStartInfo,
+        CancellationToken cancellationToken)
+    {
+        var output = new List<string>();
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            }
+        };
+        configureStartInfo(process.StartInfo);
+
+        process.Start();
+        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        output.Add(await stdout.ConfigureAwait(false));
+        output.Add(await stderr.ConfigureAwait(false));
+        return (process.ExitCode, string.Join(global::System.Environment.NewLine, output.Where(static text => !string.IsNullOrWhiteSpace(text))));
+    }
+
+    private int FindNextAvailablePort(int requestedPort)
+    {
+        var port = requestedPort;
+        while (true)
+        {
+            var inUse = IsPortInUse(port);
+            if (!inUse)
+            {
+                lock (_processes)
+                {
+                    if (_processes.All(process => process.Port != port))
+                    {
+                        return port;
+                    }
+                }
+            }
+
+            port++;
+        }
+    }
+
+    private static bool IsPortInUse(int port)
+        => IPGlobalProperties.GetIPGlobalProperties()
+            .GetActiveTcpListeners()
+            .Any(endpoint => endpoint.Port == port);
+
+    private static string BuildWorkerDetail(IReadOnlyList<BasicsLocalWorkerInfo> workers)
+        => string.Join(
+            " ",
+            workers.Select(worker =>
+                $"{worker.RootActorName} on 127.0.0.1:{worker.Port} (pid {worker.ProcessId}, log {worker.LogPath})."));
+
+    private static string TrimOutputTail(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "No process output was captured.";
+        }
+
+        var lines = value
+            .Split(global::System.Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .TakeLast(12);
+        return string.Join(" ", lines);
+    }
+
+    private static string ResolveRepoRoot()
+    {
+        foreach (var start in new[] { AppContext.BaseDirectory, global::System.Environment.CurrentDirectory })
+        {
+            var current = start;
+            while (!string.IsNullOrWhiteSpace(current))
+            {
+                if (File.Exists(Path.Combine(current, "Basics.sln")))
+                {
+                    return current;
+                }
+
+                current = Directory.GetParent(current)?.FullName ?? string.Empty;
+            }
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the Basics repo root from the current process.");
+    }
+
+    private sealed class ManagedWorkerProcess
+    {
+        public ManagedWorkerProcess(
+            Process process,
+            TextWriter logWriter,
+            string logPath,
+            int port,
+            string rootActorName,
+            string logicalName)
+        {
+            Process = process;
+            LogWriter = logWriter;
+            LogPath = logPath;
+            Port = port;
+            RootActorName = rootActorName;
+            LogicalName = logicalName;
+        }
+
+        public Process Process { get; }
+
+        public TextWriter LogWriter { get; }
+
+        public Queue<string> Tail { get; } = new();
+
+        public object SyncRoot { get; } = new();
+
+        public string LogPath { get; }
+
+        public int Port { get; }
+
+        public string RootActorName { get; }
+
+        public string LogicalName { get; }
+
+        private DataReceivedEventHandler? OutputHandler { get; set; }
+
+        private DataReceivedEventHandler? ErrorHandler { get; set; }
+
+        private EventHandler? ExitHandler { get; set; }
+
+        public void AttachHandlers(
+            DataReceivedEventHandler outputHandler,
+            DataReceivedEventHandler errorHandler,
+            EventHandler exitHandler)
+        {
+            OutputHandler = outputHandler;
+            ErrorHandler = errorHandler;
+            ExitHandler = exitHandler;
+        }
+
+        public void DetachHandlers()
+        {
+            if (OutputHandler is not null)
+            {
+                Process.OutputDataReceived -= OutputHandler;
+                OutputHandler = null;
+            }
+
+            if (ErrorHandler is not null)
+            {
+                Process.ErrorDataReceived -= ErrorHandler;
+                ErrorHandler = null;
+            }
+
+            if (ExitHandler is not null)
+            {
+                Process.Exited -= ExitHandler;
+                ExitHandler = null;
+            }
+        }
+    }
+}

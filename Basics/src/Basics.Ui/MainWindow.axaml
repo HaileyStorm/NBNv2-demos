@@ -117,6 +117,48 @@
                             </Grid>
                         </Expander>
 
+                        <Expander Header="Local Worker Launcher"
+                                  IsExpanded="False">
+                            <StackPanel Margin="0,10,0,0"
+                                        Spacing="10">
+                                <TextBlock Text="Starts local WorkerNode processes on consecutive loopback ports. Shared-port multi-worker launch is not supported here yet."
+                                           Foreground="#425466"
+                                           TextWrapping="Wrap" />
+                                <Grid ColumnDefinitions="Auto,90,Auto,90,Auto,90"
+                                      ColumnSpacing="12"
+                                      RowSpacing="10">
+                                    <TextBlock Grid.Column="0" Text="Workers" VerticalAlignment="Center"
+                                               ToolTip.Tip="How many local worker processes to start from this UI action." />
+                                    <TextBox Grid.Column="1" Text="{Binding WorkerCountText}" />
+                                    <TextBlock Grid.Column="2" Text="First port" VerticalAlignment="Center"
+                                               ToolTip.Tip="Starting port for the launched worker set. Basics will skip ports already in use." />
+                                    <TextBox Grid.Column="3" Text="{Binding WorkerBasePortText}" />
+                                    <TextBlock Grid.Column="4" Text="Storage %" VerticalAlignment="Center"
+                                               ToolTip.Tip="Worker storage availability percentage passed to the WorkerNode runtime." />
+                                    <TextBox Grid.Column="5" Text="{Binding WorkerStoragePctText}" />
+                                </Grid>
+                                <Grid ColumnDefinitions="Auto,Auto,*"
+                                      ColumnSpacing="12">
+                                    <Button Grid.Column="0"
+                                            Content="Start Workers"
+                                            Command="{Binding StartWorkersCommand}"
+                                            MinWidth="130" />
+                                    <Button Grid.Column="1"
+                                            Content="Stop Launched Workers"
+                                            Command="{Binding StopWorkersCommand}"
+                                            MinWidth="170" />
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding WorkerLauncherStatus}"
+                                               VerticalAlignment="Center"
+                                               Foreground="#425466"
+                                               TextWrapping="Wrap" />
+                                </Grid>
+                                <TextBlock Text="{Binding WorkerLauncherDetail}"
+                                           Foreground="#6C7A89"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Expander>
+
                         <Grid ColumnDefinitions="Auto,Auto,*"
                               ColumnSpacing="12">
                             <Button Grid.Column="0"

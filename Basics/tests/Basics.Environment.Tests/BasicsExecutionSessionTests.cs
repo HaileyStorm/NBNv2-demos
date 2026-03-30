@@ -10,6 +10,7 @@ using Nbn.Shared.Format;
 using Nbn.Shared.Validation;
 using Repro = Nbn.Proto.Repro;
 using System.Reflection;
+using System.Collections.Concurrent;
 
 namespace Nbn.Demos.Basics.Environment.Tests;
 
@@ -83,7 +84,7 @@ public sealed class BasicsExecutionSessionTests
     public async Task ExecutionSession_PublishesTemplate_EvaluatesPopulation_AndBreedsTowardSuccess()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
-        var session = new BasicsExecutionSession(
+        var session = CreateSession(
             runtimeClient,
             new BasicsTemplatePublishingOptions
             {
@@ -143,7 +144,7 @@ public sealed class BasicsExecutionSessionTests
         {
             DefaultBehavior = plugin.Contract.TaskId
         };
-        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var session = CreateSession(runtimeClient);
 
         try
         {
@@ -189,7 +190,7 @@ public sealed class BasicsExecutionSessionTests
             DefaultBehavior = plugin.Contract.TaskId,
             OnlyEmitOutputVectorOnChange = true
         };
-        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var session = CreateSession(runtimeClient);
 
         try
         {
@@ -230,7 +231,7 @@ public sealed class BasicsExecutionSessionTests
     public async Task ExecutionSession_UsesEventedOutputMode_WhenConfigured()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
-        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var session = CreateSession(runtimeClient);
 
         try
         {
@@ -258,7 +259,7 @@ public sealed class BasicsExecutionSessionTests
     public async Task ExecutionSession_UsesBufferVectorSource_WhenConfigured()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
-        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var session = CreateSession(runtimeClient);
 
         try
         {
@@ -284,7 +285,7 @@ public sealed class BasicsExecutionSessionTests
     public async Task ExecutionSession_StopsAtConfiguredTarget_RetainsWinner_AndPrefersSimplerStructure()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
-        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var session = CreateSession(runtimeClient);
 
         try
         {
@@ -324,7 +325,7 @@ public sealed class BasicsExecutionSessionTests
         {
             ThrowOnReproduceCallNumber = 2
         };
-        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var session = CreateSession(runtimeClient);
 
         try
         {
@@ -356,7 +357,7 @@ public sealed class BasicsExecutionSessionTests
     public async Task ExecutionSession_StopsAtConfiguredGenerationLimit_AndRetainsBestSoFarCandidate()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
-        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var session = CreateSession(runtimeClient);
 
         try
         {
@@ -393,7 +394,7 @@ public sealed class BasicsExecutionSessionTests
         {
             ThrowOnReproduceCallNumber = 2
         };
-        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var session = CreateSession(runtimeClient);
 
         try
         {
@@ -425,7 +426,7 @@ public sealed class BasicsExecutionSessionTests
         {
             ReturnNoChildrenStartingAtReproduceCallNumber = 2
         };
-        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var session = CreateSession(runtimeClient);
 
         try
         {
@@ -483,7 +484,7 @@ public sealed class BasicsExecutionSessionTests
     public async Task ExecutionSession_MapsVariationBandIntoReproductionConfig()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
-        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var session = CreateSession(runtimeClient);
 
         try
         {
@@ -572,6 +573,53 @@ public sealed class BasicsExecutionSessionTests
         }
     }
 
+    [Fact]
+    public async Task ExecutionSession_PacesSpawnRequests_PerEligibleWorker()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient();
+        var session = CreateSession(runtimeClient, minimumSpawnRequestInterval: TimeSpan.FromMilliseconds(75));
+
+        try
+        {
+            var final = await session.RunAsync(
+                new BasicsEnvironmentPlan(
+                    SelectedTask: new AndTaskPlugin().Contract,
+                    SeedTemplate: BasicsSeedTemplateContract.CreateDefault(),
+                    Capacity: new BasicsCapacityRecommendation(
+                        Source: BasicsCapacitySource.RuntimePlacementInventory,
+                        EligibleWorkerCount: 1,
+                        RecommendedInitialPopulationCount: 4,
+                        RecommendedReproductionRunCount: 1,
+                        RecommendedMaxConcurrentBrains: 4,
+                        CapacityScore: 1f,
+                        EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                        Summary: "test"),
+                    OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
+                    Reproduction: BasicsReproductionPolicy.CreateDefault(),
+                    Scheduling: BasicsReproductionSchedulingPolicy.Default,
+                    Metrics: BasicsMetricsContract.Default,
+                    StopCriteria: new BasicsExecutionStopCriteria(),
+                    PlannedAtUtc: DateTimeOffset.UtcNow),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            var spawnStarts = runtimeClient.SpawnRequestStartedAtUtc.ToArray();
+            Assert.True(spawnStarts.Length >= 4);
+            var deltas = spawnStarts
+                .Zip(spawnStarts.Skip(1), (left, right) => right - left)
+                .Take(3)
+                .ToArray();
+            Assert.NotEmpty(deltas);
+            Assert.All(deltas, delta => Assert.True(delta >= TimeSpan.FromMilliseconds(60), $"Observed spawn delta {delta.TotalMilliseconds:0.###}ms was below the paced floor."));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
     private static BasicsEnvironmentPlan CreatePlan(
         BasicsOutputObservationMode outputObservationMode,
         BasicsExecutionStopCriteria? stopCriteria = null,
@@ -598,6 +646,15 @@ public sealed class BasicsExecutionSessionTests
             StopCriteria: stopCriteria ?? new BasicsExecutionStopCriteria(),
             PlannedAtUtc: DateTimeOffset.UtcNow);
     }
+
+    private static BasicsExecutionSession CreateSession(
+        FakeBasicsRuntimeClient runtimeClient,
+        BasicsTemplatePublishingOptions? publishingOptions = null,
+        TimeSpan? minimumSpawnRequestInterval = null)
+        => new(
+            runtimeClient,
+            publishingOptions ?? new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" },
+            minimumSpawnRequestInterval ?? TimeSpan.FromMilliseconds(1));
 
     private sealed class FakeBasicsRuntimeClient : IBasicsRuntimeClient
     {
@@ -637,6 +694,7 @@ public sealed class BasicsExecutionSessionTests
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
         public List<TimeSpan> VectorWaitTimeouts { get; } = new();
         public List<TimeSpan> EventWaitTimeouts { get; } = new();
+        public ConcurrentQueue<DateTimeOffset> SpawnRequestStartedAtUtc { get; } = new();
         private int _activeSpawnRequests;
         private int _maxObservedConcurrentSpawnRequests;
         private readonly Dictionary<Guid, float> _lastVectorOutputByBrain = new();
@@ -670,6 +728,7 @@ public sealed class BasicsExecutionSessionTests
             UpdateMaxObservedConcurrentSpawnRequests(active);
             try
             {
+                SpawnRequestStartedAtUtc.Enqueue(DateTimeOffset.UtcNow);
                 if (SpawnDelay > TimeSpan.Zero)
                 {
                     await Task.Delay(SpawnDelay, cancellationToken);
