@@ -53,12 +53,14 @@ public sealed class BasicsTaskExecutionProfilesTests
     {
         var profile = BasicsTaskExecutionProfiles.Resolve("multiplication");
 
-        Assert.Equal(BasicsOutputObservationMode.VectorPotential, profile.OutputObservationMode);
+        Assert.Equal(BasicsOutputObservationMode.VectorBuffer, profile.OutputObservationMode);
         Assert.Equal(3, profile.VariationBand.MaxInternalNeuronDelta);
         Assert.True(profile.VariationBand.AllowFunctionMutation);
-        Assert.Equal(4, profile.Sizing.InitialPopulationCount);
-        Assert.Equal(2, profile.Sizing.MaxConcurrentBrains);
+        Assert.Equal(2, profile.Sizing.InitialPopulationCount);
+        Assert.Equal((uint)2, profile.Sizing.ReproductionRunCount);
+        Assert.Equal(1, profile.Sizing.MaxConcurrentBrains);
         Assert.Equal(0.40d, profile.Scheduling.ParentSelection.ExplorationFraction);
+        Assert.Equal((uint)4, profile.Scheduling.RunAllocation.MaxRunsPerPair);
     }
 
     [Fact]

@@ -133,7 +133,35 @@ public static class BasicsTaskExecutionProfiles
 
     private static readonly BasicsTaskExecutionProfile XorProfile = RicherExplorationProfile;
 
-    private static readonly BasicsTaskExecutionProfile MultiplicationProfile = RicherExplorationProfile;
+    private static readonly BasicsTaskExecutionProfile MultiplicationProfile = RicherExplorationProfile with
+    {
+        OutputObservationMode = BasicsOutputObservationMode.VectorBuffer,
+        Sizing = new BasicsSizingOverrides
+        {
+            InitialPopulationCount = 2,
+            ReproductionRunCount = 2,
+            MaxConcurrentBrains = 1
+        },
+        Scheduling = new BasicsReproductionSchedulingPolicy
+        {
+            ParentSelection = new BasicsParentSelectionPolicy
+            {
+                FitnessWeight = 0.50d,
+                DiversityWeight = 0.45d,
+                SpeciesBalanceWeight = 0.15d,
+                EliteFraction = 0.08d,
+                ExplorationFraction = 0.40d,
+                MaxParentsPerSpecies = 8
+            },
+            RunAllocation = new BasicsRunAllocationPolicy
+            {
+                MinRunsPerPair = 2,
+                MaxRunsPerPair = 4,
+                FitnessExponent = 1.10d,
+                DiversityBoost = 0.55d
+            }
+        }
+    };
 
     public static BasicsTaskExecutionProfile Resolve(string? taskId)
         => taskId?.Trim().ToLowerInvariant() switch
