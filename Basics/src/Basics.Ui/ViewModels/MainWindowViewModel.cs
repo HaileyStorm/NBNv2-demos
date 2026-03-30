@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using Avalonia;
 using Nbn.Demos.Basics.Environment;
 using Nbn.Demos.Basics.Tasks;
 using Nbn.Demos.Basics.Ui.Services;
@@ -600,9 +601,9 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public bool ShowFitnessEmptyState => !HasFitnessChartData;
 
-    public string AccuracyChartPoints => BuildChartPoints(_accuracyHistory);
+    public IReadOnlyList<Point> AccuracyChartPoints => BuildChartPoints(_accuracyHistory);
 
-    public string FitnessChartPoints => BuildChartPoints(_fitnessHistory);
+    public IReadOnlyList<Point> FitnessChartPoints => BuildChartPoints(_fitnessHistory);
 
     private async Task ConnectAsync()
     {
@@ -1216,6 +1217,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         ReplaceHistory(_fitnessHistory, snapshot.BestFitnessHistory);
         UpdateChartBindings();
 
+        var displayedBestAccuracy = ResolveDisplayedMetric(snapshot.BestAccuracy, snapshot.AccuracyHistory);
+        var displayedBestFitness = ResolveDisplayedMetric(snapshot.BestFitness, snapshot.BestFitnessHistory);
+
         if (snapshot.EffectiveTemplateDefinition is not null)
         {
             _suppressValidationRefresh = true;
@@ -1236,13 +1240,13 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         UpdateMetricSummary(
             BasicsMetricId.Accuracy,
-            snapshot.BestAccuracy.ToString("0.###", CultureInfo.InvariantCulture),
+            displayedBestAccuracy.ToString("0.###", CultureInfo.InvariantCulture),
             snapshot.BestCandidate is null
                 ? "No successful evaluation yet."
                 : $"Best candidate species {snapshot.BestCandidate.SpeciesId}.");
         UpdateMetricSummary(
             BasicsMetricId.BestFitness,
-            snapshot.BestFitness.ToString("0.###", CultureInfo.InvariantCulture),
+            displayedBestFitness.ToString("0.###", CultureInfo.InvariantCulture),
             snapshot.BestCandidate is null
                 ? "No successful evaluation yet."
                 : $"Artifact {snapshot.BestCandidate.ArtifactSha256[..Math.Min(12, snapshot.BestCandidate.ArtifactSha256.Length)]}...");
@@ -1556,6 +1560,11 @@ public sealed class MainWindowViewModel : ViewModelBase
     private static string FormatOptionalUInt(uint? value)
         => value.HasValue ? value.Value.ToString(CultureInfo.InvariantCulture) : string.Empty;
 
+    private static float ResolveDisplayedMetric(float currentValue, IReadOnlyList<float> history)
+        => currentValue > 0f || history.Count == 0
+            ? currentValue
+            : history[^1];
+
     private void ResetCharts()
     {
         _accuracyHistory.Clear();
@@ -1579,11 +1588,11 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(FitnessChartPoints));
     }
 
-    private static string BuildChartPoints(IReadOnlyList<float> history)
+    private static IReadOnlyList<Point> BuildChartPoints(IReadOnlyList<float> history)
     {
         if (history.Count == 0)
         {
-            return string.Empty;
+            return Array.Empty<Point>();
         }
 
         const float width = 320f;
@@ -1591,17 +1600,16 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (history.Count == 1)
         {
             var y = height - (Math.Clamp(history[0], 0f, 1f) * height);
-            return $"0,{y.ToString("0.###", CultureInfo.InvariantCulture)}";
+            return new[] { new Point(0d, y) };
         }
 
         var stepX = width / (history.Count - 1f);
-        var points = history.Select((value, index) =>
+        return history.Select((value, index) =>
         {
             var x = index * stepX;
             var y = height - (Math.Clamp(value, 0f, 1f) * height);
-            return $"{x.ToString("0.###", CultureInfo.InvariantCulture)},{y.ToString("0.###", CultureInfo.InvariantCulture)}";
-        });
-        return string.Join(' ', points);
+            return new Point(x, y);
+        }).ToArray();
     }
 
     private void UpdateMetricSummary(BasicsMetricId metricId, string value, string detail)

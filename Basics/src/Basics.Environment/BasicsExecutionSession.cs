@@ -1583,7 +1583,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         if (!ShouldUseBaselineSnapshot(population, baselineSnapshot))
         {
-            return CreateSnapshot(
+            var currentSnapshot = CreateSnapshot(
                 stopCriteria,
                 state,
                 statusText,
@@ -1599,6 +1599,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 accuracyHistory,
                 fitnessHistory,
                 includeWinnerRuntimeState: state == BasicsExecutionState.Succeeded && activeBrainCount > 0);
+            return currentSnapshot;
         }
 
         var baseline = baselineSnapshot!;
