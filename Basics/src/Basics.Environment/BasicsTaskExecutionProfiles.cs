@@ -43,9 +43,48 @@ public static class BasicsTaskExecutionProfiles
             }
         });
 
-    private static readonly BasicsTaskExecutionProfile XorProfile = DefaultProfile with
+    private static readonly BasicsTaskExecutionProfile ConservativeBooleanProfile = new(
+        OutputObservationMode: BasicsOutputObservationMode.EventedOutput,
+        VariationBand: new BasicsSeedVariationBand
+        {
+            MaxInternalNeuronDelta = 1,
+            MaxAxonDelta = 1,
+            MaxStrengthCodeDelta = 1,
+            MaxParameterCodeDelta = 1,
+            AllowFunctionMutation = false,
+            AllowAxonReroute = false,
+            AllowRegionSetChange = false
+        },
+        SeedShape: new BasicsSeedShapeConstraints(),
+        Sizing: new BasicsSizingOverrides
+        {
+            InitialPopulationCount = 1,
+            ReproductionRunCount = 1,
+            MaxConcurrentBrains = 1
+        },
+        Scheduling: new BasicsReproductionSchedulingPolicy
+        {
+            ParentSelection = new BasicsParentSelectionPolicy
+            {
+                FitnessWeight = 0.55d,
+                DiversityWeight = 0.35d,
+                SpeciesBalanceWeight = 0.15d,
+                EliteFraction = 0.10d,
+                ExplorationFraction = 0.25d,
+                MaxParentsPerSpecies = 8
+            },
+            RunAllocation = new BasicsRunAllocationPolicy
+            {
+                MinRunsPerPair = 2,
+                MaxRunsPerPair = 12,
+                FitnessExponent = 1.20d,
+                DiversityBoost = 0.35d
+            }
+        });
+
+    private static readonly BasicsTaskExecutionProfile RicherExplorationProfile = DefaultProfile with
     {
-        OutputObservationMode = BasicsOutputObservationMode.EventedOutput,
+        OutputObservationMode = BasicsOutputObservationMode.VectorPotential,
         VariationBand = new BasicsSeedVariationBand
         {
             MaxInternalNeuronDelta = 3,
@@ -67,9 +106,9 @@ public static class BasicsTaskExecutionProfiles
         },
         Sizing = new BasicsSizingOverrides
         {
-            InitialPopulationCount = 2,
+            InitialPopulationCount = 4,
             ReproductionRunCount = 4,
-            MaxConcurrentBrains = 1
+            MaxConcurrentBrains = 2
         },
         Scheduling = new BasicsReproductionSchedulingPolicy
         {
@@ -92,8 +131,18 @@ public static class BasicsTaskExecutionProfiles
         }
     };
 
+    private static readonly BasicsTaskExecutionProfile XorProfile = RicherExplorationProfile;
+
+    private static readonly BasicsTaskExecutionProfile MultiplicationProfile = RicherExplorationProfile;
+
     public static BasicsTaskExecutionProfile Resolve(string? taskId)
-        => string.Equals(taskId, "xor", StringComparison.OrdinalIgnoreCase)
-            ? XorProfile
-            : DefaultProfile;
+        => taskId?.Trim().ToLowerInvariant() switch
+        {
+            "and" => ConservativeBooleanProfile,
+            "or" => ConservativeBooleanProfile,
+            "gt" => ConservativeBooleanProfile,
+            "xor" => XorProfile,
+            "multiplication" => MultiplicationProfile,
+            _ => DefaultProfile
+        };
 }
