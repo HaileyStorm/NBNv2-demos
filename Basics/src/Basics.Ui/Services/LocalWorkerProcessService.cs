@@ -56,6 +56,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
     private readonly string _workerLogRoot;
     private int _nextWorkerOrdinal = 1;
     private bool _workerRuntimeBuilt;
+    private bool _disposed;
 
     public LocalWorkerProcessService()
     {
@@ -82,6 +83,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ThrowIfDisposed();
 
         await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -147,6 +149,14 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
 
     public async Task<BasicsLocalWorkerStopResult> StopLaunchedWorkersAsync(CancellationToken cancellationToken = default)
     {
+        if (_disposed)
+        {
+            return new BasicsLocalWorkerStopResult(
+                StoppedCount: 0,
+                StatusText: "No launched workers to stop.",
+                DetailText: "Basics UI worker process service is already disposed.");
+        }
+
         await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -177,13 +187,27 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         try
         {
             await StopLaunchedWorkersAsync().ConfigureAwait(false);
         }
         finally
         {
+            _disposed = true;
             _lifecycleGate.Dispose();
+        }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(LocalWorkerProcessService));
         }
     }
 
