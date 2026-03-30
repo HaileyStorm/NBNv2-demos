@@ -128,7 +128,6 @@ public sealed class MainWindowViewModel : ViewModelBase
         SelectedOutputObservationMode = OutputObservationModes.First(static option => option.Mode == BasicsOutputObservationMode.VectorPotential);
 
         Tasks = new ObservableCollection<TaskOption>(BuildTasks());
-        SelectedTask = Tasks.FirstOrDefault();
 
         StrengthSources = new ObservableCollection<StrengthSourceOption>(BuildStrengthSources());
         SelectedStrengthSource = StrengthSources.First(static option => option.Value == Repro.StrengthSource.StrengthBaseOnly);
@@ -144,6 +143,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         ExportDefinitionCommand = new AsyncRelayCommand(ExportWinningDefinitionAsync, CanExportWinnerDefinition);
         ExportSnapshotCommand = new AsyncRelayCommand(ExportWinningSnapshotAsync, CanExportWinnerSnapshot);
         ApplySuggestedBoundsCommand = new RelayCommand(ApplySuggestedBounds, () => _lastPlan is not null);
+
+        SelectedTask = Tasks.FirstOrDefault();
 
         PropertyChanged += (_, args) =>
         {
