@@ -306,28 +306,47 @@
                                    TextWrapping="Wrap"
                                    Foreground="#425466" />
                         <Grid ColumnDefinitions="Auto,110,Auto,110"
-                              RowDefinitions="Auto,Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
-                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Initial population" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding InitialPopulationOverrideText}" Watermark="auto" />
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Initial population" VerticalAlignment="Center"
+                                       ToolTip.Tip="Number of brains to seed into each generation. Basics keeps this at 2 or more so reproduction can continue." />
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding InitialPopulationOverrideText}" Watermark="auto"
+                                     ToolTip.Tip="Override the generation population size. Leave blank to use the task/capacity default." />
                             <TextBlock Grid.Row="0" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
                             <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding RecommendedInitialPopulationText}" VerticalAlignment="Center" />
 
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Run count" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ReproductionRunCountOverrideText}" Watermark="auto" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Base run count" VerticalAlignment="Center"
+                                       ToolTip.Tip="Baseline reproduction run budget per selected parent pair before the Min/Max runs-per-pair scheduler reshapes it." />
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ReproductionRunCountOverrideText}" Watermark="auto"
+                                     ToolTip.Tip="Capacity-side baseline for how many child attempts to request from a selected parent pair." />
                             <TextBlock Grid.Row="1" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
                             <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding RecommendedRunCountText}" VerticalAlignment="Center" />
 
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Max concurrent" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxConcurrentBrainsOverrideText}" Watermark="auto" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Max concurrent" VerticalAlignment="Center"
+                                       ToolTip.Tip="How many brains Basics is allowed to spawn and evaluate at once within a generation." />
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxConcurrentBrainsOverrideText}" Watermark="auto"
+                                     ToolTip.Tip="Hard cap on simultaneously active evaluation brains." />
                             <TextBlock Grid.Row="2" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
                             <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding RecommendedMaxConcurrentBrainsText}" VerticalAlignment="Center" />
 
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Stop accuracy" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding TargetAccuracyText}" />
-                            <TextBlock Grid.Row="3" Grid.Column="2" Text="Stop fitness" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding TargetFitnessText}" />
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Stop accuracy" VerticalAlignment="Center"
+                                       ToolTip.Tip="Stop once a generation reaches at least this accuracy." />
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding TargetAccuracyText}"
+                                     ToolTip.Tip="Accuracy threshold for declaring the run solved." />
+                            <TextBlock Grid.Row="3" Grid.Column="2" Text="Stop fitness" VerticalAlignment="Center"
+                                       ToolTip.Tip="Stop once a generation reaches at least this fitness." />
+                            <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding TargetFitnessText}"
+                                     ToolTip.Tip="Fitness threshold for declaring the run solved." />
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Max generations" VerticalAlignment="Center"
+                                       ToolTip.Tip="Optional hard cap on how many generations to evaluate. Leave blank for no generation limit." />
+                            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding MaximumGenerationsText}" Watermark="unlimited"
+                                     ToolTip.Tip="Stop after this many evaluated generations even if the accuracy/fitness target has not been reached." />
+                            <TextBlock Grid.Row="4" Grid.Column="2" Grid.ColumnSpan="2"
+                                       Text="blank = unlimited"
+                                       VerticalAlignment="Center"
+                                       Foreground="#6C7A89" />
                         </Grid>
 
                         <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*"
@@ -357,11 +376,11 @@
                         <Grid ColumnDefinitions="Auto,Auto,*"
                               ColumnSpacing="12">
                             <Button Grid.Column="0"
-                                    Content="Export .nbn"
+                                    Content="Export best .nbn"
                                     Command="{Binding ExportDefinitionCommand}"
                                     MinWidth="120" />
                             <Button Grid.Column="1"
-                                    Content="Export .nbs"
+                                    Content="Export best .nbs"
                                     Command="{Binding ExportSnapshotCommand}"
                                     MinWidth="120" />
                             <TextBlock Grid.Column="2"
@@ -407,7 +426,8 @@
                             </ComboBox>
                             <TextBlock Grid.Row="0" Grid.Column="2" Text="Protect IO neurons" VerticalAlignment="Center" />
                             <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding ProtectIoRegionNeuronCountsDisplay}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Row="0" Grid.Column="4" Text="Max parents/species" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="0" Grid.Column="4" Text="Max parents/species" VerticalAlignment="Center"
+                                       ToolTip.Tip="Caps how many parent candidates any one species can contribute before exploration picks from the remainder." />
                             <TextBox Grid.Row="0" Grid.Column="5" Text="{Binding MaxParentsPerSpeciesText}" />
 
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Fitness weight" VerticalAlignment="Center" />
@@ -417,9 +437,11 @@
                             <TextBlock Grid.Row="1" Grid.Column="4" Text="Species-balance" VerticalAlignment="Center" />
                             <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding SpeciesBalanceWeightText}" />
 
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Elite fraction" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Elite fraction" VerticalAlignment="Center"
+                                       ToolTip.Tip="Fraction of the ranked population that is automatically carried into the next generation before breeding fills the rest." />
                             <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding EliteFractionText}" />
-                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Exploration" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Exploration" VerticalAlignment="Center"
+                                       ToolTip.Tip="Fraction of parent slots reserved for lower-ranked exploratory picks instead of purely score-ranked picks." />
                             <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding ExplorationFractionText}" />
                             <TextBlock Grid.Row="2" Grid.Column="4" Text="Fitness exponent" VerticalAlignment="Center" />
                             <TextBox Grid.Row="2" Grid.Column="5" Text="{Binding FitnessExponentText}" />
@@ -427,9 +449,11 @@
 
                         <Grid ColumnDefinitions="Auto,120,Auto,120,Auto,120"
                               ColumnSpacing="12">
-                            <TextBlock Grid.Column="0" Text="Min runs/pair" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="0" Text="Min runs/pair" VerticalAlignment="Center"
+                                       ToolTip.Tip="Lower bound for how many reproduction attempts a selected parent pair receives after scheduler weighting." />
                             <TextBox Grid.Column="1" Text="{Binding MinRunsPerPairText}" />
-                            <TextBlock Grid.Column="2" Text="Max runs/pair" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Text="Max runs/pair" VerticalAlignment="Center"
+                                       ToolTip.Tip="Upper bound for how many reproduction attempts a selected parent pair receives after scheduler weighting and the base run count cap." />
                             <TextBox Grid.Column="3" Text="{Binding MaxRunsPerPairText}" />
                             <TextBlock Grid.Column="4" Text="Diversity boost" VerticalAlignment="Center" />
                             <TextBox Grid.Column="5" Text="{Binding DiversityBoostText}" />
@@ -544,7 +568,8 @@
                                                 BorderBrush="#E5DECF"
                                                 BorderThickness="1"
                                                 CornerRadius="10"
-                                                Padding="10">
+                                                Padding="10"
+                                                ToolTip.Tip="{Binding DetailText}">
                                             <StackPanel Spacing="4">
                                                 <TextBlock Text="{Binding DisplayName}"
                                                            FontWeight="SemiBold"

@@ -152,7 +152,7 @@ public sealed class BasicsExecutionSessionTests
                 Capacity = new BasicsCapacityRecommendation(
                     Source: BasicsCapacitySource.RuntimePlacementInventory,
                     EligibleWorkerCount: 1,
-                    RecommendedInitialPopulationCount: 1,
+                    RecommendedInitialPopulationCount: 2,
                     RecommendedReproductionRunCount: 1,
                     RecommendedMaxConcurrentBrains: 1,
                     CapacityScore: 1f,
@@ -172,7 +172,7 @@ public sealed class BasicsExecutionSessionTests
             Assert.NotNull(final.BestCandidate);
             Assert.Equal(1f, final.BestCandidate.ScoreBreakdown["task_accuracy"]);
             Assert.Equal(1f, final.BestCandidate.ScoreBreakdown["truth_table_coverage"]);
-            Assert.Equal(0, runtimeClient.ReproduceCallCount);
+            Assert.Equal(1, runtimeClient.ReproduceCallCount);
         }
         finally
         {
@@ -198,7 +198,7 @@ public sealed class BasicsExecutionSessionTests
                 Capacity = new BasicsCapacityRecommendation(
                     Source: BasicsCapacitySource.RuntimePlacementInventory,
                     EligibleWorkerCount: 1,
-                    RecommendedInitialPopulationCount: 1,
+                    RecommendedInitialPopulationCount: 2,
                     RecommendedReproductionRunCount: 1,
                     RecommendedMaxConcurrentBrains: 1,
                     CapacityScore: 1f,
@@ -345,6 +345,109 @@ public sealed class BasicsExecutionSessionTests
             Assert.Contains(
                 snapshots,
                 snapshot => snapshot.State == BasicsExecutionState.Running && snapshot.StatusText.Contains("Generation 1 evaluated.", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_StopsAtConfiguredGenerationLimit_AndRetainsBestSoFarCandidate()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient();
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1
+                    }),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.Equal(1, final.Generation);
+            Assert.True(final.BestAccuracy > 0f);
+            Assert.True(final.BestFitness > 0f);
+            Assert.NotNull(final.BestCandidate);
+            Assert.True(final.BestCandidate.HasRetainedBrain);
+            Assert.True(final.BestCandidate.HasSnapshotArtifact);
+            Assert.Equal(1, runtimeClient.LiveBrainCount);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_RetainsBestSoFarCandidate_WhenLaterFailureOccurs()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            ThrowOnReproduceCallNumber = 2
+        };
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Equal(1, final.Generation);
+            Assert.True(final.BestAccuracy > 0f);
+            Assert.True(final.BestFitness > 0f);
+            Assert.NotNull(final.BestCandidate);
+            Assert.True(final.BestCandidate.HasRetainedBrain);
+            Assert.True(final.BestCandidate.HasSnapshotArtifact);
+            Assert.Equal(1, runtimeClient.LiveBrainCount);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_KeepsAtLeastTwoBrains_WhenReproductionProducesNoChildren()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            ReturnNoChildrenStartingAtReproduceCallNumber = 2
+        };
+        var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 2
+                    }),
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.Equal(2, final.Generation);
+            Assert.True(final.PopulationCount >= 2);
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.StatusText.Contains("Generation 2 evaluated.", StringComparison.Ordinal)
+                            && snapshot.PopulationCount >= 2);
         }
         finally
         {
@@ -524,6 +627,8 @@ public sealed class BasicsExecutionSessionTests
         public int SnapshotRequestCount { get; private set; }
         public int LiveBrainCount => _brainDefinitions.Count;
         public int? ThrowOnReproduceCallNumber { get; init; }
+        public int? ReturnNoChildrenOnReproduceCallNumber { get; init; }
+        public int? ReturnNoChildrenStartingAtReproduceCallNumber { get; init; }
         public TimeSpan SpawnDelay { get; init; }
         public string DefaultBehavior { get; init; } = "zero";
         public bool OnlyEmitOutputVectorOnChange { get; init; }
@@ -788,9 +893,19 @@ public sealed class BasicsExecutionSessionTests
                 RequestedRunCount = request.RunCount == 0 ? 1u : request.RunCount
             };
 
+            if (ReturnNoChildrenOnReproduceCallNumber.HasValue && ReproduceCallCount == ReturnNoChildrenOnReproduceCallNumber.Value)
+            {
+                return Task.FromResult<Repro.ReproduceResult?>(result);
+            }
+
+            if (ReturnNoChildrenStartingAtReproduceCallNumber.HasValue && ReproduceCallCount >= ReturnNoChildrenStartingAtReproduceCallNumber.Value)
+            {
+                return Task.FromResult<Repro.ReproduceResult?>(result);
+            }
+
             for (var runIndex = 0; runIndex < result.RequestedRunCount; runIndex++)
             {
-                var behavior = ReproduceCallCount >= 2 ? "and" : "zero";
+                var behavior = ReproduceCallCount >= 2 ? "and" : DefaultBehavior;
                 var child = CreateArtifactRef(_childIndex++, behavior);
                 result.Runs.Add(new Repro.ReproduceRunOutcome
                 {

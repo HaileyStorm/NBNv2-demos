@@ -17,6 +17,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
     private const int MaxObservationAttempts = 3;
+    private const int MinimumPopulationSize = 2;
 
     private readonly IBasicsRuntimeClient _runtimeClient;
     private readonly BasicsTemplatePublishingOptions _publishingOptions;
@@ -55,6 +56,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var fitnessHistory = new List<float>();
         ulong reproductionCalls = 0;
         ulong reproductionRunsObserved = 0;
+        float bestAccuracySoFar = 0f;
+        float bestFitnessSoFar = 0f;
+        BasicsExecutionBestCandidateSummary? bestCandidateSoFar = null;
+        List<PopulationMember> population = new();
         BasicsExecutionSnapshot? lastObservedSnapshot = null;
         var publishSnapshot = new Action<BasicsExecutionSnapshot>(snapshot =>
         {
@@ -84,7 +89,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             seedShape,
             bestCandidate: null,
             accuracyHistory,
-            fitnessHistory);
+            fitnessHistory,
+            overallBestAccuracy: bestAccuracySoFar,
+            overallBestFitness: bestFitnessSoFar,
+            overallBestCandidate: bestCandidateSoFar);
 
         try
         {
@@ -114,11 +122,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 seedShape,
                 bestCandidate: null,
                 accuracyHistory,
-                fitnessHistory);
+                fitnessHistory,
+                overallBestAccuracy: bestAccuracySoFar,
+                overallBestFitness: bestFitnessSoFar,
+                overallBestCandidate: bestCandidateSoFar);
             speciationEpochId = await EnsureFreshSpeciationEpochAsync(cancellationToken).ConfigureAwait(false);
 
-            var targetPopulation = Math.Max(1, plan.Capacity.RecommendedInitialPopulationCount);
-            var population = await SeedInitialPopulationAsync(
+            var targetPopulation = Math.Max(MinimumPopulationSize, plan.Capacity.RecommendedInitialPopulationCount);
+            population = await SeedInitialPopulationAsync(
                     plan,
                     template.TemplateDefinition,
                     template.Complexity,
@@ -144,7 +155,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     seedShape,
                     accuracyHistory,
                     fitnessHistory,
-                    lastObservedSnapshot);
+                    lastObservedSnapshot,
+                    bestAccuracySoFar,
+                    bestFitnessSoFar,
+                    bestCandidateSoFar);
             }
 
             var generation = 0;
@@ -164,6 +178,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         reproductionRunsObserved,
                         accuracyHistory,
                         fitnessHistory,
+                        bestAccuracySoFar,
+                        bestFitnessSoFar,
+                        bestCandidateSoFar,
                         publishSnapshot,
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -171,7 +188,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 var generationMetrics = BuildGenerationMetrics(population, plan.StopCriteria, includeWinnerRuntimeState: true);
                 if (IsGenerationFullyFailed(population))
                 {
-                    population = await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
+                    (population, bestCandidateSoFar) = await TryRetainBestCandidateForExportAsync(
+                            taskPlugin.Contract,
+                            population,
+                            currentGenerationBest: generationMetrics.BestCandidate,
+                            bestCandidateSoFar,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
 
                     return CreateFinalSnapshot(
                         plan.StopCriteria,
@@ -184,16 +207,20 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         speciationEpochId,
                         generation,
                         population,
-                        0,
+                        population.Count(member => member.ActiveBrainId != Guid.Empty),
                         reproductionCalls,
                         reproductionRunsObserved,
                         effectiveTemplateDefinition,
                         seedShape,
                         accuracyHistory,
                         fitnessHistory,
-                        lastObservedSnapshot);
+                        lastObservedSnapshot,
+                        bestAccuracySoFar,
+                        bestFitnessSoFar,
+                        bestCandidateSoFar);
                 }
 
+                UpdateBestSoFar(generationMetrics, ref bestAccuracySoFar, ref bestFitnessSoFar, ref bestCandidateSoFar);
                 accuracyHistory.Add(generationMetrics.BestAccuracy);
                 fitnessHistory.Add(generationMetrics.BestFitness);
 
@@ -211,7 +238,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     effectiveTemplateDefinition,
                     seedShape,
                     accuracyHistory,
-                    fitnessHistory);
+                    fitnessHistory,
+                    overallBestAccuracy: bestAccuracySoFar,
+                    overallBestFitness: bestFitnessSoFar,
+                    overallBestCandidate: bestCandidateSoFar);
                 publishSnapshot(generationSummary);
 
                 if (plan.StopCriteria.IsSatisfied(generationMetrics.BestAccuracy, generationMetrics.BestFitness))
@@ -221,6 +251,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             generationMetrics.BestCandidate,
                             CancellationToken.None)
                         .ConfigureAwait(false);
+                    bestCandidateSoFar = BuildGenerationMetrics(population, plan.StopCriteria, includeWinnerRuntimeState: true).BestCandidate;
 
                     var retainedWinnerCount = population.Count(member => member.ActiveBrainId != Guid.Empty);
                     return CreateFinalSnapshot(
@@ -239,7 +270,43 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         seedShape,
                         accuracyHistory,
                         fitnessHistory,
-                        lastObservedSnapshot);
+                        lastObservedSnapshot,
+                        bestAccuracySoFar,
+                        bestFitnessSoFar,
+                        bestCandidateSoFar);
+                }
+
+                if (plan.StopCriteria.IsGenerationLimitReached(generation))
+                {
+                    (population, bestCandidateSoFar) = await TryRetainBestCandidateForExportAsync(
+                            taskPlugin.Contract,
+                            population,
+                            currentGenerationBest: generationMetrics.BestCandidate,
+                            bestCandidateSoFar,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                    var retainedBestCount = population.Count(member => member.ActiveBrainId != Guid.Empty);
+                    return CreateFinalSnapshot(
+                        plan.StopCriteria,
+                        publishSnapshot,
+                        BasicsExecutionState.Stopped,
+                        "Execution reached the configured generation limit.",
+                        BuildGenerationLimitDetail(generation, plan.StopCriteria, bestCandidateSoFar),
+                        speciationEpochId,
+                        generation,
+                        population,
+                        retainedBestCount,
+                        reproductionCalls,
+                        reproductionRunsObserved,
+                        effectiveTemplateDefinition,
+                        seedShape,
+                        accuracyHistory,
+                        fitnessHistory,
+                        lastObservedSnapshot,
+                        bestAccuracySoFar,
+                        bestFitnessSoFar,
+                        bestCandidateSoFar);
                 }
 
                 population = await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
@@ -265,7 +332,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                                 effectiveTemplateDefinition,
                                 seedShape,
                                 accuracyHistory,
-                                fitnessHistory));
+                                fitnessHistory,
+                                overallBestAccuracy: bestAccuracySoFar,
+                                overallBestFitness: bestFitnessSoFar,
+                                overallBestCandidate: bestCandidateSoFar));
                         },
                         onReproductionObserved: runs =>
                         {
@@ -292,13 +362,22 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         seedShape,
                         accuracyHistory,
                         fitnessHistory,
-                        lastObservedSnapshot);
+                        lastObservedSnapshot,
+                        bestAccuracySoFar,
+                        bestFitnessSoFar,
+                        bestCandidateSoFar);
                 }
 
                 population = nextGeneration;
             }
 
-            population = await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
+            (population, bestCandidateSoFar) = await TryRetainBestCandidateForExportAsync(
+                    taskPlugin.Contract,
+                    population,
+                    currentGenerationBest: null,
+                    bestCandidateSoFar,
+                    CancellationToken.None)
+                .ConfigureAwait(false);
             return CreateFinalSnapshot(
                 plan.StopCriteria,
                 publishSnapshot,
@@ -308,17 +387,27 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 speciationEpochId,
                 accuracyHistory.Count,
                 population,
-                0,
+                population.Count(member => member.ActiveBrainId != Guid.Empty),
                 reproductionCalls,
                 reproductionRunsObserved,
                 effectiveTemplateDefinition,
                 seedShape,
                 accuracyHistory,
                 fitnessHistory,
-                lastObservedSnapshot);
+                lastObservedSnapshot,
+                bestAccuracySoFar,
+                bestFitnessSoFar,
+                bestCandidateSoFar);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            (population, bestCandidateSoFar) = await TryRetainBestCandidateForExportAsync(
+                    taskPlugin.Contract,
+                    population,
+                    currentGenerationBest: null,
+                    bestCandidateSoFar,
+                    CancellationToken.None)
+                .ConfigureAwait(false);
             return CreateFinalSnapshot(
                 plan.StopCriteria,
                 publishSnapshot,
@@ -327,18 +416,28 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 "The run was canceled by the operator.",
                 speciationEpochId,
                 accuracyHistory.Count,
-                Array.Empty<PopulationMember>(),
-                0,
+                population,
+                population.Count(member => member.ActiveBrainId != Guid.Empty),
                 reproductionCalls,
                 reproductionRunsObserved,
                 effectiveTemplateDefinition,
                 seedShape,
                 accuracyHistory,
                 fitnessHistory,
-                lastObservedSnapshot);
+                lastObservedSnapshot,
+                bestAccuracySoFar,
+                bestFitnessSoFar,
+                bestCandidateSoFar);
         }
         catch (Exception ex)
         {
+            (population, bestCandidateSoFar) = await TryRetainBestCandidateForExportAsync(
+                    taskPlugin.Contract,
+                    population,
+                    currentGenerationBest: null,
+                    bestCandidateSoFar,
+                    CancellationToken.None)
+                .ConfigureAwait(false);
             return CreateFinalSnapshot(
                 plan.StopCriteria,
                 publishSnapshot,
@@ -347,15 +446,18 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ex.GetBaseException().Message,
                 speciationEpochId,
                 accuracyHistory.Count,
-                Array.Empty<PopulationMember>(),
-                0,
+                population,
+                population.Count(member => member.ActiveBrainId != Guid.Empty),
                 reproductionCalls,
                 reproductionRunsObserved,
                 effectiveTemplateDefinition,
                 seedShape,
                 accuracyHistory,
                 fitnessHistory,
-                lastObservedSnapshot);
+                lastObservedSnapshot,
+                bestAccuracySoFar,
+                bestFitnessSoFar,
+                bestCandidateSoFar);
         }
         finally
         {
@@ -577,6 +679,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         ulong reproductionRunsObserved,
         IReadOnlyList<float> accuracyHistory,
         IReadOnlyList<float> fitnessHistory,
+        float overallBestAccuracy,
+        float overallBestFitness,
+        BasicsExecutionBestCandidateSummary? overallBestCandidate,
         Action<BasicsExecutionSnapshot>? onSnapshot,
         CancellationToken cancellationToken)
     {
@@ -605,7 +710,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 effectiveTemplateDefinition,
                 seedShape,
                 accuracyHistory,
-                fitnessHistory));
+                fitnessHistory,
+                overallBestAccuracy: overallBestAccuracy,
+                overallBestFitness: overallBestFitness,
+                overallBestCandidate: overallBestCandidate));
 
             var batchEvaluations = await Task.WhenAll(
                     batch.Select(member => EvaluateMemberAsync(taskPlugin, member, outputObservationMode, setupGate, cancellationToken)))
@@ -1000,6 +1108,82 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return updated;
     }
 
+    private async Task<(List<PopulationMember> Population, BasicsExecutionBestCandidateSummary? BestCandidate)> TryRetainBestCandidateForExportAsync(
+        BasicsTaskContract taskContract,
+        IReadOnlyList<PopulationMember> population,
+        BasicsExecutionBestCandidateSummary? currentGenerationBest,
+        BasicsExecutionBestCandidateSummary? bestCandidateSoFar,
+        CancellationToken cancellationToken)
+    {
+        if (!IsViableBestCandidate(bestCandidateSoFar))
+        {
+            var cleaned = await TeardownPopulationBrainsAsync(population, cancellationToken).ConfigureAwait(false);
+            return (cleaned, null);
+        }
+
+        if (currentGenerationBest is not null
+            && HasSameDefinitionArtifact(currentGenerationBest.DefinitionArtifact, bestCandidateSoFar!.DefinitionArtifact))
+        {
+            var retainedPopulation = await RetainWinningCandidateAsync(population, currentGenerationBest, cancellationToken).ConfigureAwait(false);
+            var retainedBestCandidate = BuildGenerationMetrics(retainedPopulation, stopCriteria: null, includeWinnerRuntimeState: true).BestCandidate;
+            return (retainedPopulation, retainedBestCandidate);
+        }
+
+        await TeardownPopulationBrainsAsync(population, cancellationToken).ConfigureAwait(false);
+
+        var respawned = await RespawnBestCandidateForExportAsync(taskContract, bestCandidateSoFar!, cancellationToken).ConfigureAwait(false);
+        if (respawned is null)
+        {
+            return (new List<PopulationMember>(), CloneBestCandidate(bestCandidateSoFar));
+        }
+
+        return (new List<PopulationMember> { respawned.Value.Member }, respawned.Value.Summary);
+    }
+
+    private async Task<(PopulationMember Member, BasicsExecutionBestCandidateSummary Summary)?> RespawnBestCandidateForExportAsync(
+        BasicsTaskContract taskContract,
+        BasicsExecutionBestCandidateSummary bestCandidate,
+        CancellationToken cancellationToken)
+    {
+        var spawnAck = await _runtimeClient.SpawnBrainAsync(
+                new SpawnBrain
+                {
+                    BrainDef = bestCandidate.DefinitionArtifact.Clone(),
+                    InputWidth = taskContract.InputWidth,
+                    OutputWidth = taskContract.OutputWidth
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (spawnAck?.Ack is null || !spawnAck.Ack.BrainId.TryToGuid(out var brainId) || brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        _trackedBrains.TryAdd(brainId, 0);
+        var snapshotArtifact = await TryRequestSnapshotArtifactAsync(brainId, cancellationToken).ConfigureAwait(false);
+        _trackedBrains.TryRemove(brainId, out _);
+
+        var retainedMember = new PopulationMember(
+            bestCandidate.DefinitionArtifact.Clone(),
+            bestCandidate.SpeciesId,
+            bestCandidate.SpeciesId,
+            bestCandidate.Complexity,
+            RehydrateEvaluation(bestCandidate),
+            ActiveBrainId: brainId,
+            SnapshotArtifact: snapshotArtifact?.Clone());
+        var retainedSummary = new BasicsExecutionBestCandidateSummary(
+            bestCandidate.DefinitionArtifact.Clone(),
+            snapshotArtifact?.Clone(),
+            brainId,
+            bestCandidate.SpeciesId,
+            bestCandidate.Accuracy,
+            bestCandidate.Fitness,
+            bestCandidate.Complexity,
+            new Dictionary<string, float>(bestCandidate.ScoreBreakdown, StringComparer.Ordinal),
+            bestCandidate.Diagnostics.ToArray());
+        return (retainedMember, retainedSummary);
+    }
+
     private async Task<List<PopulationMember>> TeardownPopulationBrainsAsync(
         IReadOnlyList<PopulationMember> population,
         CancellationToken cancellationToken)
@@ -1089,7 +1273,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var parentPool = BuildParentPool(plan.Scheduling.ParentSelection, population);
         if (parentPool.Count == 0)
         {
-            return nextGeneration;
+            return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation);
         }
 
         var bestFitness = Math.Max(0.0001f, ranked.Max(member => member.LastEvaluation?.Fitness ?? 0f));
@@ -1161,7 +1345,38 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             }
         }
 
-        return nextGeneration.Count == 0 ? ranked.Take(1).Select(static member => member with { LastEvaluation = null }).ToList() : nextGeneration;
+        return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation);
+    }
+
+    private static List<PopulationMember> EnsureMinimumCarryForwardPopulation(
+        List<PopulationMember> nextGeneration,
+        IReadOnlyList<PopulationMember> ranked,
+        int targetPopulation)
+    {
+        var minimumPopulation = targetPopulation >= MinimumPopulationSize
+            ? Math.Min(MinimumPopulationSize, Math.Min(targetPopulation, ranked.Count))
+            : Math.Min(1, Math.Min(targetPopulation, ranked.Count));
+        if (nextGeneration.Count >= minimumPopulation)
+        {
+            return nextGeneration;
+        }
+
+        foreach (var member in ranked)
+        {
+            if (nextGeneration.Count >= minimumPopulation)
+            {
+                break;
+            }
+
+            nextGeneration.Add(member with
+            {
+                LastEvaluation = null,
+                ActiveBrainId = Guid.Empty,
+                SnapshotArtifact = null
+            });
+        }
+
+        return nextGeneration;
     }
 
     private List<PopulationMember> BuildParentPool(
@@ -1542,7 +1757,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsResolvedSeedShape? seedShape,
         IReadOnlyList<float> accuracyHistory,
         IReadOnlyList<float> fitnessHistory,
-        BasicsExecutionSnapshot? baselineSnapshot)
+        BasicsExecutionSnapshot? baselineSnapshot,
+        float overallBestAccuracy,
+        float overallBestFitness,
+        BasicsExecutionBestCandidateSummary? overallBestCandidate)
     {
         var snapshot = CreateTerminalSnapshot(
             stopCriteria,
@@ -1559,7 +1777,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             seedShape,
             accuracyHistory,
             fitnessHistory,
-            baselineSnapshot);
+            baselineSnapshot,
+            overallBestAccuracy,
+            overallBestFitness,
+            overallBestCandidate);
         onSnapshot(snapshot);
         return snapshot;
     }
@@ -1579,7 +1800,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsResolvedSeedShape? seedShape,
         IReadOnlyList<float> accuracyHistory,
         IReadOnlyList<float> fitnessHistory,
-        BasicsExecutionSnapshot? baselineSnapshot)
+        BasicsExecutionSnapshot? baselineSnapshot,
+        float overallBestAccuracy,
+        float overallBestFitness,
+        BasicsExecutionBestCandidateSummary? overallBestCandidate)
     {
         if (!ShouldUseBaselineSnapshot(population, baselineSnapshot))
         {
@@ -1598,11 +1822,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 seedShape,
                 accuracyHistory,
                 fitnessHistory,
-                includeWinnerRuntimeState: state == BasicsExecutionState.Succeeded && activeBrainCount > 0);
+                includeWinnerRuntimeState: activeBrainCount > 0,
+                overallBestAccuracy: overallBestAccuracy,
+                overallBestFitness: overallBestFitness,
+                overallBestCandidate: overallBestCandidate);
             return currentSnapshot;
         }
 
         var baseline = baselineSnapshot!;
+        var resolvedBestAccuracy = Math.Max(Math.Max(overallBestAccuracy, baseline.BestAccuracy), accuracyHistory.DefaultIfEmpty(0f).Max());
+        var resolvedBestFitness = Math.Max(Math.Max(overallBestFitness, baseline.BestFitness), fitnessHistory.DefaultIfEmpty(0f).Max());
+        var resolvedBestCandidate = SelectBestCandidateSummary(overallBestCandidate, baseline.BestCandidate);
         return new BasicsExecutionSnapshot(
             State: state,
             StatusText: statusText,
@@ -1617,12 +1847,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             ReproductionCalls: reproductionCalls,
             ReproductionRunsObserved: reproductionRunsObserved,
             CapacityUtilization: 0f,
-            BestAccuracy: baseline.BestAccuracy,
-            BestFitness: baseline.BestFitness,
+            BestAccuracy: resolvedBestAccuracy,
+            BestFitness: resolvedBestFitness,
             MeanFitness: baseline.MeanFitness,
             EffectiveTemplateDefinition: effectiveTemplateDefinition?.Clone() ?? baseline.EffectiveTemplateDefinition?.Clone(),
             SeedShape: seedShape ?? baseline.SeedShape,
-            BestCandidate: CloneBestCandidate(baseline.BestCandidate),
+            BestCandidate: CloneBestCandidate(resolvedBestCandidate),
             AccuracyHistory: MergeHistory(accuracyHistory, baseline.AccuracyHistory),
             BestFitnessHistory: MergeHistory(fitnessHistory, baseline.BestFitnessHistory));
     }
@@ -1649,7 +1879,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsResolvedSeedShape? seedShape,
         BasicsExecutionBestCandidateSummary? bestCandidate,
         IReadOnlyList<float> accuracyHistory,
-        IReadOnlyList<float> fitnessHistory)
+        IReadOnlyList<float> fitnessHistory,
+        float overallBestAccuracy,
+        float overallBestFitness,
+        BasicsExecutionBestCandidateSummary? overallBestCandidate)
     {
         onSnapshot(new BasicsExecutionSnapshot(
             state,
@@ -1665,12 +1898,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             reproductionCalls,
             reproductionRunsObserved,
             capacityUtilization,
-            bestAccuracy,
-            bestFitness,
+            Math.Max(bestAccuracy, overallBestAccuracy),
+            Math.Max(bestFitness, overallBestFitness),
             meanFitness,
             effectiveTemplateDefinition,
             seedShape,
-            bestCandidate,
+            CloneBestCandidate(SelectBestCandidateSummary(bestCandidate, overallBestCandidate)),
             accuracyHistory.ToArray(),
             fitnessHistory.ToArray()));
     }
@@ -1700,6 +1933,129 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<float> baseline)
         => current.Count > 0 ? current.ToArray() : baseline.ToArray();
 
+    private static void UpdateBestSoFar(
+        GenerationMetrics generationMetrics,
+        ref float bestAccuracySoFar,
+        ref float bestFitnessSoFar,
+        ref BasicsExecutionBestCandidateSummary? bestCandidateSoFar)
+    {
+        bestAccuracySoFar = Math.Max(bestAccuracySoFar, generationMetrics.BestAccuracy);
+        bestFitnessSoFar = Math.Max(bestFitnessSoFar, generationMetrics.BestFitness);
+        if (generationMetrics.BestCandidate is null)
+        {
+            return;
+        }
+
+        if (!IsViableBestCandidate(generationMetrics.BestCandidate))
+        {
+            return;
+        }
+
+        bestCandidateSoFar = SelectBestCandidateSummary(bestCandidateSoFar, generationMetrics.BestCandidate);
+    }
+
+    private static BasicsExecutionBestCandidateSummary? SelectBestCandidateSummary(
+        BasicsExecutionBestCandidateSummary? left,
+        BasicsExecutionBestCandidateSummary? right)
+    {
+        if (left is null)
+        {
+            return CloneBestCandidate(right);
+        }
+
+        if (right is null)
+        {
+            return CloneBestCandidate(left);
+        }
+
+        return CompareCandidateSummary(right, left) > 0
+            ? CloneBestCandidate(right)
+            : CloneBestCandidate(left);
+    }
+
+    private static int CompareCandidateSummary(
+        BasicsExecutionBestCandidateSummary candidate,
+        BasicsExecutionBestCandidateSummary baseline)
+    {
+        var viabilityComparison = IsViableBestCandidate(candidate).CompareTo(IsViableBestCandidate(baseline));
+        if (viabilityComparison != 0)
+        {
+            return viabilityComparison;
+        }
+
+        var fitnessComparison = candidate.Fitness.CompareTo(baseline.Fitness);
+        if (fitnessComparison != 0)
+        {
+            return fitnessComparison;
+        }
+
+        var accuracyComparison = candidate.Accuracy.CompareTo(baseline.Accuracy);
+        if (accuracyComparison != 0)
+        {
+            return accuracyComparison;
+        }
+
+        var internalNeuronComparison = CompareAscendingPreference(
+            candidate.Complexity?.InternalNeuronCount,
+            baseline.Complexity?.InternalNeuronCount);
+        if (internalNeuronComparison != 0)
+        {
+            return internalNeuronComparison;
+        }
+
+        var axonComparison = CompareAscendingPreference(
+            candidate.Complexity?.AxonCount,
+            baseline.Complexity?.AxonCount);
+        if (axonComparison != 0)
+        {
+            return axonComparison;
+        }
+
+        var regionComparison = CompareAscendingPreference(
+            candidate.Complexity?.ActiveInternalRegionCount,
+            baseline.Complexity?.ActiveInternalRegionCount);
+        if (regionComparison != 0)
+        {
+            return regionComparison;
+        }
+
+        var snapshotComparison = candidate.HasSnapshotArtifact.CompareTo(baseline.HasSnapshotArtifact);
+        if (snapshotComparison != 0)
+        {
+            return snapshotComparison;
+        }
+
+        var retainedBrainComparison = candidate.HasRetainedBrain.CompareTo(baseline.HasRetainedBrain);
+        if (retainedBrainComparison != 0)
+        {
+            return retainedBrainComparison;
+        }
+
+        return ComputeTieBreakRank(baseline.ArtifactSha256).CompareTo(ComputeTieBreakRank(candidate.ArtifactSha256));
+    }
+
+    private static int CompareAscendingPreference(int? candidate, int? baseline)
+    {
+        var candidateValue = candidate ?? int.MaxValue;
+        var baselineValue = baseline ?? int.MaxValue;
+        return baselineValue.CompareTo(candidateValue);
+    }
+
+    private static bool IsViableBestCandidate(BasicsExecutionBestCandidateSummary? candidate)
+        => candidate is not null && candidate.Diagnostics.Count == 0;
+
+    private static bool HasSameDefinitionArtifact(ArtifactRef left, ArtifactRef right)
+        => string.Equals(left.ToSha256Hex(), right.ToSha256Hex(), StringComparison.OrdinalIgnoreCase);
+
+    private static BasicsTaskEvaluationResult RehydrateEvaluation(BasicsExecutionBestCandidateSummary bestCandidate)
+        => new(
+            Fitness: bestCandidate.Fitness,
+            Accuracy: bestCandidate.Accuracy,
+            SamplesEvaluated: 0,
+            SamplesCorrect: 0,
+            ScoreBreakdown: new Dictionary<string, float>(bestCandidate.ScoreBreakdown, StringComparer.Ordinal),
+            Diagnostics: bestCandidate.Diagnostics.ToArray());
+
     private BasicsExecutionSnapshot CreateSnapshot(
         BasicsExecutionStopCriteria stopCriteria,
         BasicsExecutionState state,
@@ -1715,9 +2071,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsResolvedSeedShape? seedShape,
         IReadOnlyList<float> accuracyHistory,
         IReadOnlyList<float> fitnessHistory,
-        bool includeWinnerRuntimeState = false)
+        bool includeWinnerRuntimeState = false,
+        float overallBestAccuracy = 0f,
+        float overallBestFitness = 0f,
+        BasicsExecutionBestCandidateSummary? overallBestCandidate = null)
     {
         var metrics = BuildGenerationMetrics(population, stopCriteria, includeWinnerRuntimeState);
+        var resolvedBestAccuracy = Math.Max(metrics.BestAccuracy, Math.Max(overallBestAccuracy, accuracyHistory.DefaultIfEmpty(0f).Max()));
+        var resolvedBestFitness = Math.Max(metrics.BestFitness, Math.Max(overallBestFitness, fitnessHistory.DefaultIfEmpty(0f).Max()));
+        var resolvedBestCandidate = SelectBestCandidateSummary(metrics.BestCandidate, overallBestCandidate);
         return new BasicsExecutionSnapshot(
             state,
             statusText,
@@ -1732,12 +2094,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             reproductionCalls,
             reproductionRunsObserved,
             activeBrainCount <= 0 ? metrics.CapacityUtilization : Math.Clamp(activeBrainCount / (float)Math.Max(1, population.Count), 0f, 1f),
-            metrics.BestAccuracy,
-            metrics.BestFitness,
+            resolvedBestAccuracy,
+            resolvedBestFitness,
             (float)metrics.MeanFitness,
             effectiveTemplateDefinition?.Clone(),
             seedShape,
-            metrics.BestCandidate,
+            CloneBestCandidate(resolvedBestCandidate),
             accuracyHistory.ToArray(),
             fitnessHistory.ToArray());
     }
@@ -1880,6 +2242,35 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         else if (winningCandidate?.HasRetainedBrain == true)
         {
             summary += " Definition export is available.";
+        }
+
+        return summary;
+    }
+
+    private static string BuildGenerationLimitDetail(
+        int generation,
+        BasicsExecutionStopCriteria stopCriteria,
+        BasicsExecutionBestCandidateSummary? bestCandidate)
+    {
+        var summary = stopCriteria.MaximumGenerations.HasValue
+            ? $"Generation {generation} reached the configured maximum of {stopCriteria.MaximumGenerations.Value} generation(s)."
+            : $"Generation {generation} reached the configured generation limit.";
+        if (bestCandidate is not null)
+        {
+            summary += $" Best-so-far accuracy={bestCandidate.Accuracy:0.###}, fitness={bestCandidate.Fitness:0.###}.";
+            if (bestCandidate.Complexity is not null)
+            {
+                summary += $" Simplicity snapshot: internal_neurons={bestCandidate.Complexity.InternalNeuronCount}, axons={bestCandidate.Complexity.AxonCount}, internal_regions={bestCandidate.Complexity.ActiveInternalRegionCount}.";
+            }
+
+            if (bestCandidate.HasSnapshotArtifact)
+            {
+                summary += " Snapshot export is available.";
+            }
+            else if (bestCandidate.HasRetainedBrain)
+            {
+                summary += " Definition export is available.";
+            }
         }
 
         return summary;

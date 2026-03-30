@@ -19,6 +19,7 @@ public sealed record BasicsExecutionStopCriteria
 {
     public float TargetAccuracy { get; init; } = 1f;
     public float TargetFitness { get; init; } = 0.999f;
+    public int? MaximumGenerations { get; init; }
 
     public BasicsContractValidationResult Validate()
     {
@@ -33,11 +34,19 @@ public sealed record BasicsExecutionStopCriteria
             errors.Add("TargetFitness must be a finite value between 0 and 1.");
         }
 
+        if (MaximumGenerations is <= 0)
+        {
+            errors.Add("MaximumGenerations must be > 0 when set.");
+        }
+
         return BasicsContractValidationResult.FromErrors(errors);
     }
 
     public bool IsSatisfied(float accuracy, float fitness)
         => accuracy >= TargetAccuracy && fitness >= TargetFitness;
+
+    public bool IsGenerationLimitReached(int generation)
+        => MaximumGenerations.HasValue && generation >= MaximumGenerations.Value;
 }
 
 public sealed record BasicsTemplatePublishingOptions

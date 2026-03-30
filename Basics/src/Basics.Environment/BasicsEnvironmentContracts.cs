@@ -230,9 +230,9 @@ public sealed record BasicsSizingOverrides
     public BasicsContractValidationResult Validate()
     {
         var errors = new List<string>();
-        if (InitialPopulationCount is <= 0)
+        if (InitialPopulationCount is < 2)
         {
-            errors.Add("InitialPopulationCount override must be > 0 when set.");
+            errors.Add("InitialPopulationCount override must be >= 2 when set.");
         }
 
         if (ReproductionRunCount is 0)
@@ -275,7 +275,8 @@ public enum BasicsMetricId
     SpeciesCount = 5,
     ReproductionCalls = 6,
     ReproductionRunsObserved = 7,
-    CapacityUtilization = 8
+    CapacityUtilization = 8,
+    BestAccuracy = 9
 }
 
 public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> RequiredMetrics)
@@ -284,6 +285,7 @@ public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> Require
         new[]
         {
             BasicsMetricId.Accuracy,
+            BasicsMetricId.BestAccuracy,
             BasicsMetricId.BestFitness,
             BasicsMetricId.MeanFitness,
             BasicsMetricId.PopulationCount,

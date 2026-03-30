@@ -94,6 +94,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _recommendedMaxConcurrentBrainsText = "—";
     private string _targetAccuracyText = "1.0";
     private string _targetFitnessText = "0.999";
+    private string _maximumGenerationsText = string.Empty;
     private string _fitnessWeightText = "0.55";
     private string _diversityWeightText = "0.35";
     private string _speciesBalanceWeightText = "0.15";
@@ -109,8 +110,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _executionDetail = "Connect to IO, build capacity bounds, then start an implemented task plugin.";
     private string _metricsStatus = "Connect to IO, fetch capacity, and start an implemented task to populate live metrics.";
     private string _metricsSecondaryStatus = "Population and resource summaries update when capacity is fetched or a run is active.";
-    private string _winnerExportStatus = "No winning brain retained.";
-    private string _winnerExportDetail = "When a run meets the stop target, the simplest qualifying winner stays active for export.";
+    private string _winnerExportStatus = "No best-so-far brain retained.";
+    private string _winnerExportDetail = "The strongest evaluated candidate is retained for export when a run finishes or reaches a stop target.";
     private ArtifactRef? _winnerDefinitionArtifact;
     private ArtifactRef? _winnerSnapshotArtifact;
     private Guid _retainedWinnerBrainId;
@@ -471,6 +472,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         set => SetProperty(ref _targetFitnessText, value);
     }
 
+    public string MaximumGenerationsText
+    {
+        get => _maximumGenerationsText;
+        set => SetProperty(ref _maximumGenerationsText, value);
+    }
+
     public StrengthSourceOption? SelectedStrengthSource
     {
         get => _selectedStrengthSource;
@@ -811,7 +818,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                     ResetCharts();
                     IsExecutionRunning = true;
                     ExecutionStatus = "Starting...";
-                    ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}.";
+                    ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
                     RaiseCommandStates();
                 });
 
@@ -865,18 +872,18 @@ public sealed class MainWindowViewModel : ViewModelBase
         MetricsStatus = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
             ? $"{plan.SelectedTask.DisplayName} plugin is available; Start will seed an artifact pool, evaluate live brains, and update metrics here."
             : $"{plan.SelectedTask.DisplayName} plugin is not implemented yet.";
-        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, run count {plan.Capacity.RecommendedReproductionRunCount}, output mode {FormatOutputObservationMode(plan.OutputObservationMode)}, stop target {plan.StopCriteria.TargetAccuracy:0.###}/{plan.StopCriteria.TargetFitness:0.###}.";
+        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, base run count {plan.Capacity.RecommendedReproductionRunCount}, output mode {FormatOutputObservationMode(plan.OutputObservationMode)}, stop target {plan.StopCriteria.TargetAccuracy:0.###}/{plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
         if (!IsExecutionRunning)
         {
             ExecutionStatus = "Ready to start.";
             ExecutionDetail = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
-                ? $"Template {plan.SeedTemplate.TemplateId} will be published automatically if no artifact ref is supplied. Output mode: {FormatOutputObservationMode(plan.OutputObservationMode)}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}."
+                ? $"Template {plan.SeedTemplate.TemplateId} will be published automatically if no artifact ref is supplied. Output mode: {FormatOutputObservationMode(plan.OutputObservationMode)}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}."
                 : $"{plan.SelectedTask.DisplayName} cannot start until its plugin issue is implemented.";
         }
 
         UpdateMetricSummary(BasicsMetricId.PopulationCount, plan.Capacity.RecommendedInitialPopulationCount.ToString(CultureInfo.InvariantCulture), "Recommended initial population bound.");
         UpdateMetricSummary(BasicsMetricId.ActiveBrainCount, plan.Capacity.RecommendedMaxConcurrentBrains.ToString(CultureInfo.InvariantCulture), "Recommended max concurrent brains.");
-        UpdateMetricSummary(BasicsMetricId.ReproductionRunsObserved, plan.Capacity.RecommendedReproductionRunCount.ToString(CultureInfo.InvariantCulture), "Recommended runs per parent pair.");
+        UpdateMetricSummary(BasicsMetricId.ReproductionRunsObserved, plan.Capacity.RecommendedReproductionRunCount.ToString(CultureInfo.InvariantCulture), "Suggested base reproduction run count before per-pair min/max shaping.");
         UpdateMetricSummary(BasicsMetricId.SpeciesCount, plan.SeedTemplate.ExpectSingleBootstrapSpecies ? "1 seed family" : "multiple", "Bootstrap template-family expectation.");
         UpdateMetricSummary(BasicsMetricId.CapacityUtilization, plan.Capacity.CapacityScore.ToString("0.###", CultureInfo.InvariantCulture), plan.Capacity.Source.ToString());
         RaiseCommandStates();
@@ -1081,7 +1088,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         var stopCriteria = new BasicsExecutionStopCriteria
         {
             TargetAccuracy = ParseRequiredFloat(TargetAccuracyText, "Stop accuracy target", errors),
-            TargetFitness = ParseRequiredFloat(TargetFitnessText, "Stop fitness target", errors)
+            TargetFitness = ParseRequiredFloat(TargetFitnessText, "Stop fitness target", errors),
+            MaximumGenerations = ParseOptionalInt(MaximumGenerationsText, "Maximum generations", errors)
         };
 
         options = new BasicsEnvironmentOptions
@@ -1173,7 +1181,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             _dispatcher.Post(() =>
             {
                 ExecutionStatus = "Stopping...";
-                ExecutionDetail = "Releasing the retained winning brain.";
+                ExecutionDetail = "Releasing the retained best-so-far brain.";
                 RaiseCommandStates();
             });
 
@@ -1217,8 +1225,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         ReplaceHistory(_fitnessHistory, snapshot.BestFitnessHistory);
         UpdateChartBindings();
 
-        var displayedBestAccuracy = ResolveDisplayedMetric(snapshot.BestAccuracy, snapshot.AccuracyHistory);
-        var displayedBestFitness = ResolveDisplayedMetric(snapshot.BestFitness, snapshot.BestFitnessHistory);
+        var displayedAccuracy = ResolveLatestMetric(snapshot.AccuracyHistory, snapshot.BestAccuracy);
+        var displayedBestAccuracy = ResolvePeakMetric(snapshot.AccuracyHistory, snapshot.BestAccuracy);
+        var displayedBestFitness = ResolvePeakMetric(snapshot.BestFitnessHistory, snapshot.BestFitness);
 
         if (snapshot.EffectiveTemplateDefinition is not null)
         {
@@ -1240,10 +1249,16 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         UpdateMetricSummary(
             BasicsMetricId.Accuracy,
+            displayedAccuracy.ToString("0.###", CultureInfo.InvariantCulture),
+            snapshot.BestCandidate is null
+                ? "No evaluated generation yet."
+                : $"Most recent evaluated-generation accuracy; best-so-far species {snapshot.BestCandidate.SpeciesId}.");
+        UpdateMetricSummary(
+            BasicsMetricId.BestAccuracy,
             displayedBestAccuracy.ToString("0.###", CultureInfo.InvariantCulture),
             snapshot.BestCandidate is null
                 ? "No successful evaluation yet."
-                : $"Best candidate species {snapshot.BestCandidate.SpeciesId}.");
+                : $"Best-so-far artifact {snapshot.BestCandidate.ArtifactSha256[..Math.Min(12, snapshot.BestCandidate.ArtifactSha256.Length)]}...");
         UpdateMetricSummary(
             BasicsMetricId.BestFitness,
             displayedBestFitness.ToString("0.###", CultureInfo.InvariantCulture),
@@ -1283,13 +1298,20 @@ public sealed class MainWindowViewModel : ViewModelBase
                 ? "Current evaluation batch utilization."
                 : "Idle between evaluation batches.");
 
-        if (snapshot.State == BasicsExecutionState.Succeeded && snapshot.BestCandidate is not null)
+        if (snapshot.State == BasicsExecutionState.Succeeded && CanUseBestCandidateForExport(snapshot.BestCandidate))
         {
-            ApplyWinnerArtifacts(snapshot.BestCandidate);
+            ApplyWinnerArtifacts(snapshot.BestCandidate!);
         }
         else if (snapshot.State is BasicsExecutionState.Failed or BasicsExecutionState.Stopped)
         {
-            ClearWinnerState(clearArtifacts: false);
+            if (CanUseBestCandidateForExport(snapshot.BestCandidate))
+            {
+                ApplyWinnerArtifacts(snapshot.BestCandidate!);
+            }
+            else
+            {
+                ClearWinnerState(clearArtifacts: false);
+            }
         }
     }
 
@@ -1297,8 +1319,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         if (!HasArtifactRef(_winnerDefinitionArtifact))
         {
-            WinnerExportStatus = "No winning definition available.";
-            WinnerExportDetail = "Run a session to a stop target before exporting.";
+            WinnerExportStatus = "No best-so-far definition available.";
+            WinnerExportDetail = "Run at least one evaluated generation before exporting.";
             return;
         }
 
@@ -1306,14 +1328,14 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             var path = await _artifactExportService.ExportAsync(
                     _winnerDefinitionArtifact!,
-                    title: "Export winning definition",
-                    suggestedFileName: BuildSuggestedArtifactFileName("winner", "nbn"))
+                    title: "Export best definition",
+                    suggestedFileName: BuildSuggestedArtifactFileName("best", "nbn"))
                 .ConfigureAwait(false);
             _dispatcher.Post(() =>
             {
-                WinnerExportStatus = path is null ? "Definition export canceled." : "Winning definition exported.";
+                WinnerExportStatus = path is null ? "Definition export canceled." : "Best-so-far definition exported.";
                 WinnerExportDetail = path is null
-                    ? "The winning .nbn artifact is still available for export."
+                    ? "The best-so-far .nbn artifact is still available for export."
                     : path;
                 RaiseCommandStates();
             });
@@ -1333,8 +1355,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         if (!HasArtifactRef(_winnerSnapshotArtifact))
         {
-            WinnerExportStatus = "No winning snapshot available.";
-            WinnerExportDetail = "Snapshot export is only available when runtime state was captured for the retained winner.";
+            WinnerExportStatus = "No best-so-far snapshot available.";
+            WinnerExportDetail = "Snapshot export is only available when runtime state was captured for the retained best-so-far brain.";
             return;
         }
 
@@ -1342,14 +1364,14 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             var path = await _artifactExportService.ExportAsync(
                     _winnerSnapshotArtifact!,
-                    title: "Export winning snapshot",
-                    suggestedFileName: BuildSuggestedArtifactFileName("winner-state", "nbs"))
+                    title: "Export best snapshot",
+                    suggestedFileName: BuildSuggestedArtifactFileName("best-state", "nbs"))
                 .ConfigureAwait(false);
             _dispatcher.Post(() =>
             {
-                WinnerExportStatus = path is null ? "Snapshot export canceled." : "Winning snapshot exported.";
+                WinnerExportStatus = path is null ? "Snapshot export canceled." : "Best-so-far snapshot exported.";
                 WinnerExportDetail = path is null
-                    ? "The winning .nbs artifact is still available for export."
+                    ? "The best-so-far .nbs artifact is still available for export."
                     : path;
                 RaiseCommandStates();
             });
@@ -1416,14 +1438,14 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         if (!HasArtifactRef(_winnerDefinitionArtifact))
         {
-            WinnerExportStatus = "No winning brain retained.";
-            WinnerExportDetail = "When a run meets the stop target, the simplest qualifying winner stays active for export.";
+            WinnerExportStatus = "No best-so-far brain retained.";
+            WinnerExportDetail = "The strongest evaluated candidate is retained for export when a run finishes or reaches a stop target.";
             return;
         }
 
         WinnerExportStatus = _retainedWinnerBrainId != Guid.Empty
-            ? "Winning brain retained for export."
-            : "Winner artifacts retained.";
+            ? "Best-so-far brain retained for export."
+            : "Best-so-far artifacts retained.";
 
         var detailParts = new List<string>
         {
@@ -1435,12 +1457,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
         else
         {
-            detailParts.Add("No snapshot artifact was produced for this winner.");
+            detailParts.Add("No snapshot artifact was produced for this retained candidate.");
         }
 
         if (_retainedWinnerBrainId != Guid.Empty)
         {
-            detailParts.Add($"Live winner {_retainedWinnerBrainId:N} stays active until Stop, Disconnect, or the next run.");
+            detailParts.Add($"Live best brain {_retainedWinnerBrainId:N} stays active until Stop, Disconnect, or the next run.");
         }
 
         WinnerExportDetail = string.Join(' ', detailParts);
@@ -1560,10 +1582,21 @@ public sealed class MainWindowViewModel : ViewModelBase
     private static string FormatOptionalUInt(uint? value)
         => value.HasValue ? value.Value.ToString(CultureInfo.InvariantCulture) : string.Empty;
 
-    private static float ResolveDisplayedMetric(float currentValue, IReadOnlyList<float> history)
-        => currentValue > 0f || history.Count == 0
-            ? currentValue
-            : history[^1];
+    private static float ResolveLatestMetric(IReadOnlyList<float> history, float fallbackValue)
+        => history.Count == 0 ? fallbackValue : history[^1];
+
+    private static float ResolvePeakMetric(IReadOnlyList<float> history, float fallbackValue)
+        => history.Count == 0 ? fallbackValue : Math.Max(fallbackValue, history.Max());
+
+    private static bool CanUseBestCandidateForExport(BasicsExecutionBestCandidateSummary? bestCandidate)
+        => bestCandidate is not null
+           && bestCandidate.Diagnostics.Count == 0
+           && HasArtifactRef(bestCandidate.DefinitionArtifact);
+
+    private static string FormatGenerationLimit(int? maximumGenerations)
+        => maximumGenerations.HasValue
+            ? maximumGenerations.Value.ToString(CultureInfo.InvariantCulture)
+            : "unlimited";
 
     private void ResetCharts()
     {
@@ -1678,14 +1711,15 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static IEnumerable<MetricSummaryItemViewModel> BuildMetricSummaryItems()
     {
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.Accuracy, "Accuracy", "—", "No runtime samples yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.Accuracy, "Latest accuracy", "—", "No runtime samples yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Best accuracy", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestFitness, "Best fitness", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.MeanFitness, "Mean fitness", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.PopulationCount, "Population", "—", "Plan-derived once capacity is fetched.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.ActiveBrainCount, "Active brains", "—", "Plan-derived once capacity is fetched.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.SpeciesCount, "Species", "1 seed family", "Template-anchored bootstrap assumption.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.ReproductionCalls, "Reproduction calls", "—", "No runtime samples yet.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.ReproductionRunsObserved, "Runs per pair", "—", "Plan-derived once capacity is fetched.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.ReproductionRunsObserved, "Runs observed", "—", "Plan-derived once capacity is fetched.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.CapacityUtilization, "Capacity score", "—", "Filled from IO capacity planning.");
     }
 
