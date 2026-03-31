@@ -1577,6 +1577,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var tickCursor = lastTick;
         for (var attempt = 1; attempt <= MaxObservationAttempts; attempt++)
         {
+            var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
+                    brainId,
+                    resetBuffer: true,
+                    resetAccumulator: true,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            ValidateIoCommandAck(resetAck, brainId, "reset_brain_runtime_state");
+
             await _runtimeClient.SendInputVectorAsync(
                     brainId,
                     new[] { sample.InputA, sample.InputB },
@@ -3086,7 +3094,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionStopCriteria stopCriteria,
         BasicsExecutionBestCandidateSummary? winningCandidate)
     {
-        var summary = $"Generation {generation} met the {taskDisplayName} stop target (accuracy >= {stopCriteria.TargetAccuracy:0.###}, fitness >= {stopCriteria.TargetFitness:0.###}).";
+        var summary = stopCriteria.RequireBothTargets
+            ? $"Generation {generation} met the {taskDisplayName} stop target (accuracy >= {stopCriteria.TargetAccuracy:0.###} and fitness >= {stopCriteria.TargetFitness:0.###})."
+            : $"Generation {generation} met the {taskDisplayName} stop target (accuracy >= {stopCriteria.TargetAccuracy:0.###} or fitness >= {stopCriteria.TargetFitness:0.###}).";
         if (winningCandidate?.Complexity is not null)
         {
             summary += $" Retained winner simplicity: internal_neurons={winningCandidate.Complexity.InternalNeuronCount}, axons={winningCandidate.Complexity.AxonCount}, internal_regions={winningCandidate.Complexity.ActiveInternalRegionCount}.";

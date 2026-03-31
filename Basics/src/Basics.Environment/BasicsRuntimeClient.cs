@@ -103,6 +103,12 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
         bool enabled,
         CancellationToken cancellationToken = default);
 
+    Task<IoCommandAck?> ResetBrainRuntimeStateAsync(
+        Guid brainId,
+        bool resetBuffer,
+        bool resetAccumulator,
+        CancellationToken cancellationToken = default);
+
     Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByArtifactsAsync(
         ReproduceByArtifactsRequest request,
         CancellationToken cancellationToken = default);
@@ -816,6 +822,38 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                         HomeostasisEnergyCouplingEnabled = false,
                         HomeostasisEnergyTargetScale = 1f,
                         HomeostasisEnergyProbabilityScale = 1f
+                    },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<IoCommandAck?> ResetBrainRuntimeStateAsync(
+        Guid brainId,
+        bool resetBuffer,
+        bool resetAccumulator,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _system.Root.RequestAsync<IoCommandAck>(
+                    _ioPid,
+                    new ResetBrainRuntimeState
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        ResetBuffer = resetBuffer,
+                        ResetAccumulator = resetAccumulator
                     },
                     _requestTimeout)
                 .WaitAsync(cancellationToken)

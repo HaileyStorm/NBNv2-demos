@@ -119,4 +119,22 @@ public sealed class BasicsContractTests
         Assert.Null(criteria.MaximumGenerations);
         Assert.False(criteria.IsGenerationLimitReached(64));
     }
+
+    [Fact]
+    public void ExecutionStopCriteria_CanRequireBothOrEitherThreshold()
+    {
+        var requireBoth = new BasicsExecutionStopCriteria
+        {
+            TargetAccuracy = 0.8f,
+            TargetFitness = 0.9f,
+            RequireBothTargets = true
+        };
+        var requireEither = requireBoth with { RequireBothTargets = false };
+
+        Assert.False(requireBoth.IsSatisfied(0.85f, 0.2f));
+        Assert.True(requireBoth.IsSatisfied(0.85f, 0.95f));
+        Assert.True(requireEither.IsSatisfied(0.85f, 0.2f));
+        Assert.True(requireEither.IsSatisfied(0.2f, 0.95f));
+        Assert.False(requireEither.IsSatisfied(0.2f, 0.3f));
+    }
 }

@@ -932,6 +932,42 @@ public sealed class BasicsExecutionSessionTests
         }
     }
 
+    [Fact]
+    public async Task ExecutionSession_ResetsBrainRuntimeState_BeforeEachSample()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient();
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1
+                    }),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.True(runtimeClient.ResetBrainRuntimeStateRequests.Count >= 4);
+            Assert.All(
+                runtimeClient.ResetBrainRuntimeStateRequests,
+                request =>
+                {
+                    Assert.NotEqual(Guid.Empty, request.BrainId);
+                    Assert.True(request.ResetBuffer);
+                    Assert.True(request.ResetAccumulator);
+                });
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
     private static BasicsEnvironmentPlan CreatePlan(
         BasicsOutputObservationMode outputObservationMode,
         BasicsExecutionStopCriteria? stopCriteria = null,
@@ -1015,6 +1051,7 @@ public sealed class BasicsExecutionSessionTests
         public List<(Guid BrainId, bool Enabled)> SetCostEnergyEnabledRequests { get; } = new();
         public List<(Guid BrainId, bool Enabled)> SetPlasticityEnabledRequests { get; } = new();
         public List<(Guid BrainId, bool Enabled)> SetHomeostasisEnabledRequests { get; } = new();
+        public List<(Guid BrainId, bool ResetBuffer, bool ResetAccumulator)> ResetBrainRuntimeStateRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
         public List<TimeSpan> VectorWaitTimeouts { get; } = new();
         public List<TimeSpan> EventWaitTimeouts { get; } = new();
@@ -1346,6 +1383,22 @@ public sealed class BasicsExecutionSessionTests
             {
                 BrainId = brainId.ToProtoUuid(),
                 Command = "set_homeostasis",
+                Success = true,
+                Message = "applied"
+            });
+        }
+
+        public Task<IoCommandAck?> ResetBrainRuntimeStateAsync(
+            Guid brainId,
+            bool resetBuffer,
+            bool resetAccumulator,
+            CancellationToken cancellationToken = default)
+        {
+            ResetBrainRuntimeStateRequests.Add((brainId, resetBuffer, resetAccumulator));
+            return Task.FromResult<IoCommandAck?>(new IoCommandAck
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Command = "reset_brain_runtime_state",
                 Success = true,
                 Message = "applied"
             });

@@ -113,6 +113,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _recommendedMaxConcurrentBrainsText = "—";
     private string _targetAccuracyText = "1.0";
     private string _targetFitnessText = "0.999";
+    private bool _requireBothStopTargets = true;
     private string _maximumGenerationsText = string.Empty;
     private string _fitnessWeightText = "0.55";
     private string _diversityWeightText = "0.35";
@@ -555,6 +556,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _targetFitnessText;
         set => SetProperty(ref _targetFitnessText, value);
+    }
+
+    public bool RequireBothStopTargets
+    {
+        get => _requireBothStopTargets;
+        set => SetProperty(ref _requireBothStopTargets, value);
     }
 
     public string MaximumGenerationsText
@@ -1116,6 +1123,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             DiversityBoostText = profile.Scheduling.RunAllocation.DiversityBoost.ToString("0.##", CultureInfo.InvariantCulture);
             TargetAccuracyText = profile.StopCriteria.TargetAccuracy.ToString("0.0##", CultureInfo.InvariantCulture);
             TargetFitnessText = profile.StopCriteria.TargetFitness.ToString("0.0##", CultureInfo.InvariantCulture);
+            RequireBothStopTargets = profile.StopCriteria.RequireBothTargets;
             MaximumGenerationsText = FormatOptionalInt(profile.StopCriteria.MaximumGenerations);
             SelectedDiversityPreset = DiversityPresets.FirstOrDefault(option => option.Value == profile.DiversityPreset)
                 ?? SelectedDiversityPreset;
@@ -1240,7 +1248,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                     ResetCharts();
                     IsExecutionRunning = true;
                     ExecutionStatus = "Starting...";
-                    ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}. Diversity {FormatDiversityPreset(plan.DiversityPreset)} with adaptive stall boost {(plan.AdaptiveDiversity.Enabled ? "on" : "off")}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
+                    ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}. Diversity {FormatDiversityPreset(plan.DiversityPreset)} with adaptive stall boost {(plan.AdaptiveDiversity.Enabled ? "on" : "off")}. Stop target: {FormatStopCriteria(plan.StopCriteria)}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
                     ExecutionLogPath = _executionRunLog is null
                         ? "Run log: unavailable."
                         : $"Run log: {_executionRunLog.Path}";
@@ -1389,7 +1397,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         MetricsStatus = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
             ? $"{plan.SelectedTask.DisplayName} plugin is available; Start will seed an artifact pool, evaluate live brains, and update metrics here."
             : $"{plan.SelectedTask.DisplayName} plugin is not implemented yet.";
-        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, base run count {plan.Capacity.RecommendedReproductionRunCount}, output mode {FormatOutputObservationMode(plan.OutputObservationMode)}, diversity {FormatDiversityPreset(plan.DiversityPreset)}, stop target {plan.StopCriteria.TargetAccuracy:0.###}/{plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
+        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, base run count {plan.Capacity.RecommendedReproductionRunCount}, output mode {FormatOutputObservationMode(plan.OutputObservationMode)}, diversity {FormatDiversityPreset(plan.DiversityPreset)}, stop target {FormatStopCriteria(plan.StopCriteria)}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
         if (!IsExecutionRunning)
         {
             ExecutionStatus = "Ready to start.";
@@ -1672,6 +1680,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             TargetAccuracy = ParseRequiredFloat(TargetAccuracyText, "Stop accuracy target", errors),
             TargetFitness = ParseRequiredFloat(TargetFitnessText, "Stop fitness target", errors),
+            RequireBothTargets = RequireBothStopTargets,
             MaximumGenerations = ParseOptionalInt(MaximumGenerationsText, "Maximum generations", errors)
         };
         var diversityPreset = SelectedDiversityPreset?.Value ?? BasicsDiversityPreset.Medium;
@@ -2549,6 +2558,11 @@ public sealed class MainWindowViewModel : ViewModelBase
             BasicsDiversityPreset.Extreme => "extreme",
             _ => "medium"
         };
+
+    private static string FormatStopCriteria(BasicsExecutionStopCriteria stopCriteria)
+        => stopCriteria.RequireBothTargets
+            ? $"both accuracy >= {stopCriteria.TargetAccuracy:0.###} and fitness >= {stopCriteria.TargetFitness:0.###}"
+            : $"either accuracy >= {stopCriteria.TargetAccuracy:0.###} or fitness >= {stopCriteria.TargetFitness:0.###}";
 
     private sealed class BasicsExecutionRunLog : IDisposable
     {

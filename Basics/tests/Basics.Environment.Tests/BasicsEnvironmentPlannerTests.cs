@@ -176,6 +176,13 @@ public sealed class BasicsEnvironmentPlannerTests
             CancellationToken cancellationToken = default)
             => Task.FromResult<IoCommandAck?>(null);
 
+        public Task<IoCommandAck?> ResetBrainRuntimeStateAsync(
+            Guid brainId,
+            bool resetBuffer,
+            bool resetAccumulator,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IoCommandAck?>(null);
+
         public Task<Repro.ReproduceResult?> ReproduceByArtifactsAsync(
             Repro.ReproduceByArtifactsRequest request,
             CancellationToken cancellationToken = default)

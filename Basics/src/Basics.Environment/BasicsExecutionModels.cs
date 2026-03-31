@@ -19,6 +19,7 @@ public sealed record BasicsExecutionStopCriteria
 {
     public float TargetAccuracy { get; init; } = 1f;
     public float TargetFitness { get; init; } = 0.999f;
+    public bool RequireBothTargets { get; init; } = true;
     public int? MaximumGenerations { get; init; }
 
     public BasicsContractValidationResult Validate()
@@ -43,7 +44,9 @@ public sealed record BasicsExecutionStopCriteria
     }
 
     public bool IsSatisfied(float accuracy, float fitness)
-        => accuracy >= TargetAccuracy && fitness >= TargetFitness;
+        => RequireBothTargets
+            ? accuracy >= TargetAccuracy && fitness >= TargetFitness
+            : accuracy >= TargetAccuracy || fitness >= TargetFitness;
 
     public bool IsGenerationLimitReached(int generation)
         => MaximumGenerations.HasValue && generation >= MaximumGenerations.Value;

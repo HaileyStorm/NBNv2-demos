@@ -418,7 +418,7 @@
                         <TextBlock Text="{Binding CapacitySummary}"
                                    TextWrapping="Wrap"
                                    Foreground="#425466" />
-                        <Grid ColumnDefinitions="Auto,110,Auto,110"
+                        <Grid ColumnDefinitions="Auto,110,Auto,110,*"
                               RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
@@ -458,6 +458,11 @@
                                        ToolTip.Tip="Stop once a generation reaches at least this fitness." />
                             <TextBox Grid.Row="4" Grid.Column="3" Text="{Binding TargetFitnessText}"
                                      ToolTip.Tip="Fitness threshold for declaring the run solved." />
+                            <CheckBox Grid.Row="4" Grid.Column="4"
+                                      Content="Require both"
+                                      IsChecked="{Binding RequireBothStopTargets}"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="When checked, Basics requires both stop thresholds to be met. When unchecked, either threshold can end the run." />
 
                             <TextBlock Grid.Row="5" Grid.Column="0" Text="Max generations" VerticalAlignment="Center"
                                        ToolTip.Tip="Optional hard cap on how many generations to evaluate. Leave blank for no generation limit." />
