@@ -40,12 +40,25 @@ public sealed class BasicsEnvironmentPlannerTests
             });
         var planner = new BasicsEnvironmentPlanner(runtimeClient);
 
-        var plan = await planner.BuildPlanAsync(new BasicsEnvironmentOptions());
+        var plan = await planner.BuildPlanAsync(new BasicsEnvironmentOptions
+        {
+            TaskSettings = new BasicsTaskSettings
+            {
+                Multiplication = new BasicsMultiplicationTaskSettings
+                {
+                    UniqueInputValueCount = 7,
+                    AccuracyTolerance = 0.02f
+                }
+            }
+        });
 
         Assert.Equal("basics-template-a", plan.SeedTemplate.TemplateId);
         Assert.Equal(BasicsCapacitySource.RuntimePlacementInventory, plan.Capacity.Source);
         Assert.Equal(0.10d, plan.Scheduling.ParentSelection.EliteFraction);
         Assert.Contains(BasicsMetricId.Accuracy, plan.Metrics.RequiredMetrics);
+        Assert.NotNull(plan.TaskSettings);
+        Assert.Equal(7, plan.TaskSettings!.Multiplication.UniqueInputValueCount);
+        Assert.Equal(0.02f, plan.TaskSettings.Multiplication.AccuracyTolerance);
     }
 
     [Fact]

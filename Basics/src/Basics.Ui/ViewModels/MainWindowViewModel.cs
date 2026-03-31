@@ -115,6 +115,11 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _targetFitnessText = "0.999";
     private bool _requireBothStopTargets = true;
     private string _maximumGenerationsText = string.Empty;
+    private string _booleanLowInputValueText = "0.0";
+    private string _booleanHighInputValueText = "1.0";
+    private string _gtUniqueInputValuesText = "3";
+    private string _multiplicationUniqueInputValuesText = "5";
+    private string _multiplicationToleranceText = "0.05";
     private string _fitnessWeightText = "0.55";
     private string _diversityWeightText = "0.35";
     private string _speciesBalanceWeightText = "0.15";
@@ -361,6 +366,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             }
 
             ApplyTaskDefaults(value);
+            RaiseTaskSettingsBindings();
         }
     }
 
@@ -568,6 +574,106 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _maximumGenerationsText;
         set => SetProperty(ref _maximumGenerationsText, value);
+    }
+
+    public string BooleanLowInputValueText
+    {
+        get => _booleanLowInputValueText;
+        set
+        {
+            if (SetProperty(ref _booleanLowInputValueText, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string BooleanHighInputValueText
+    {
+        get => _booleanHighInputValueText;
+        set
+        {
+            if (SetProperty(ref _booleanHighInputValueText, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string GtUniqueInputValuesText
+    {
+        get => _gtUniqueInputValuesText;
+        set
+        {
+            if (SetProperty(ref _gtUniqueInputValuesText, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string MultiplicationUniqueInputValuesText
+    {
+        get => _multiplicationUniqueInputValuesText;
+        set
+        {
+            if (SetProperty(ref _multiplicationUniqueInputValuesText, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string MultiplicationToleranceText
+    {
+        get => _multiplicationToleranceText;
+        set
+        {
+            if (SetProperty(ref _multiplicationToleranceText, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public bool ShowTaskSettingsCard => SelectedTask is not null;
+
+    public bool ShowBooleanTaskSettings
+        => SelectedTask?.TaskId is "and" or "or" or "xor";
+
+    public bool ShowGtTaskSettings => SelectedTask?.TaskId == "gt";
+
+    public bool ShowMultiplicationTaskSettings => SelectedTask?.TaskId == "multiplication";
+
+    public bool ShowUnavailableTaskSettingsMessage
+        => ShowTaskSettingsCard
+           && !ShowBooleanTaskSettings
+           && !ShowGtTaskSettings
+           && !ShowMultiplicationTaskSettings;
+
+    public string TaskSettingsDetail
+    {
+        get
+        {
+            if (ShowBooleanTaskSettings)
+            {
+                return "Evaluates the four canonical truth-table combinations using the selected low/high input values.";
+            }
+
+            if (ShowGtTaskSettings)
+            {
+                var count = TryParsePositiveInt(GtUniqueInputValuesText, fallbackValue: 3);
+                return $"Evaluates {count * count} ordered comparisons over an evenly spaced {count}x{count} grid in [0,1].";
+            }
+
+            if (ShowMultiplicationTaskSettings)
+            {
+                var count = TryParsePositiveInt(MultiplicationUniqueInputValuesText, fallbackValue: 5);
+                return $"Evaluates {count * count} products over an evenly spaced {count}x{count} grid in [0,1], with accuracy counted inside the configured tolerance.";
+            }
+
+            return "This task does not expose custom evaluation settings yet.";
+        }
     }
 
     public StrengthSourceOption? SelectedStrengthSource
@@ -1087,6 +1193,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
 
         var profile = BasicsTaskExecutionProfiles.Resolve(task.TaskId);
+        var taskSettings = profile.TaskSettings ?? new BasicsTaskSettings();
         _suppressValidationRefresh = true;
         try
         {
@@ -1125,6 +1232,11 @@ public sealed class MainWindowViewModel : ViewModelBase
             TargetFitnessText = profile.StopCriteria.TargetFitness.ToString("0.0##", CultureInfo.InvariantCulture);
             RequireBothStopTargets = profile.StopCriteria.RequireBothTargets;
             MaximumGenerationsText = FormatOptionalInt(profile.StopCriteria.MaximumGenerations);
+            BooleanLowInputValueText = taskSettings.BooleanTruthTable.LowInputValue.ToString("0.0##", CultureInfo.InvariantCulture);
+            BooleanHighInputValueText = taskSettings.BooleanTruthTable.HighInputValue.ToString("0.0##", CultureInfo.InvariantCulture);
+            GtUniqueInputValuesText = taskSettings.Gt.UniqueInputValueCount.ToString(CultureInfo.InvariantCulture);
+            MultiplicationUniqueInputValuesText = taskSettings.Multiplication.UniqueInputValueCount.ToString(CultureInfo.InvariantCulture);
+            MultiplicationToleranceText = taskSettings.Multiplication.AccuracyTolerance.ToString("0.0##", CultureInfo.InvariantCulture);
             SelectedDiversityPreset = DiversityPresets.FirstOrDefault(option => option.Value == profile.DiversityPreset)
                 ?? SelectedDiversityPreset;
 
@@ -1201,7 +1313,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
             await StopExecutionAsync().ConfigureAwait(false);
 
-            if (!TaskPluginRegistry.TryGet(options.SelectedTask.TaskId, out var plugin))
+            if (!TaskPluginRegistry.TryCreate(options.SelectedTask.TaskId, options.TaskSettings, out var plugin))
             {
                 _dispatcher.Post(() =>
                 {
@@ -1683,6 +1795,23 @@ public sealed class MainWindowViewModel : ViewModelBase
             RequireBothTargets = RequireBothStopTargets,
             MaximumGenerations = ParseOptionalInt(MaximumGenerationsText, "Maximum generations", errors)
         };
+        var taskSettings = new BasicsTaskSettings
+        {
+            BooleanTruthTable = new BasicsBinaryTruthTableTaskSettings
+            {
+                LowInputValue = ParseRequiredFloat(BooleanLowInputValueText, "Boolean low input value", errors),
+                HighInputValue = ParseRequiredFloat(BooleanHighInputValueText, "Boolean high input value", errors)
+            },
+            Gt = new BasicsScalarGridTaskSettings
+            {
+                UniqueInputValueCount = ParseRequiredInt(GtUniqueInputValuesText, "GT unique input values", errors)
+            },
+            Multiplication = new BasicsMultiplicationTaskSettings
+            {
+                UniqueInputValueCount = ParseRequiredInt(MultiplicationUniqueInputValuesText, "Multiplication unique input values", errors),
+                AccuracyTolerance = ParseRequiredFloat(MultiplicationToleranceText, "Multiplication accuracy tolerance", errors)
+            }
+        };
         var diversityPreset = SelectedDiversityPreset?.Value ?? BasicsDiversityPreset.Medium;
         var reproductionConfig = ReproductionSettings.CreateDefaultConfig();
         reproductionConfig.ProtectIoRegionNeuronCounts = true;
@@ -1710,6 +1839,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             },
             Scheduling = scheduling,
             StopCriteria = stopCriteria,
+            TaskSettings = taskSettings,
             InitialBrainSeeds = InitialBrainSeeds.Select(seed => new BasicsInitialBrainSeed(
                 seed.DisplayName,
                 seed.DefinitionBytes.ToArray(),
@@ -2371,6 +2501,21 @@ public sealed class MainWindowViewModel : ViewModelBase
         => maximumGenerations.HasValue
             ? maximumGenerations.Value.ToString(CultureInfo.InvariantCulture)
             : "unlimited";
+
+    private static int TryParsePositiveInt(string text, int fallbackValue)
+        => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value > 0
+            ? value
+            : fallbackValue;
+
+    private void RaiseTaskSettingsBindings()
+    {
+        OnPropertyChanged(nameof(ShowTaskSettingsCard));
+        OnPropertyChanged(nameof(ShowBooleanTaskSettings));
+        OnPropertyChanged(nameof(ShowGtTaskSettings));
+        OnPropertyChanged(nameof(ShowMultiplicationTaskSettings));
+        OnPropertyChanged(nameof(ShowUnavailableTaskSettingsMessage));
+        OnPropertyChanged(nameof(TaskSettingsDetail));
+    }
 
     private void ResetCharts()
     {

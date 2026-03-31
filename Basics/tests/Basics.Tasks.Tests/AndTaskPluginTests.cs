@@ -41,6 +41,25 @@ public sealed class AndTaskPluginTests
     }
 
     [Fact]
+    public void BuildDeterministicDataset_UsesConfiguredTruthValues()
+    {
+        var plugin = new AndTaskPlugin(new BasicsBinaryTruthTableTaskSettings
+        {
+            LowInputValue = 0.25f,
+            HighInputValue = 0.75f
+        });
+
+        var dataset = plugin.BuildDeterministicDataset();
+
+        Assert.Collection(
+            dataset,
+            sample => Assert.Equal((0.25f, 0.25f, 0f), (sample.InputA, sample.InputB, sample.ExpectedOutput)),
+            sample => Assert.Equal((0.25f, 0.75f, 0f), (sample.InputA, sample.InputB, sample.ExpectedOutput)),
+            sample => Assert.Equal((0.75f, 0.25f, 0f), (sample.InputA, sample.InputB, sample.ExpectedOutput)),
+            sample => Assert.Equal((0.75f, 0.75f, 1f), (sample.InputA, sample.InputB, sample.ExpectedOutput)));
+    }
+
+    [Fact]
     public void Evaluate_ReturnsPerfectScore_ForPerfectOutputs()
     {
         var dataset = _plugin.BuildDeterministicDataset();

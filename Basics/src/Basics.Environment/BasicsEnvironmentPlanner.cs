@@ -38,7 +38,8 @@ public sealed class BasicsEnvironmentPlanner
             Scheduling: options.Scheduling,
             Metrics: options.Metrics,
             StopCriteria: options.StopCriteria,
-            PlannedAtUtc: DateTimeOffset.UtcNow);
+            PlannedAtUtc: DateTimeOffset.UtcNow,
+            TaskSettings: options.TaskSettings);
     }
 
     public async Task<BasicsBrainGeometryValidation> ValidateBrainGeometryAsync(

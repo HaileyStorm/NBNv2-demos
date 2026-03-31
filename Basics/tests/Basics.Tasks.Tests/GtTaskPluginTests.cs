@@ -19,6 +19,22 @@ public sealed class GtTaskPluginTests
     }
 
     [Fact]
+    public void BuildDeterministicDataset_UsesConfiguredGridSize()
+    {
+        var plugin = new GtTaskPlugin(new BasicsScalarGridTaskSettings
+        {
+            UniqueInputValueCount = 5
+        });
+
+        var dataset = plugin.BuildDeterministicDataset();
+
+        Assert.Equal(25, dataset.Count);
+        Assert.Equal((0f, 0.25f, 0f), (dataset[1].InputA, dataset[1].InputB, dataset[1].ExpectedOutput));
+        Assert.Equal((0.5f, 0.25f, 1f), (dataset[11].InputA, dataset[11].InputB, dataset[11].ExpectedOutput));
+        Assert.Equal((1f, 1f, 0f), (dataset[^1].InputA, dataset[^1].InputB, dataset[^1].ExpectedOutput));
+    }
+
+    [Fact]
     public void Evaluate_ReturnsPerfectScore_ForFullComparisonGrid()
     {
         var dataset = _plugin.BuildDeterministicDataset();

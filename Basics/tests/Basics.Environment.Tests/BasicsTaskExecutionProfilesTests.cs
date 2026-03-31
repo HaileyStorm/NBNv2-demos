@@ -38,6 +38,9 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(1, profile.Sizing.MaxConcurrentBrains);
         Assert.Equal(0.35d, profile.Scheduling.ParentSelection.DiversityWeight);
         Assert.Equal((uint)12, profile.Scheduling.RunAllocation.MaxRunsPerPair);
+        Assert.NotNull(profile.TaskSettings);
+        Assert.Equal(0f, profile.TaskSettings!.BooleanTruthTable.LowInputValue);
+        Assert.Equal(1f, profile.TaskSettings.BooleanTruthTable.HighInputValue);
     }
 
     [Fact]
@@ -49,6 +52,8 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(2, profile.Sizing.InitialPopulationCount);
         Assert.Equal((uint)1, profile.Sizing.ReproductionRunCount);
         Assert.Equal(1, profile.Sizing.MaxConcurrentBrains);
+        Assert.NotNull(profile.TaskSettings);
+        Assert.Equal(3, profile.TaskSettings!.Gt.UniqueInputValueCount);
     }
 
     [Fact]
@@ -71,6 +76,9 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal((uint)8, profile.Scheduling.RunAllocation.MaxRunsPerPair);
         Assert.Equal(0.60d, profile.Scheduling.RunAllocation.DiversityBoost);
         Assert.Null(profile.StopCriteria.MaximumGenerations);
+        Assert.NotNull(profile.TaskSettings);
+        Assert.Equal(5, profile.TaskSettings!.Multiplication.UniqueInputValueCount);
+        Assert.Equal(0.05f, profile.TaskSettings.Multiplication.AccuracyTolerance);
     }
 
     [Fact]

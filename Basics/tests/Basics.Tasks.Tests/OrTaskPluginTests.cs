@@ -21,6 +21,25 @@ public sealed class OrTaskPluginTests
     }
 
     [Fact]
+    public void BuildDeterministicDataset_UsesConfiguredTruthValues()
+    {
+        var plugin = new OrTaskPlugin(new BasicsBinaryTruthTableTaskSettings
+        {
+            LowInputValue = 0.2f,
+            HighInputValue = 0.8f
+        });
+
+        var dataset = plugin.BuildDeterministicDataset();
+
+        Assert.Collection(
+            dataset,
+            sample => Assert.Equal((0.2f, 0.2f, 0f), (sample.InputA, sample.InputB, sample.ExpectedOutput)),
+            sample => Assert.Equal((0.2f, 0.8f, 1f), (sample.InputA, sample.InputB, sample.ExpectedOutput)),
+            sample => Assert.Equal((0.8f, 0.2f, 1f), (sample.InputA, sample.InputB, sample.ExpectedOutput)),
+            sample => Assert.Equal((0.8f, 0.8f, 1f), (sample.InputA, sample.InputB, sample.ExpectedOutput)));
+    }
+
+    [Fact]
     public void Evaluate_ReturnsPerfectScore_ForPerfectOutputs()
     {
         var dataset = _plugin.BuildDeterministicDataset();

@@ -28,4 +28,31 @@ public static class TaskPluginRegistry
 
         return Implemented.TryGetValue(taskId.Trim(), out plugin!);
     }
+
+    public static bool TryCreate(string taskId, BasicsTaskSettings? settings, out IBasicsTaskPlugin plugin)
+    {
+        var effectiveSettings = settings ?? new BasicsTaskSettings();
+        var normalizedTaskId = taskId?.Trim().ToLowerInvariant();
+        switch (normalizedTaskId)
+        {
+            case "and":
+                plugin = new AndTaskPlugin(effectiveSettings.BooleanTruthTable);
+                return true;
+            case "or":
+                plugin = new OrTaskPlugin(effectiveSettings.BooleanTruthTable);
+                return true;
+            case "xor":
+                plugin = new XorTaskPlugin(effectiveSettings.BooleanTruthTable);
+                return true;
+            case "gt":
+                plugin = new GtTaskPlugin(effectiveSettings.Gt);
+                return true;
+            case "multiplication":
+                plugin = new MultiplicationTaskPlugin(effectiveSettings.Multiplication);
+                return true;
+            default:
+                plugin = null!;
+                return false;
+        }
+    }
 }

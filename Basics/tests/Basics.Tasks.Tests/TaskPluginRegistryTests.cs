@@ -1,3 +1,4 @@
+using Nbn.Demos.Basics.Environment;
 using Nbn.Demos.Basics.Tasks;
 
 namespace Nbn.Demos.Basics.Tasks.Tests;
@@ -36,5 +37,21 @@ public sealed class TaskPluginRegistryTests
     public void TryGet_ReturnsFalse_ForUnknownTask()
     {
         Assert.False(TaskPluginRegistry.TryGet("denoise", out _));
+    }
+
+    [Fact]
+    public void TryCreate_UsesConfiguredTaskSettings()
+    {
+        var settings = new BasicsTaskSettings
+        {
+            Multiplication = new BasicsMultiplicationTaskSettings
+            {
+                UniqueInputValueCount = 3,
+                AccuracyTolerance = 0.02f
+            }
+        };
+
+        Assert.True(TaskPluginRegistry.TryCreate("multiplication", settings, out var plugin));
+        Assert.Equal(9, plugin.BuildDeterministicDataset().Count);
     }
 }

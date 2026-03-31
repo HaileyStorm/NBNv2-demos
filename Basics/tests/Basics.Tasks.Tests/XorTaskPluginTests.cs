@@ -21,6 +21,25 @@ public sealed class XorTaskPluginTests
     }
 
     [Fact]
+    public void BuildDeterministicDataset_UsesConfiguredTruthValues()
+    {
+        var plugin = new XorTaskPlugin(new BasicsBinaryTruthTableTaskSettings
+        {
+            LowInputValue = 0.1f,
+            HighInputValue = 0.9f
+        });
+
+        var dataset = plugin.BuildDeterministicDataset();
+
+        Assert.Collection(
+            dataset,
+            sample => Assert.Equal((0.1f, 0.1f, 0f), (sample.InputA, sample.InputB, sample.ExpectedOutput)),
+            sample => Assert.Equal((0.1f, 0.9f, 1f), (sample.InputA, sample.InputB, sample.ExpectedOutput)),
+            sample => Assert.Equal((0.9f, 0.1f, 1f), (sample.InputA, sample.InputB, sample.ExpectedOutput)),
+            sample => Assert.Equal((0.9f, 0.9f, 0f), (sample.InputA, sample.InputB, sample.ExpectedOutput)));
+    }
+
+    [Fact]
     public void Evaluate_ReturnsPerfectScore_ForPerfectOutputs()
     {
         var dataset = _plugin.BuildDeterministicDataset();

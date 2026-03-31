@@ -428,6 +428,124 @@ public static class BasicsOutputObservationModeExtensions
             : ProtoControl.OutputVectorSource.Potential;
 }
 
+public sealed record BasicsBinaryTruthTableTaskSettings
+{
+    public float LowInputValue { get; init; } = 0f;
+    public float HighInputValue { get; init; } = 1f;
+
+    public BasicsContractValidationResult Validate()
+    {
+        var errors = new List<string>();
+        if (!float.IsFinite(LowInputValue) || LowInputValue < 0f || LowInputValue > 1f)
+        {
+            errors.Add("Boolean low input value must be a finite value between 0 and 1.");
+        }
+
+        if (!float.IsFinite(HighInputValue) || HighInputValue < 0f || HighInputValue > 1f)
+        {
+            errors.Add("Boolean high input value must be a finite value between 0 and 1.");
+        }
+
+        if (float.IsFinite(LowInputValue)
+            && float.IsFinite(HighInputValue)
+            && HighInputValue <= LowInputValue)
+        {
+            errors.Add("Boolean high input value must be greater than the low input value.");
+        }
+
+        return BasicsContractValidationResult.FromErrors(errors);
+    }
+}
+
+public sealed record BasicsScalarGridTaskSettings
+{
+    public const int MinimumUniqueInputValueCount = 2;
+    public const int MaximumUniqueInputValueCount = 17;
+
+    public int UniqueInputValueCount { get; init; } = 3;
+
+    public BasicsContractValidationResult Validate(string label)
+    {
+        var errors = new List<string>();
+        if (UniqueInputValueCount < MinimumUniqueInputValueCount || UniqueInputValueCount > MaximumUniqueInputValueCount)
+        {
+            errors.Add($"{label} unique input values must be between {MinimumUniqueInputValueCount} and {MaximumUniqueInputValueCount}.");
+        }
+
+        return BasicsContractValidationResult.FromErrors(errors);
+    }
+}
+
+public sealed record BasicsMultiplicationTaskSettings
+{
+    public const float MaximumAccuracyTolerance = 1f;
+
+    public int UniqueInputValueCount { get; init; } = 5;
+    public float AccuracyTolerance { get; init; } = 0.05f;
+
+    public BasicsContractValidationResult Validate()
+    {
+        var errors = new List<string>();
+        var gridValidation = new BasicsScalarGridTaskSettings
+        {
+            UniqueInputValueCount = UniqueInputValueCount
+        }.Validate("Multiplication");
+        if (!gridValidation.IsValid)
+        {
+            errors.AddRange(gridValidation.Errors);
+        }
+
+        if (!float.IsFinite(AccuracyTolerance) || AccuracyTolerance < 0f || AccuracyTolerance > MaximumAccuracyTolerance)
+        {
+            errors.Add($"Multiplication accuracy tolerance must be a finite value between 0 and {MaximumAccuracyTolerance:0.###}.");
+        }
+
+        return BasicsContractValidationResult.FromErrors(errors);
+    }
+}
+
+public sealed record BasicsTaskSettings
+{
+    public BasicsBinaryTruthTableTaskSettings BooleanTruthTable { get; init; } = new();
+    public BasicsScalarGridTaskSettings Gt { get; init; } = new();
+    public BasicsMultiplicationTaskSettings Multiplication { get; init; } = new();
+
+    public BasicsContractValidationResult ValidateForTask(string? taskId)
+    {
+        var errors = new List<string>();
+        var normalizedTaskId = taskId?.Trim().ToLowerInvariant() ?? string.Empty;
+        switch (normalizedTaskId)
+        {
+            case "and":
+            case "or":
+            case "xor":
+                AddValidationErrors(BooleanTruthTable.Validate(), errors);
+                break;
+            case "gt":
+                AddValidationErrors(Gt.Validate("GT"), errors);
+                break;
+            case "multiplication":
+                AddValidationErrors(Multiplication.Validate(), errors);
+                break;
+        }
+
+        return BasicsContractValidationResult.FromErrors(errors);
+    }
+
+    private static void AddValidationErrors(BasicsContractValidationResult validation, ICollection<string> errors)
+    {
+        if (validation.IsValid)
+        {
+            return;
+        }
+
+        foreach (var error in validation.Errors)
+        {
+            errors.Add(error);
+        }
+    }
+}
+
 public sealed record BasicsEnvironmentOptions
 {
     public string ClientName { get; init; } = "nbn.basics.environment";
@@ -448,6 +566,7 @@ public sealed record BasicsEnvironmentOptions
     public BasicsReproductionPolicy Reproduction { get; init; } = BasicsReproductionPolicy.CreateDefault();
     public BasicsReproductionSchedulingPolicy Scheduling { get; init; } = BasicsReproductionSchedulingPolicy.Default;
     public BasicsExecutionStopCriteria StopCriteria { get; init; } = new();
+    public BasicsTaskSettings TaskSettings { get; init; } = new();
 
     public BasicsContractValidationResult Validate()
     {
@@ -473,6 +592,7 @@ public sealed record BasicsEnvironmentOptions
         AddValidationErrors(AdaptiveDiversity.Validate(), errors);
         AddValidationErrors(Scheduling.Validate(), errors);
         AddValidationErrors(StopCriteria.Validate(), errors);
+        AddValidationErrors(TaskSettings.ValidateForTask(SelectedTask.TaskId), errors);
         foreach (var seed in InitialBrainSeeds)
         {
             AddValidationErrors(seed.Validate(), errors);
@@ -508,7 +628,8 @@ public sealed record BasicsEnvironmentPlan(
     BasicsReproductionSchedulingPolicy Scheduling,
     BasicsMetricsContract Metrics,
     BasicsExecutionStopCriteria StopCriteria,
-    DateTimeOffset PlannedAtUtc);
+    DateTimeOffset PlannedAtUtc,
+    BasicsTaskSettings? TaskSettings = null);
 
 public sealed record BasicsTaskContract(
     string TaskId,
