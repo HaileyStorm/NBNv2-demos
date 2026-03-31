@@ -37,6 +37,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(AccuracyChartPoints),
         nameof(BestAccuracyChartPoints),
         nameof(FitnessChartPoints),
+        nameof(BestFitnessChartPoints),
         nameof(ExecutionStatus),
         nameof(ExecutionDetail),
         nameof(IsExecutionRunning),
@@ -61,7 +62,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _isExecutionRunning;
     private bool _isWorkerLauncherBusy;
     private readonly List<float> _accuracyHistory = new();
+    private readonly List<float> _bestAccuracyHistory = new();
     private readonly List<float> _fitnessHistory = new();
+    private readonly List<float> _bestFitnessHistory = new();
 
     private string _ioAddress = "127.0.0.1:12050";
     private string _ioGatewayName = "io-gateway";
@@ -712,9 +715,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         private set => SetProperty(ref _initialBrainSeedStatus, value);
     }
 
-    public bool HasAccuracyChartData => _accuracyHistory.Count > 0;
+    public bool HasAccuracyChartData => _accuracyHistory.Count > 0 || _bestAccuracyHistory.Count > 0;
 
-    public bool HasFitnessChartData => _fitnessHistory.Count > 0;
+    public bool HasFitnessChartData => _fitnessHistory.Count > 0 || _bestFitnessHistory.Count > 0;
 
     public bool ShowAccuracyEmptyState => !HasAccuracyChartData;
 
@@ -722,9 +725,11 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public IReadOnlyList<Point> AccuracyChartPoints => BuildChartPoints(_accuracyHistory);
 
-    public IReadOnlyList<Point> BestAccuracyChartPoints => BuildChartPoints(BuildCumulativeBestHistory(_accuracyHistory));
+    public IReadOnlyList<Point> BestAccuracyChartPoints => BuildChartPoints(_bestAccuracyHistory);
 
     public IReadOnlyList<Point> FitnessChartPoints => BuildChartPoints(_fitnessHistory);
+
+    public IReadOnlyList<Point> BestFitnessChartPoints => BuildChartPoints(_bestFitnessHistory);
 
     private async Task ConnectAsync()
     {
@@ -1365,6 +1370,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         UpdateMetricSummary(BasicsMetricId.ReproductionRunsObserved, plan.Capacity.RecommendedReproductionRunCount.ToString(CultureInfo.InvariantCulture), "Suggested base reproduction run count before per-pair min/max shaping.");
         UpdateMetricSummary(BasicsMetricId.SpeciesCount, plan.SeedTemplate.ExpectSingleBootstrapSpecies ? "1 seed family" : "multiple", "Bootstrap template-family expectation.");
         UpdateMetricSummary(BasicsMetricId.CapacityUtilization, plan.Capacity.CapacityScore.ToString("0.###", CultureInfo.InvariantCulture), plan.Capacity.Source.ToString());
+        UpdateMetricSummary(BasicsMetricId.OffspringBestFitness, "—", "No offspring evaluations yet.");
         UpdateMetricSummary(BasicsMetricId.LatestBatchDuration, "—", "Instrumentation appears after the first evaluated batch.");
         UpdateMetricSummary(BasicsMetricId.LatestSetupDuration, "—", "Instrumentation appears after the first evaluated batch.");
         UpdateMetricSummary(BasicsMetricId.LatestObservationDuration, "—", "Instrumentation appears after the first evaluated batch.");
@@ -1788,12 +1794,15 @@ public sealed class MainWindowViewModel : ViewModelBase
         MetricsSecondaryStatus = resolvedDetail;
         LastPlanSummary = $"Generation {snapshot.Generation} · population {snapshot.PopulationCount} · species {snapshot.SpeciesCount}.";
 
-        ReplaceHistory(_accuracyHistory, snapshot.AccuracyHistory);
-        ReplaceHistory(_fitnessHistory, snapshot.BestFitnessHistory);
+        ReplaceHistory(_accuracyHistory, snapshot.OffspringAccuracyHistory);
+        ReplaceHistory(_bestAccuracyHistory, snapshot.AccuracyHistory);
+        ReplaceHistory(_fitnessHistory, snapshot.OffspringFitnessHistory);
+        ReplaceHistory(_bestFitnessHistory, snapshot.BestFitnessHistory);
         UpdateChartBindings();
 
-        var displayedAccuracy = ResolveLatestMetric(snapshot.AccuracyHistory, snapshot.BestAccuracy);
+        var displayedAccuracy = ResolveLatestMetric(snapshot.OffspringAccuracyHistory, snapshot.OffspringBestAccuracy);
         var displayedBestAccuracy = ResolvePeakMetric(snapshot.AccuracyHistory, snapshot.BestAccuracy);
+        var displayedOffspringFitness = ResolveLatestMetric(snapshot.OffspringFitnessHistory, snapshot.OffspringBestFitness);
         var displayedBestFitness = ResolvePeakMetric(snapshot.BestFitnessHistory, snapshot.BestFitness);
 
         if (snapshot.EffectiveTemplateDefinition is not null)
@@ -1817,15 +1826,21 @@ public sealed class MainWindowViewModel : ViewModelBase
         UpdateMetricSummary(
             BasicsMetricId.Accuracy,
             displayedAccuracy.ToString("0.###", CultureInfo.InvariantCulture),
-            snapshot.BestCandidate is null
-                ? "No evaluated generation yet."
-                : $"Most recent evaluated-generation accuracy; best-so-far species {snapshot.BestCandidate.SpeciesId}.");
+            snapshot.Generation <= 0
+                ? "No offspring evaluations yet."
+                : $"Best accuracy among newly evaluated members in generation {snapshot.Generation}.");
         UpdateMetricSummary(
             BasicsMetricId.BestAccuracy,
             displayedBestAccuracy.ToString("0.###", CultureInfo.InvariantCulture),
             snapshot.BestCandidate is null
                 ? "No successful evaluation yet."
                 : $"Best-so-far artifact {snapshot.BestCandidate.ArtifactSha256[..Math.Min(12, snapshot.BestCandidate.ArtifactSha256.Length)]}...");
+        UpdateMetricSummary(
+            BasicsMetricId.OffspringBestFitness,
+            displayedOffspringFitness.ToString("0.###", CultureInfo.InvariantCulture),
+            snapshot.Generation <= 0
+                ? "No offspring evaluations yet."
+                : $"Best fitness among newly evaluated members in generation {snapshot.Generation}.");
         UpdateMetricSummary(
             BasicsMetricId.BestFitness,
             displayedBestFitness.ToString("0.###", CultureInfo.InvariantCulture),
@@ -2318,7 +2333,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private void ResetCharts()
     {
         _accuracyHistory.Clear();
+        _bestAccuracyHistory.Clear();
         _fitnessHistory.Clear();
+        _bestFitnessHistory.Clear();
         UpdateChartBindings();
     }
 
@@ -2337,24 +2354,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(AccuracyChartPoints));
         OnPropertyChanged(nameof(BestAccuracyChartPoints));
         OnPropertyChanged(nameof(FitnessChartPoints));
-    }
-
-    private static IReadOnlyList<float> BuildCumulativeBestHistory(IReadOnlyList<float> history)
-    {
-        if (history.Count == 0)
-        {
-            return Array.Empty<float>();
-        }
-
-        var result = new float[history.Count];
-        var best = 0f;
-        for (var i = 0; i < history.Count; i++)
-        {
-            best = Math.Max(best, history[i]);
-            result[i] = best;
-        }
-
-        return result;
+        OnPropertyChanged(nameof(BestFitnessChartPoints));
     }
 
     private static IReadOnlyList<Point> BuildChartPoints(IReadOnlyList<float> history)
@@ -2482,8 +2482,9 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static IEnumerable<MetricSummaryItemViewModel> BuildMetricSummaryItems()
     {
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.Accuracy, "Latest accuracy", "—", "No runtime samples yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.Accuracy, "Offspring accuracy", "—", "No offspring evaluations yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Best accuracy", "—", "No runtime samples yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.OffspringBestFitness, "Offspring fitness", "—", "No offspring evaluations yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestFitness, "Best fitness", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.MeanFitness, "Mean fitness", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.PopulationCount, "Population", "—", "Plan-derived once capacity is fetched.");

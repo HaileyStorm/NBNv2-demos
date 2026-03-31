@@ -418,7 +418,9 @@ public sealed class BasicsLiveTrialHarnessTests
             ReproductionCalls: (ulong)Math.Max(0, generation - 1),
             ReproductionRunsObserved: (ulong)Math.Max(0, generation * 2),
             CapacityUtilization: 0.5f,
+            OffspringBestAccuracy: bestAccuracy,
             BestAccuracy: bestAccuracy,
+            OffspringBestFitness: bestFitness,
             BestFitness: bestFitness,
             MeanFitness: Math.Max(0f, bestFitness - 0.1f),
             EffectiveTemplateDefinition: null,
@@ -437,7 +439,9 @@ public sealed class BasicsLiveTrialHarnessTests
                     ["classification_accuracy"] = bestAccuracy
                 },
                 Diagnostics: Array.Empty<string>()),
+            OffspringAccuracyHistory: new[] { bestAccuracy },
             AccuracyHistory: new[] { bestAccuracy },
+            OffspringFitnessHistory: new[] { bestFitness },
             BestFitnessHistory: new[] { bestFitness });
 
     private sealed class FakeHarnessRuntimeClient : IBasicsRuntimeClient

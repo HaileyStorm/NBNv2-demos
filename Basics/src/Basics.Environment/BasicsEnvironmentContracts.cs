@@ -329,7 +329,8 @@ public enum BasicsMetricId
     BestAccuracy = 9,
     LatestBatchDuration = 10,
     LatestSetupDuration = 11,
-    LatestObservationDuration = 12
+    LatestObservationDuration = 12,
+    OffspringBestFitness = 13
 }
 
 public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> RequiredMetrics)
@@ -340,6 +341,7 @@ public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> Require
             BasicsMetricId.Accuracy,
             BasicsMetricId.BestAccuracy,
             BasicsMetricId.BestFitness,
+            BasicsMetricId.OffspringBestFitness,
             BasicsMetricId.MeanFitness,
             BasicsMetricId.PopulationCount,
             BasicsMetricId.ActiveBrainCount,
