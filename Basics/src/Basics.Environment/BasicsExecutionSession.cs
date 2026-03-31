@@ -223,7 +223,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         seedShape,
                         reproductionCalls,
                         reproductionRunsObserved,
+                        offspringAccuracyHistory,
                         accuracyHistory,
+                        offspringFitnessHistory,
                         fitnessHistory,
                         bestAccuracySoFar,
                         bestFitnessSoFar,
@@ -852,7 +854,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     membership.SpeciesId,
                     membership.SpeciesDisplayName,
                     childComplexity,
-                    LastEvaluation: null));
+                    LastEvaluation: null,
+                    CountsTowardOffspringMetrics: true));
             }
         }
 
@@ -870,7 +873,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsResolvedSeedShape? seedShape,
         ulong reproductionCalls,
         ulong reproductionRunsObserved,
+        IReadOnlyList<float> offspringAccuracyHistory,
         IReadOnlyList<float> accuracyHistory,
+        IReadOnlyList<float> offspringFitnessHistory,
         IReadOnlyList<float> fitnessHistory,
         float overallBestAccuracy,
         float overallBestFitness,
@@ -916,10 +921,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 reproductionRunsObserved,
                 effectiveTemplateDefinition,
                 seedShape,
+                offspringAccuracyHistory,
                 accuracyHistory,
+                offspringFitnessHistory,
                 fitnessHistory,
-                offspringAccuracyHistory: null,
-                offspringFitnessHistory: null,
                 overallBestAccuracy: overallBestAccuracy,
                 overallBestFitness: overallBestFitness,
                 overallBestCandidate: overallBestCandidate,
@@ -957,10 +962,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 reproductionRunsObserved,
                 effectiveTemplateDefinition,
                 seedShape,
+                offspringAccuracyHistory,
                 accuracyHistory,
+                offspringFitnessHistory,
                 fitnessHistory,
-                offspringAccuracyHistory: null,
-                offspringFitnessHistory: null,
                 overallBestAccuracy: overallBestAccuracy,
                 overallBestFitness: overallBestFitness,
                 overallBestCandidate: overallBestCandidate,
@@ -1826,8 +1831,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         var nextGeneration = ranked.Take(eliteCount).Select(static member => member with
         {
+            LastEvaluation = member.LastEvaluation,
             ActiveBrainId = Guid.Empty,
-            SnapshotArtifact = null
+            SnapshotArtifact = null,
+            CountsTowardOffspringMetrics = false
         }).ToList();
         var parentPool = BuildParentPool(effectiveScheduling.ParentSelection, population);
         if (parentPool.Count == 0)
@@ -1903,7 +1910,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     membership.SpeciesId,
                     membership.SpeciesDisplayName,
                     childComplexity,
-                    LastEvaluation: null));
+                    LastEvaluation: null,
+                    CountsTowardOffspringMetrics: true));
             }
         }
 
@@ -1931,9 +1939,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
             nextGeneration.Add(member with
             {
-                LastEvaluation = null,
                 ActiveBrainId = Guid.Empty,
-                SnapshotArtifact = null
+                SnapshotArtifact = null,
+                CountsTowardOffspringMetrics = false
             });
         }
 
@@ -2808,6 +2816,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 BestAccuracy: 0f,
                 OffspringBestFitness: 0f,
                 BestFitness: 0f,
+                OffspringEvaluatedCount: 0,
+                RetainedEvaluationCount: 0,
                 MeanFitness: 0f,
                 SpeciesCount: 0,
                 CapacityUtilization: 0f,
@@ -2823,8 +2833,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 TieBreakRank: ComputeTieBreakRank(member.Definition.ToSha256Hex())))
             .ToArray();
         var offspringCandidates = currentGeneration.HasValue
-            ? candidates.Where(candidate => candidate.Member.EvaluationGeneration == currentGeneration.Value).ToArray()
+            ? candidates.Where(candidate =>
+                    candidate.Member.EvaluationGeneration == currentGeneration.Value
+                    && candidate.Member.CountsTowardOffspringMetrics)
+                .ToArray()
             : Array.Empty<CandidateSelection>();
+        var retainedEvaluationCount = currentGeneration.HasValue
+            ? population.Count(member =>
+                member.LastEvaluation is not null
+                && member.EvaluationGeneration.HasValue
+                && member.EvaluationGeneration.Value < currentGeneration.Value)
+            : 0;
         var winningCandidate = SelectWinningCandidate(candidates, stopCriteria);
         var speciesCount = population.Select(member => NormalizeSpeciesId(member.SpeciesId)).Distinct(StringComparer.OrdinalIgnoreCase).Count();
         var failureDiagnostics = population
@@ -2854,6 +2873,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ? 0f
                 : offspringCandidates.Max(candidate => candidate.Evaluation.Fitness),
             BestFitness: candidates.Max(candidate => candidate.Evaluation.Fitness),
+            OffspringEvaluatedCount: offspringCandidates.Length,
+            RetainedEvaluationCount: retainedEvaluationCount,
             MeanFitness: candidates.Average(candidate => candidate.Evaluation.Fitness),
             SpeciesCount: speciesCount,
             CapacityUtilization: 0f,
@@ -2920,7 +2941,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         GenerationMetrics metrics,
         BasicsExecutionGenerationTimingSummary? timing)
     {
-        var summary = $"Generation {generation}: accuracy={metrics.BestAccuracy:0.###}, best_fitness={metrics.BestFitness:0.###}, mean_fitness={metrics.MeanFitness:0.###}, species={metrics.SpeciesCount}.";
+        var summary = $"Generation {generation}: accuracy={metrics.BestAccuracy:0.###}, best_fitness={metrics.BestFitness:0.###}, offspring_accuracy={metrics.OffspringBestAccuracy:0.###}, offspring_fitness={metrics.OffspringBestFitness:0.###}, offspring_evaluated={metrics.OffspringEvaluatedCount}, retained={metrics.RetainedEvaluationCount}, mean_fitness={metrics.MeanFitness:0.###}, species={metrics.SpeciesCount}.";
         if (metrics.EvaluationFailureCount > 0 && !string.IsNullOrWhiteSpace(metrics.EvaluationFailureSummary))
         {
             summary += $" Evaluation failures: {metrics.EvaluationFailureSummary}.";
@@ -3002,6 +3023,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         float BestAccuracy,
         float OffspringBestFitness,
         float BestFitness,
+        int OffspringEvaluatedCount,
+        int RetainedEvaluationCount,
         double MeanFitness,
         int SpeciesCount,
         float CapacityUtilization,
@@ -3040,6 +3063,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsDefinitionComplexitySummary? Complexity,
         BasicsTaskEvaluationResult? LastEvaluation,
         int? EvaluationGeneration = null,
+        bool CountsTowardOffspringMetrics = false,
         Guid ActiveBrainId = default,
         ArtifactRef? SnapshotArtifact = null);
 }
