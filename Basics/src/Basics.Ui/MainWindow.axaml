@@ -272,6 +272,73 @@
                                 <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding TemplateArtifactStoreUri}" />
                             </Grid>
                         </Expander>
+
+                        <Expander Header="Initial Brains"
+                                  IsExpanded="False">
+                            <StackPanel Margin="0,10,0,0"
+                                        Spacing="10">
+                                <TextBlock Text="Uploaded .nbn files replace the built template for initial seeding. Each unique upload becomes a seed template, and checked uploads contribute an extra exact copy for reproduction."
+                                           Foreground="#425466"
+                                           TextWrapping="Wrap" />
+                                <Grid ColumnDefinitions="Auto,Auto,*"
+                                      ColumnSpacing="12">
+                                    <Button Grid.Column="0"
+                                            Content="Add .nbn Files"
+                                            Command="{Binding AddInitialBrainsCommand}"
+                                            MinWidth="130" />
+                                    <Button Grid.Column="1"
+                                            Content="Clear"
+                                            Command="{Binding ClearInitialBrainsCommand}"
+                                            MinWidth="90" />
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding InitialBrainSeedStatus}"
+                                               VerticalAlignment="Center"
+                                               Foreground="#425466"
+                                               TextWrapping="Wrap" />
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding InitialBrainSeeds}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:InitialBrainSeedItemViewModel">
+                                            <Border Margin="0,0,0,8"
+                                                    Background="#FBF8F1"
+                                                    BorderBrush="#E5DECF"
+                                                    BorderThickness="1"
+                                                    CornerRadius="10"
+                                                    Padding="10">
+                                                <Grid ColumnDefinitions="*,Auto,Auto"
+                                                      ColumnSpacing="12">
+                                                    <StackPanel Grid.Column="0"
+                                                                Spacing="4">
+                                                        <TextBlock Text="{Binding DisplayName}"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="#182436" />
+                                                        <TextBlock Text="{Binding LocalPath}"
+                                                                   FontSize="11"
+                                                                   Foreground="#6C7A89"
+                                                                   TextWrapping="Wrap" />
+                                                        <TextBlock Text="{Binding Complexity.InternalNeuronCount, StringFormat='internal_neurons={0}'}"
+                                                                   FontSize="11"
+                                                                   Foreground="#6C7A89" />
+                                                        <TextBlock Text="{Binding Complexity.AxonCount, StringFormat='axons={0}'}"
+                                                                   FontSize="11"
+                                                                   Foreground="#6C7A89" />
+                                                    </StackPanel>
+                                                    <CheckBox Grid.Column="1"
+                                                              Content="Duplicate"
+                                                              IsChecked="{Binding DuplicateForReproduction}"
+                                                              VerticalAlignment="Center" />
+                                                    <Button Grid.Column="2"
+                                                            Content="Remove"
+                                                            Command="{Binding RemoveCommand}"
+                                                            MinWidth="90"
+                                                            VerticalAlignment="Center" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Expander>
                     </StackPanel>
                 </Border>
 
@@ -348,7 +415,7 @@
                                    TextWrapping="Wrap"
                                    Foreground="#425466" />
                         <Grid ColumnDefinitions="Auto,110,Auto,110"
-                              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Initial population" VerticalAlignment="Center"
@@ -358,34 +425,41 @@
                             <TextBlock Grid.Row="0" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
                             <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding RecommendedInitialPopulationText}" VerticalAlignment="Center" />
 
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Base run count" VerticalAlignment="Center"
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Min population" VerticalAlignment="Center"
+                                       ToolTip.Tip="Hard lower bound for any generation. If reproduction under-produces, Basics carries forward enough brains to stay above this floor when possible." />
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MinimumPopulationOverrideText}" Watermark="2" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Max population" VerticalAlignment="Center"
+                                       ToolTip.Tip="Hard upper bound for any generation. The target population is clamped into this range." />
+                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding MaximumPopulationOverrideText}" Watermark="auto" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Base run count" VerticalAlignment="Center"
                                        ToolTip.Tip="Baseline reproduction run budget per selected parent pair before the Min/Max runs-per-pair scheduler reshapes it." />
-                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ReproductionRunCountOverrideText}" Watermark="auto"
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ReproductionRunCountOverrideText}" Watermark="auto"
                                      ToolTip.Tip="Capacity-side baseline for how many child attempts to request from a selected parent pair." />
-                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
-                            <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding RecommendedRunCountText}" VerticalAlignment="Center" />
-
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Max concurrent" VerticalAlignment="Center"
-                                       ToolTip.Tip="How many brains Basics is allowed to spawn and evaluate at once within a generation." />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxConcurrentBrainsOverrideText}" Watermark="auto"
-                                     ToolTip.Tip="Hard cap on simultaneously active evaluation brains." />
                             <TextBlock Grid.Row="2" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
-                            <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding RecommendedMaxConcurrentBrainsText}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding RecommendedRunCountText}" VerticalAlignment="Center" />
 
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Stop accuracy" VerticalAlignment="Center"
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Max concurrent" VerticalAlignment="Center"
+                                       ToolTip.Tip="How many brains Basics is allowed to spawn and evaluate at once within a generation." />
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MaxConcurrentBrainsOverrideText}" Watermark="auto"
+                                     ToolTip.Tip="Hard cap on simultaneously active evaluation brains." />
+                            <TextBlock Grid.Row="3" Grid.Column="2" Text="Suggested" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="3" Grid.Column="3" Text="{Binding RecommendedMaxConcurrentBrainsText}" VerticalAlignment="Center" />
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Stop accuracy" VerticalAlignment="Center"
                                        ToolTip.Tip="Stop once a generation reaches at least this accuracy." />
-                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding TargetAccuracyText}"
+                            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding TargetAccuracyText}"
                                      ToolTip.Tip="Accuracy threshold for declaring the run solved." />
-                            <TextBlock Grid.Row="3" Grid.Column="2" Text="Stop fitness" VerticalAlignment="Center"
+                            <TextBlock Grid.Row="4" Grid.Column="2" Text="Stop fitness" VerticalAlignment="Center"
                                        ToolTip.Tip="Stop once a generation reaches at least this fitness." />
-                            <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding TargetFitnessText}"
+                            <TextBox Grid.Row="4" Grid.Column="3" Text="{Binding TargetFitnessText}"
                                      ToolTip.Tip="Fitness threshold for declaring the run solved." />
 
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Max generations" VerticalAlignment="Center"
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Max generations" VerticalAlignment="Center"
                                        ToolTip.Tip="Optional hard cap on how many generations to evaluate. Leave blank for no generation limit." />
-                            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding MaximumGenerationsText}" Watermark="unlimited"
+                            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding MaximumGenerationsText}" Watermark="unlimited"
                                      ToolTip.Tip="Stop after this many evaluated generations even if the accuracy/fitness target has not been reached." />
-                            <TextBlock Grid.Row="4" Grid.Column="2" Grid.ColumnSpan="2"
+                            <TextBlock Grid.Row="5" Grid.Column="2" Grid.ColumnSpan="2"
                                        Text="blank = unlimited"
                                        VerticalAlignment="Center"
                                        Foreground="#6C7A89" />

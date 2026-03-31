@@ -224,6 +224,8 @@ public sealed record BasicsSeedTemplateContract
 public sealed record BasicsSizingOverrides
 {
     public int? InitialPopulationCount { get; init; }
+    public int? MinimumPopulationCount { get; init; }
+    public int? MaximumPopulationCount { get; init; }
     public uint? ReproductionRunCount { get; init; }
     public int? MaxConcurrentBrains { get; init; }
 
@@ -233,6 +235,31 @@ public sealed record BasicsSizingOverrides
         if (InitialPopulationCount is < 2)
         {
             errors.Add("InitialPopulationCount override must be >= 2 when set.");
+        }
+
+        if (MinimumPopulationCount is < 2)
+        {
+            errors.Add("MinimumPopulationCount override must be >= 2 when set.");
+        }
+
+        if (MaximumPopulationCount is < 2)
+        {
+            errors.Add("MaximumPopulationCount override must be >= 2 when set.");
+        }
+
+        if (MinimumPopulationCount.HasValue && MaximumPopulationCount.HasValue && MaximumPopulationCount.Value < MinimumPopulationCount.Value)
+        {
+            errors.Add("MaximumPopulationCount override must be >= MinimumPopulationCount when both are set.");
+        }
+
+        if (InitialPopulationCount.HasValue && MinimumPopulationCount.HasValue && InitialPopulationCount.Value < MinimumPopulationCount.Value)
+        {
+            errors.Add("InitialPopulationCount override must be >= MinimumPopulationCount when both are set.");
+        }
+
+        if (InitialPopulationCount.HasValue && MaximumPopulationCount.HasValue && InitialPopulationCount.Value > MaximumPopulationCount.Value)
+        {
+            errors.Add("InitialPopulationCount override must be <= MaximumPopulationCount when both are set.");
         }
 
         if (ReproductionRunCount is 0)
@@ -264,6 +291,29 @@ public sealed record BasicsCapacityRecommendation(
     float CapacityScore,
     ulong EffectiveRamFreeBytes,
     string Summary);
+
+public sealed record BasicsInitialBrainSeed(
+    string DisplayName,
+    byte[] DefinitionBytes,
+    bool DuplicateForReproduction,
+    BasicsDefinitionComplexitySummary Complexity)
+{
+    public BasicsContractValidationResult Validate()
+    {
+        var errors = new List<string>();
+        if (string.IsNullOrWhiteSpace(DisplayName))
+        {
+            errors.Add("Initial brain DisplayName is required.");
+        }
+
+        if (DefinitionBytes.Length == 0)
+        {
+            errors.Add("Initial brain DefinitionBytes must not be empty.");
+        }
+
+        return BasicsContractValidationResult.FromErrors(errors);
+    }
+}
 
 public enum BasicsMetricId
 {
@@ -357,6 +407,7 @@ public sealed record BasicsEnvironmentOptions
         Description: "Boolean AND over canonical 0/1 inputs and outputs.");
     public BasicsSeedTemplateContract SeedTemplate { get; init; } = BasicsSeedTemplateContract.CreateDefault();
     public BasicsSizingOverrides SizingOverrides { get; init; } = new();
+    public IReadOnlyList<BasicsInitialBrainSeed> InitialBrainSeeds { get; init; } = Array.Empty<BasicsInitialBrainSeed>();
     public BasicsMetricsContract Metrics { get; init; } = BasicsMetricsContract.Default;
     public BasicsOutputObservationMode OutputObservationMode { get; init; } = BasicsOutputObservationMode.VectorPotential;
     public BasicsReproductionPolicy Reproduction { get; init; } = BasicsReproductionPolicy.CreateDefault();
@@ -386,6 +437,11 @@ public sealed record BasicsEnvironmentOptions
         AddValidationErrors(Reproduction.Validate(), errors);
         AddValidationErrors(Scheduling.Validate(), errors);
         AddValidationErrors(StopCriteria.Validate(), errors);
+        foreach (var seed in InitialBrainSeeds)
+        {
+            AddValidationErrors(seed.Validate(), errors);
+        }
+
         return BasicsContractValidationResult.FromErrors(errors);
     }
 
@@ -406,6 +462,8 @@ public sealed record BasicsEnvironmentOptions
 public sealed record BasicsEnvironmentPlan(
     BasicsTaskContract SelectedTask,
     BasicsSeedTemplateContract SeedTemplate,
+    BasicsSizingOverrides SizingOverrides,
+    IReadOnlyList<BasicsInitialBrainSeed> InitialBrainSeeds,
     BasicsCapacityRecommendation Capacity,
     BasicsOutputObservationMode OutputObservationMode,
     BasicsReproductionPolicy Reproduction,

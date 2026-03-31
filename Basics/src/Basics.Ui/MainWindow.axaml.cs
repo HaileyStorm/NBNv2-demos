@@ -17,6 +17,7 @@ public partial class MainWindow : Window
         DataContext = new MainWindowViewModel(
             new UiDispatcher(),
             new WindowArtifactExportService(this),
+            new WindowBrainImportService(this),
             _workerProcessService);
     }
 

@@ -98,6 +98,8 @@ public sealed class BasicsExecutionSessionTests
                 new BasicsEnvironmentPlan(
                     SelectedTask: new AndTaskPlugin().Contract,
                     SeedTemplate: BasicsSeedTemplateContract.CreateDefault(),
+                    SizingOverrides: new BasicsSizingOverrides(),
+                    InitialBrainSeeds: Array.Empty<BasicsInitialBrainSeed>(),
                     Capacity: new BasicsCapacityRecommendation(
                         Source: BasicsCapacitySource.RuntimePlacementInventory,
                         EligibleWorkerCount: 1,
@@ -545,6 +547,8 @@ public sealed class BasicsExecutionSessionTests
                 new BasicsEnvironmentPlan(
                     SelectedTask: new AndTaskPlugin().Contract,
                     SeedTemplate: BasicsSeedTemplateContract.CreateDefault(),
+                    SizingOverrides: new BasicsSizingOverrides(),
+                    InitialBrainSeeds: Array.Empty<BasicsInitialBrainSeed>(),
                     Capacity: new BasicsCapacityRecommendation(
                         Source: BasicsCapacitySource.RuntimePlacementInventory,
                         EligibleWorkerCount: 1,
@@ -585,6 +589,8 @@ public sealed class BasicsExecutionSessionTests
                 new BasicsEnvironmentPlan(
                     SelectedTask: new AndTaskPlugin().Contract,
                     SeedTemplate: BasicsSeedTemplateContract.CreateDefault(),
+                    SizingOverrides: new BasicsSizingOverrides(),
+                    InitialBrainSeeds: Array.Empty<BasicsInitialBrainSeed>(),
                     Capacity: new BasicsCapacityRecommendation(
                         Source: BasicsCapacitySource.RuntimePlacementInventory,
                         EligibleWorkerCount: 1,
@@ -630,6 +636,8 @@ public sealed class BasicsExecutionSessionTests
         return new(
             SelectedTask: taskPlugin.Contract,
             SeedTemplate: BasicsSeedTemplateContract.CreateDefault(),
+            SizingOverrides: new BasicsSizingOverrides(),
+            InitialBrainSeeds: Array.Empty<BasicsInitialBrainSeed>(),
             Capacity: new BasicsCapacityRecommendation(
                 Source: BasicsCapacitySource.RuntimePlacementInventory,
                 EligibleWorkerCount: 1,

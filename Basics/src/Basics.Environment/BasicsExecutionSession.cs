@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
@@ -16,7 +17,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
-    private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.Zero;
     private const int MaxObservationAttempts = 3;
     private const int MinimumPopulationSize = 2;
 
@@ -132,7 +133,40 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 overallBestCandidate: bestCandidateSoFar);
             speciationEpochId = await EnsureFreshSpeciationEpochAsync(cancellationToken).ConfigureAwait(false);
 
-            var targetPopulation = Math.Max(MinimumPopulationSize, plan.Capacity.RecommendedInitialPopulationCount);
+            var minimumPopulation = Math.Max(MinimumPopulationSize, plan.SizingOverrides.MinimumPopulationCount ?? MinimumPopulationSize);
+            var maximumPopulation = Math.Max(
+                minimumPopulation,
+                plan.SizingOverrides.MaximumPopulationCount
+                ?? Math.Max(minimumPopulation, plan.Capacity.RecommendedInitialPopulationCount));
+            var targetPopulation = Math.Clamp(
+                Math.Max(MinimumPopulationSize, plan.Capacity.RecommendedInitialPopulationCount),
+                minimumPopulation,
+                maximumPopulation);
+            var minimumRequiredInitialPopulation = ResolveMinimumRequiredInitialPopulation(plan.InitialBrainSeeds);
+            if (targetPopulation < minimumRequiredInitialPopulation)
+            {
+                return CreateFinalSnapshot(
+                    plan.StopCriteria,
+                    publishSnapshot,
+                    BasicsExecutionState.Failed,
+                    "Execution failed.",
+                    $"Initial population {targetPopulation} is below the required minimum {minimumRequiredInitialPopulation} for the uploaded seed brains.",
+                    speciationEpochId,
+                    0,
+                    Array.Empty<PopulationMember>(),
+                    0,
+                    reproductionCalls,
+                    reproductionRunsObserved,
+                    effectiveTemplateDefinition,
+                    seedShape,
+                    accuracyHistory,
+                    fitnessHistory,
+                    lastObservedSnapshot,
+                    bestAccuracySoFar,
+                    bestFitnessSoFar,
+                    bestCandidateSoFar);
+            }
+
             population = await SeedInitialPopulationAsync(
                     plan,
                     template.TemplateDefinition,
@@ -319,6 +353,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         plan,
                         population,
                         targetPopulation,
+                        minimumPopulation,
                         cancellationToken,
                         onBreedProgress: (detail, activePopulationCount) =>
                         {
@@ -590,84 +625,186 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int targetPopulation,
         CancellationToken cancellationToken)
     {
-        var bootstrapSpeciesId = BuildBootstrapSpeciesId(plan.SeedTemplate.TemplateId);
-        var bootstrapSpeciesDisplayName = $"{plan.SeedTemplate.TemplateId} bootstrap";
-        var resolvedTemplateComplexity = templateComplexity
-                                         ?? await ResolveDefinitionComplexityAsync(templateDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
-
-        var templateMember = new PopulationMember(
-            templateDefinition.Clone(),
-            bootstrapSpeciesId,
-            bootstrapSpeciesDisplayName,
-            resolvedTemplateComplexity,
-            LastEvaluation: null);
-        await CommitArtifactMembershipAsync(
-                templateMember.Definition,
-                Array.Empty<ArtifactRef>(),
-                explicitSpeciesId: bootstrapSpeciesId,
-                explicitSpeciesDisplayName: bootstrapSpeciesDisplayName,
-                decisionReason: "basics_seed_template",
+        var templates = await ResolveInitialSeedTemplatesAsync(
+                plan,
+                templateDefinition,
+                templateComplexity,
                 cancellationToken)
             .ConfigureAwait(false);
-
-        var population = new List<PopulationMember> { templateMember };
-        if (targetPopulation <= 1)
+        var population = new List<PopulationMember>(targetPopulation);
+        foreach (var template in templates)
         {
-            return population;
+            await CommitArtifactMembershipAsync(
+                    template.Definition,
+                    Array.Empty<ArtifactRef>(),
+                    explicitSpeciesId: template.SpeciesId,
+                    explicitSpeciesDisplayName: template.SpeciesDisplayName,
+                    decisionReason: "basics_seed_template",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            for (var copyIndex = 0; copyIndex < template.ExactCopies && population.Count < targetPopulation; copyIndex++)
+            {
+                population.Add(new PopulationMember(
+                    template.Definition.Clone(),
+                    template.SpeciesId,
+                    template.SpeciesDisplayName,
+                    template.Complexity,
+                    LastEvaluation: null));
+            }
         }
 
+        var remaining = Math.Max(0, targetPopulation - population.Count);
+        var distribution = DistributeAcrossTemplates(remaining, templates.Count);
+        for (var templateIndex = 0; templateIndex < templates.Count; templateIndex++)
+        {
+            if (distribution[templateIndex] <= 0)
+            {
+                continue;
+            }
+
+            var children = await GenerateInitialSeedChildrenAsync(
+                    plan,
+                    templates[templateIndex],
+                    distribution[templateIndex],
+                    cancellationToken)
+                .ConfigureAwait(false);
+            population.AddRange(children);
+        }
+
+        var refillIndex = 0;
+        while (population.Count < targetPopulation && templates.Count > 0)
+        {
+            var template = templates[refillIndex % templates.Count];
+            population.Add(new PopulationMember(
+                template.Definition.Clone(),
+                template.SpeciesId,
+                template.SpeciesDisplayName,
+                template.Complexity,
+                LastEvaluation: null));
+            refillIndex++;
+        }
+
+        return population;
+    }
+
+    private async Task<List<ResolvedInitialSeedTemplate>> ResolveInitialSeedTemplatesAsync(
+        BasicsEnvironmentPlan plan,
+        ArtifactRef defaultTemplateDefinition,
+        BasicsDefinitionComplexitySummary? defaultTemplateComplexity,
+        CancellationToken cancellationToken)
+    {
+        if (plan.InitialBrainSeeds.Count == 0)
+        {
+            var bootstrapSpeciesId = BuildBootstrapSpeciesId(plan.SeedTemplate.TemplateId);
+            var bootstrapSpeciesDisplayName = $"{plan.SeedTemplate.TemplateId} bootstrap";
+            var resolvedTemplateComplexity = defaultTemplateComplexity
+                                             ?? await ResolveDefinitionComplexityAsync(defaultTemplateDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
+            return
+            [
+                new ResolvedInitialSeedTemplate(
+                    defaultTemplateDefinition.Clone(),
+                    bootstrapSpeciesId,
+                    bootstrapSpeciesDisplayName,
+                    resolvedTemplateComplexity,
+                    ExactCopies: 1)
+            ];
+        }
+
+        var dedupedSeeds = plan.InitialBrainSeeds
+            .GroupBy(seed => Convert.ToHexString(SHA256.HashData(seed.DefinitionBytes)).ToLowerInvariant(), StringComparer.Ordinal)
+            .Select(group =>
+            {
+                var first = group.First();
+                return first with
+                {
+                    DuplicateForReproduction = group.Any(static seed => seed.DuplicateForReproduction)
+                };
+            })
+            .ToArray();
+        var templates = new List<ResolvedInitialSeedTemplate>(dedupedSeeds.Length);
+        foreach (var seed in dedupedSeeds)
+        {
+            var publication = await _artifactPublisher.PublishAsync(
+                    seed.DefinitionBytes,
+                    mediaType: "application/x-nbn",
+                    backingStoreRoot: ResolveBackingStoreRoot($"{plan.SeedTemplate.TemplateId}-{SanitizePathSegment(seed.DisplayName)}"),
+                    bindHost: _publishingOptions.BindHost,
+                    advertisedHost: _publishingOptions.AdvertiseHost,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var speciesId = BuildBootstrapSpeciesId($"{plan.SeedTemplate.TemplateId}-{ShortSeedHash(seed.DefinitionBytes)}");
+            templates.Add(new ResolvedInitialSeedTemplate(
+                publication.ArtifactRef.Clone(),
+                speciesId,
+                $"{seed.DisplayName} bootstrap",
+                seed.Complexity,
+                ExactCopies: seed.DuplicateForReproduction ? 2 : 1));
+        }
+
+        return templates;
+    }
+
+    private async Task<List<PopulationMember>> GenerateInitialSeedChildrenAsync(
+        BasicsEnvironmentPlan plan,
+        ResolvedInitialSeedTemplate template,
+        int targetChildCount,
+        CancellationToken cancellationToken)
+    {
         var seedingConfig = plan.Reproduction.Config.Clone();
         ApplyVariationBand(seedingConfig, plan.SeedTemplate.InitialVariationBand);
         seedingConfig.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
 
-        var seedResult = await _runtimeClient.ReproduceByArtifactsAsync(
-                new Repro.ReproduceByArtifactsRequest
-                {
-                    ParentADef = templateDefinition.Clone(),
-                    ParentBDef = templateDefinition.Clone(),
-                    StrengthSource = plan.Reproduction.StrengthSource,
-                    Config = seedingConfig,
-                    Seed = NextSeed(),
-                    RunCount = (uint)Math.Max(1, targetPopulation - 1)
-                },
-                cancellationToken)
-            .ConfigureAwait(false);
-
-        foreach (var childDefinition in ExtractChildDefinitions(seedResult))
+        var children = new List<PopulationMember>(targetChildCount);
+        var attempts = 0;
+        var maxAttempts = Math.Max(targetChildCount * 4, 8);
+        while (children.Count < targetChildCount && attempts < maxAttempts)
         {
-            if (population.Count >= targetPopulation)
-            {
-                break;
-            }
-
-            var membership = await CommitArtifactMembershipAsync(
-                    childDefinition,
-                    new[] { templateDefinition, templateDefinition },
-                    explicitSpeciesId: null,
-                    explicitSpeciesDisplayName: null,
-                    decisionReason: "basics_seed_child",
+            attempts++;
+            var remainingRuns = Math.Max(1, targetChildCount - children.Count);
+            var seedResult = await _runtimeClient.ReproduceByArtifactsAsync(
+                    new Repro.ReproduceByArtifactsRequest
+                    {
+                        ParentADef = template.Definition.Clone(),
+                        ParentBDef = template.Definition.Clone(),
+                        StrengthSource = plan.Reproduction.StrengthSource,
+                        Config = seedingConfig,
+                        Seed = NextSeed(),
+                        RunCount = (uint)remainingRuns
+                    },
                     cancellationToken)
                 .ConfigureAwait(false);
-            var childComplexity = await ResolveDefinitionComplexityAsync(childDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
-            population.Add(new PopulationMember(
-                childDefinition.Clone(),
-                membership.SpeciesId,
-                membership.SpeciesDisplayName,
-                childComplexity,
-                LastEvaluation: null));
+
+            foreach (var childDefinition in ExtractChildDefinitions(seedResult))
+            {
+                if (children.Count >= targetChildCount)
+                {
+                    break;
+                }
+
+                var childComplexity = await ResolveDefinitionComplexityAsync(childDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
+                if (!await IsAcceptableInitialSeedAsync(childDefinition, childComplexity, plan.SeedTemplate.InitialSeedShapeConstraints, cancellationToken).ConfigureAwait(false))
+                {
+                    continue;
+                }
+
+                var membership = await CommitArtifactMembershipAsync(
+                        childDefinition,
+                        new[] { template.Definition, template.Definition },
+                        explicitSpeciesId: null,
+                        explicitSpeciesDisplayName: null,
+                        decisionReason: "basics_seed_child",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                children.Add(new PopulationMember(
+                    childDefinition.Clone(),
+                    membership.SpeciesId,
+                    membership.SpeciesDisplayName,
+                    childComplexity,
+                    LastEvaluation: null));
+            }
         }
 
-        while (population.Count < targetPopulation)
-        {
-            population.Add(new PopulationMember(
-                templateDefinition.Clone(),
-                bootstrapSpeciesId,
-                bootstrapSpeciesDisplayName,
-                resolvedTemplateComplexity,
-                LastEvaluation: null));
-        }
-
-        return population;
+        return children;
     }
 
     private async Task<List<PopulationMember>> EvaluatePopulationAsync(
@@ -1305,6 +1442,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsEnvironmentPlan plan,
         IReadOnlyList<PopulationMember> population,
         int targetPopulation,
+        int minimumPopulation,
         CancellationToken cancellationToken,
         Action<string, int>? onBreedProgress,
         Action<uint>? onReproductionObserved)
@@ -1327,7 +1465,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var parentPool = BuildParentPool(plan.Scheduling.ParentSelection, population);
         if (parentPool.Count == 0)
         {
-            return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation);
+            return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation, minimumPopulation);
         }
 
         var bestFitness = Math.Max(0.0001f, ranked.Max(member => member.LastEvaluation?.Fitness ?? 0f));
@@ -1399,25 +1537,24 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             }
         }
 
-        return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation);
+        return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation, minimumPopulation);
     }
 
     private static List<PopulationMember> EnsureMinimumCarryForwardPopulation(
         List<PopulationMember> nextGeneration,
         IReadOnlyList<PopulationMember> ranked,
-        int targetPopulation)
+        int targetPopulation,
+        int minimumPopulation)
     {
-        var minimumPopulation = targetPopulation >= MinimumPopulationSize
-            ? Math.Min(MinimumPopulationSize, Math.Min(targetPopulation, ranked.Count))
-            : Math.Min(1, Math.Min(targetPopulation, ranked.Count));
-        if (nextGeneration.Count >= minimumPopulation)
+        var effectiveMinimumPopulation = Math.Min(Math.Max(1, minimumPopulation), Math.Min(targetPopulation, ranked.Count));
+        if (nextGeneration.Count >= effectiveMinimumPopulation)
         {
             return nextGeneration;
         }
 
         foreach (var member in ranked)
         {
-            if (nextGeneration.Count >= minimumPopulation)
+            if (nextGeneration.Count >= effectiveMinimumPopulation)
             {
                 break;
             }
@@ -1732,6 +1869,53 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             ActiveInternalRegionCount: shape.ActiveInternalRegionCount,
             InternalNeuronCount: shape.InternalNeuronCount,
             AxonCount: shape.AxonCount);
+
+    private static int ResolveMinimumRequiredInitialPopulation(IReadOnlyList<BasicsInitialBrainSeed> initialBrainSeeds)
+        => initialBrainSeeds.Count == 0
+            ? MinimumPopulationSize
+            : initialBrainSeeds.Sum(static seed => seed.DuplicateForReproduction ? 2 : 1);
+
+    private static int[] DistributeAcrossTemplates(int total, int templateCount)
+    {
+        if (templateCount <= 0 || total <= 0)
+        {
+            return new int[Math.Max(0, templateCount)];
+        }
+
+        var distribution = new int[templateCount];
+        for (var index = 0; index < total; index++)
+        {
+            distribution[index % templateCount]++;
+        }
+
+        return distribution;
+    }
+
+    private async Task<bool> IsAcceptableInitialSeedAsync(
+        ArtifactRef definition,
+        BasicsDefinitionComplexitySummary? complexity,
+        BasicsSeedShapeConstraints bounds,
+        CancellationToken cancellationToken)
+    {
+        var bytes = await BasicsArtifactStoreReader.ReadArtifactBytesAsync(
+                definition,
+                ResolveArtifactFallbackRoot(),
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (bytes is null)
+        {
+            return false;
+        }
+
+        var analysis = BasicsDefinitionAnalyzer.Analyze(bytes);
+        var resolvedComplexity = complexity ?? analysis.Complexity;
+        return analysis.Geometry.IsValid
+               && analysis.HasInputToOutputPath
+               && BasicsDefinitionAnalyzer.FitsSeedShapeBounds(resolvedComplexity, bounds);
+    }
+
+    private static string ShortSeedHash(byte[] bytes)
+        => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()[..12];
 
     private ulong NextSeed()
     {
@@ -2349,6 +2533,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionBestCandidateSummary? BestCandidate,
         int EvaluationFailureCount,
         string EvaluationFailureSummary);
+
+    private sealed record ResolvedInitialSeedTemplate(
+        ArtifactRef Definition,
+        string SpeciesId,
+        string SpeciesDisplayName,
+        BasicsDefinitionComplexitySummary? Complexity,
+        int ExactCopies);
 
     private sealed record PopulationMember(
         ArtifactRef Definition,

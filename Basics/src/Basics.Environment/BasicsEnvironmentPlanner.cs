@@ -28,6 +28,8 @@ public sealed class BasicsEnvironmentPlanner
         return new BasicsEnvironmentPlan(
             SelectedTask: options.SelectedTask,
             SeedTemplate: options.SeedTemplate,
+            SizingOverrides: options.SizingOverrides,
+            InitialBrainSeeds: options.InitialBrainSeeds.ToArray(),
             Capacity: capacity,
             OutputObservationMode: options.OutputObservationMode,
             Reproduction: options.Reproduction,

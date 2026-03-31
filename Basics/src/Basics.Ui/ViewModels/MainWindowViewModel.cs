@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Security.Cryptography;
 using Avalonia;
 using Nbn.Demos.Basics.Environment;
 using Nbn.Demos.Basics.Tasks;
@@ -47,6 +48,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private readonly UiDispatcher _dispatcher;
     private readonly IBasicsArtifactExportService _artifactExportService;
+    private readonly IBasicsBrainImportService _brainImportService;
     private readonly IBasicsLocalWorkerProcessService _workerProcessService;
     private IBasicsRuntimeClient? _runtimeClient;
     private BasicsExecutionSession? _executionSession;
@@ -92,6 +94,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _allowAxonReroute = true;
     private bool _allowRegionSetChange;
     private string _initialPopulationOverrideText = string.Empty;
+    private string _minimumPopulationOverrideText = string.Empty;
+    private string _maximumPopulationOverrideText = string.Empty;
     private string _reproductionRunCountOverrideText = string.Empty;
     private string _maxConcurrentBrainsOverrideText = string.Empty;
     private string _recommendedInitialPopulationText = "—";
@@ -122,6 +126,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _workerStoragePctText = "95";
     private string _workerLauncherStatus = "No workers launched from Basics UI.";
     private string _workerLauncherDetail = "Starts local WorkerNode processes on consecutive loopback ports. Shared-port multi-worker launch is not supported here yet.";
+    private string _initialBrainSeedStatus = "No initial brains uploaded.";
     private ArtifactRef? _winnerDefinitionArtifact;
     private ArtifactRef? _winnerSnapshotArtifact;
     private Guid _retainedWinnerBrainId;
@@ -132,10 +137,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     public MainWindowViewModel(
         UiDispatcher dispatcher,
         IBasicsArtifactExportService artifactExportService,
+        IBasicsBrainImportService brainImportService,
         IBasicsLocalWorkerProcessService workerProcessService)
     {
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _artifactExportService = artifactExportService ?? throw new ArgumentNullException(nameof(artifactExportService));
+        _brainImportService = brainImportService ?? throw new ArgumentNullException(nameof(brainImportService));
         _workerProcessService = workerProcessService ?? throw new ArgumentNullException(nameof(workerProcessService));
 
         OutputObservationModes = new ObservableCollection<OutputObservationModeOption>(BuildOutputObservationModes());
@@ -148,6 +155,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         ValidationErrors = new ObservableCollection<string>();
         MetricSummaries = new ObservableCollection<MetricSummaryItemViewModel>(BuildMetricSummaryItems());
+        InitialBrainSeeds = new ObservableCollection<InitialBrainSeedItemViewModel>();
 
         ConnectCommand = new AsyncRelayCommand(ConnectAsync, CanConnect);
         DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, CanDisconnect);
@@ -159,6 +167,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         ApplySuggestedBoundsCommand = new RelayCommand(ApplySuggestedBounds, () => _lastPlan is not null);
         StartWorkersCommand = new AsyncRelayCommand(StartWorkersAsync, CanStartWorkers);
         StopWorkersCommand = new AsyncRelayCommand(StopWorkersAsync, CanStopWorkers);
+        AddInitialBrainsCommand = new AsyncRelayCommand(AddInitialBrainsAsync);
+        ClearInitialBrainsCommand = new RelayCommand(ClearInitialBrains, () => InitialBrainSeeds.Count > 0);
 
         SelectedTask = Tasks.FirstOrDefault();
 
@@ -190,6 +200,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public ObservableCollection<MetricSummaryItemViewModel> MetricSummaries { get; }
 
+    public ObservableCollection<InitialBrainSeedItemViewModel> InitialBrainSeeds { get; }
+
     public AsyncRelayCommand ConnectCommand { get; }
 
     public AsyncRelayCommand DisconnectCommand { get; }
@@ -209,6 +221,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AsyncRelayCommand StartWorkersCommand { get; }
 
     public AsyncRelayCommand StopWorkersCommand { get; }
+
+    public AsyncRelayCommand AddInitialBrainsCommand { get; }
+
+    public RelayCommand ClearInitialBrainsCommand { get; }
 
     public string IoAddress
     {
@@ -466,6 +482,18 @@ public sealed class MainWindowViewModel : ViewModelBase
         set => SetProperty(ref _initialPopulationOverrideText, value);
     }
 
+    public string MinimumPopulationOverrideText
+    {
+        get => _minimumPopulationOverrideText;
+        set => SetProperty(ref _minimumPopulationOverrideText, value);
+    }
+
+    public string MaximumPopulationOverrideText
+    {
+        get => _maximumPopulationOverrideText;
+        set => SetProperty(ref _maximumPopulationOverrideText, value);
+    }
+
     public string ReproductionRunCountOverrideText
     {
         get => _reproductionRunCountOverrideText;
@@ -652,6 +680,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _workerLauncherDetail;
         private set => SetProperty(ref _workerLauncherDetail, value);
+    }
+
+    public string InitialBrainSeedStatus
+    {
+        get => _initialBrainSeedStatus;
+        private set => SetProperty(ref _initialBrainSeedStatus, value);
     }
 
     public bool HasAccuracyChartData => _accuracyHistory.Count > 0;
@@ -850,6 +884,130 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private async Task AddInitialBrainsAsync()
+    {
+        try
+        {
+            var imported = await _brainImportService.ImportAsync().ConfigureAwait(false);
+            if (imported.Count == 0)
+            {
+                return;
+            }
+
+            _dispatcher.Post(() =>
+            {
+                foreach (var file in imported)
+                {
+                    var analysis = BasicsDefinitionAnalyzer.Analyze(file.DefinitionBytes);
+                    if (!analysis.Geometry.IsValid)
+                    {
+                        InitialBrainSeedStatus = $"Skipped {file.DisplayName}: expected {BasicsIoGeometry.InputWidth}->{BasicsIoGeometry.OutputWidth} geometry.";
+                        continue;
+                    }
+
+                    UpsertInitialBrainSeed(file, analysis);
+                }
+
+                UpdateInitialBrainSeedStatus();
+                RefreshValidationState();
+            });
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(() => InitialBrainSeedStatus = $"Initial brain import failed: {ex.GetBaseException().Message}");
+        }
+    }
+
+    private void ClearInitialBrains()
+    {
+        InitialBrainSeeds.Clear();
+        UpdateInitialBrainSeedStatus();
+        RaiseCommandStates();
+        RefreshValidationState();
+    }
+
+    private void UpsertInitialBrainSeed(BasicsImportedBrainFile file, BasicsDefinitionAnalysis analysis)
+    {
+        var contentHash = Convert.ToHexString(SHA256.HashData(file.DefinitionBytes)).ToLowerInvariant();
+        if (InitialBrainSeeds.Any(seed => string.Equals(seed.ContentHash, contentHash, StringComparison.Ordinal)))
+        {
+            InitialBrainSeedStatus = $"{file.DisplayName} is already loaded as an initial brain.";
+            return;
+        }
+
+        InitialBrainSeedItemViewModel? item = null;
+        item = new InitialBrainSeedItemViewModel(
+            displayName: file.DisplayName,
+            localPath: file.LocalPath,
+            definitionBytes: file.DefinitionBytes,
+            contentHash: contentHash,
+            complexity: analysis.Complexity,
+            duplicateForReproduction: true,
+            removeCommand: new RelayCommand(
+                () =>
+                {
+                    if (item is null)
+                    {
+                        return;
+                    }
+
+                    InitialBrainSeeds.Remove(item);
+                    UpdateInitialBrainSeedStatus();
+                    RaiseCommandStates();
+                    RefreshValidationState();
+                }));
+        InitialBrainSeeds.Add(item);
+        EnsureSeedBoundsCover(analysis.Complexity);
+        RaiseCommandStates();
+    }
+
+    private void EnsureSeedBoundsCover(BasicsDefinitionComplexitySummary complexity)
+    {
+        _suppressValidationRefresh = true;
+        try
+        {
+            MinActiveInternalRegionCountText = ExpandMinimum(MinActiveInternalRegionCountText, complexity.ActiveInternalRegionCount);
+            MaxActiveInternalRegionCountText = ExpandMaximum(MaxActiveInternalRegionCountText, complexity.ActiveInternalRegionCount);
+            MinInternalNeuronCountText = ExpandMinimum(MinInternalNeuronCountText, complexity.InternalNeuronCount);
+            MaxInternalNeuronCountText = ExpandMaximum(MaxInternalNeuronCountText, complexity.InternalNeuronCount);
+            MinAxonCountText = ExpandMinimum(MinAxonCountText, complexity.AxonCount);
+            MaxAxonCountText = ExpandMaximum(MaxAxonCountText, complexity.AxonCount);
+        }
+        finally
+        {
+            _suppressValidationRefresh = false;
+        }
+    }
+
+    private static string ExpandMinimum(string currentText, int requiredValue)
+    {
+        var current = string.IsNullOrWhiteSpace(currentText)
+            ? (int?)null
+            : int.TryParse(currentText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : null;
+        var next = current.HasValue ? Math.Min(current.Value, requiredValue) : requiredValue;
+        return next.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static string ExpandMaximum(string currentText, int requiredValue)
+    {
+        var current = string.IsNullOrWhiteSpace(currentText)
+            ? (int?)null
+            : int.TryParse(currentText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : null;
+        var next = current.HasValue ? Math.Max(current.Value, requiredValue) : requiredValue;
+        return next.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private void UpdateInitialBrainSeedStatus()
+    {
+        InitialBrainSeedStatus = InitialBrainSeeds.Count == 0
+            ? "No initial brains uploaded."
+            : $"{InitialBrainSeeds.Count} unique initial brain(s) loaded. Uploaded brains replace the built template for initial seeding.";
+    }
+
     private void ApplySuggestedBounds()
     {
         if (_lastPlan is null)
@@ -945,6 +1103,11 @@ public sealed class MainWindowViewModel : ViewModelBase
                 return;
             }
 
+            if (!await RestartRuntimeClientForRunAsync(runtimeOptions).ConfigureAwait(false))
+            {
+                return;
+            }
+
             var planner = new BasicsEnvironmentPlanner(_runtimeClient);
             var plan = await planner.BuildPlanAsync(options).ConfigureAwait(false);
             _dispatcher.Post(() => ApplyPlan(plan));
@@ -1014,6 +1177,48 @@ public sealed class MainWindowViewModel : ViewModelBase
                 ExecutionStatus = "Execution failed.";
                 ExecutionDetail = ex.GetBaseException().Message;
             });
+        }
+    }
+
+    private async Task<bool> RestartRuntimeClientForRunAsync(BasicsRuntimeClientOptions runtimeOptions)
+    {
+        await DisposeRuntimeClientAsync().ConfigureAwait(false);
+
+        try
+        {
+            var runtimeClient = await BasicsRuntimeClient.StartAsync(runtimeOptions).ConfigureAwait(false);
+            var ack = await runtimeClient.ConnectAsync(ClientName.Trim()).ConfigureAwait(false);
+            if (ack is null)
+            {
+                await runtimeClient.DisposeAsync().ConfigureAwait(false);
+                _dispatcher.Post(() =>
+                {
+                    ConnectionStatus = "IO reconnect failed.";
+                    ExecutionStatus = "Start blocked.";
+                    ExecutionDetail = "Could not reconnect the runtime client for a fresh run.";
+                    RaiseCommandStates();
+                });
+                return false;
+            }
+
+            _runtimeClient = runtimeClient;
+            _dispatcher.Post(() =>
+            {
+                ConnectionStatus = $"Connected to {IoAddress} as {ack.ServerName}";
+                RaiseCommandStates();
+            });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(() =>
+            {
+                ConnectionStatus = $"IO reconnect failed: {ex.GetBaseException().Message}";
+                ExecutionStatus = "Start blocked.";
+                ExecutionDetail = "Could not reconnect the runtime client for a fresh run.";
+                RaiseCommandStates();
+            });
+            return false;
         }
     }
 
@@ -1119,6 +1324,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         ApplySuggestedBoundsCommand.RaiseCanExecuteChanged();
         StartWorkersCommand.RaiseCanExecuteChanged();
         StopWorkersCommand.RaiseCanExecuteChanged();
+        AddInitialBrainsCommand.RaiseCanExecuteChanged();
+        ClearInitialBrainsCommand.RaiseCanExecuteChanged();
     }
 
     private bool TryBuildRuntimeClientOptions(
@@ -1273,6 +1480,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         var overrides = new BasicsSizingOverrides
         {
             InitialPopulationCount = ParseOptionalInt(InitialPopulationOverrideText, "Initial population override", errors),
+            MinimumPopulationCount = ParseOptionalInt(MinimumPopulationOverrideText, "Minimum population override", errors),
+            MaximumPopulationCount = ParseOptionalInt(MaximumPopulationOverrideText, "Maximum population override", errors),
             ReproductionRunCount = ParseOptionalUInt(ReproductionRunCountOverrideText, "Run-count override", errors),
             MaxConcurrentBrains = ParseOptionalInt(MaxConcurrentBrainsOverrideText, "Max-concurrent override", errors)
         };
@@ -1330,7 +1539,12 @@ public sealed class MainWindowViewModel : ViewModelBase
                 StrengthSource = SelectedStrengthSource?.Value ?? Repro.StrengthSource.StrengthBaseOnly
             },
             Scheduling = scheduling,
-            StopCriteria = stopCriteria
+            StopCriteria = stopCriteria,
+            InitialBrainSeeds = InitialBrainSeeds.Select(seed => new BasicsInitialBrainSeed(
+                seed.DisplayName,
+                seed.DefinitionBytes.ToArray(),
+                seed.DuplicateForReproduction,
+                seed.Complexity)).ToArray()
         };
 
         var validation = options.Validate();
@@ -2017,5 +2231,46 @@ public sealed class MetricSummaryItemViewModel : ViewModelBase
     {
         get => _detailText;
         set => SetProperty(ref _detailText, value);
+    }
+}
+
+public sealed class InitialBrainSeedItemViewModel : ViewModelBase
+{
+    private bool _duplicateForReproduction;
+
+    public InitialBrainSeedItemViewModel(
+        string displayName,
+        string? localPath,
+        byte[] definitionBytes,
+        string contentHash,
+        BasicsDefinitionComplexitySummary complexity,
+        bool duplicateForReproduction,
+        RelayCommand removeCommand)
+    {
+        DisplayName = displayName;
+        LocalPath = localPath;
+        DefinitionBytes = definitionBytes;
+        ContentHash = contentHash;
+        Complexity = complexity;
+        _duplicateForReproduction = duplicateForReproduction;
+        RemoveCommand = removeCommand;
+    }
+
+    public string DisplayName { get; }
+
+    public string? LocalPath { get; }
+
+    public byte[] DefinitionBytes { get; }
+
+    public string ContentHash { get; }
+
+    public BasicsDefinitionComplexitySummary Complexity { get; }
+
+    public RelayCommand RemoveCommand { get; }
+
+    public bool DuplicateForReproduction
+    {
+        get => _duplicateForReproduction;
+        set => SetProperty(ref _duplicateForReproduction, value);
     }
 }
