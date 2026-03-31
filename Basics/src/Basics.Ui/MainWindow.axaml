@@ -642,6 +642,10 @@
                                         <Polyline Points="{Binding AccuracyChartPoints}"
                                                   Stroke="#0E7490"
                                                   StrokeThickness="2" />
+                                        <Polyline Points="{Binding BestAccuracyChartPoints}"
+                                                  Stroke="#1D4ED8"
+                                                  StrokeThickness="2"
+                                                  StrokeDashArray="5,3" />
                                     </Canvas>
                                     <TextBlock IsVisible="{Binding ShowAccuracyEmptyState}"
                                                Text="No runtime accuracy samples yet."

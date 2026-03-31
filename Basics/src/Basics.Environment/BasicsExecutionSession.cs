@@ -296,12 +296,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
                 if (plan.StopCriteria.IsSatisfied(generationMetrics.BestAccuracy, generationMetrics.BestFitness))
                 {
-                    population = await RetainWinningCandidateAsync(
+                    (population, bestCandidateSoFar) = await TryRetainBestCandidateForExportAsync(
+                            taskPlugin.Contract,
                             population,
-                            generationMetrics.BestCandidate,
+                            currentGenerationBest: generationMetrics.BestCandidate,
+                            bestCandidateSoFar,
                             CancellationToken.None)
                         .ConfigureAwait(false);
-                    bestCandidateSoFar = BuildGenerationMetrics(population, plan.StopCriteria, includeWinnerRuntimeState: true).BestCandidate;
 
                     var retainedWinnerCount = population.Count(member => member.ActiveBrainId != Guid.Empty);
                     return CreateFinalSnapshot(
@@ -886,9 +887,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             var batchEvaluations = await Task.WhenAll(
                     batch.Select(member => EvaluateMemberAsync(taskPlugin, member, outputObservationMode, setupGate, spawnPacer, cancellationToken)))
                 .ConfigureAwait(false);
-            var batchTiming = BuildBatchTimingSummary(generation, chunkIndex + 1, chunkCount, batchEvaluations, batchStopwatch.Elapsed);
+            var cleanedBatchMembers = await TeardownPopulationBrainsAsync(
+                    batchEvaluations.Select(static result => result.Member).ToArray(),
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+            var batchResults = batchEvaluations
+                .Zip(cleanedBatchMembers, static (result, cleanedMember) => result with { Member = cleanedMember })
+                .ToArray();
+            var batchTiming = BuildBatchTimingSummary(generation, chunkIndex + 1, chunkCount, batchResults, batchStopwatch.Elapsed);
             batchTimings.Add(batchTiming);
-            evaluated.AddRange(batchEvaluations.Select(static result => result.Member));
+            evaluated.AddRange(batchResults.Select(static result => result.Member));
 
             onSnapshot?.Invoke(CreateSnapshot(
                 plan.StopCriteria,
@@ -898,7 +906,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 speciationEpochId,
                 generation,
                 evaluated.ToArray(),
-                activeBrainCount: evaluated.Count(member => member.ActiveBrainId != Guid.Empty),
+                activeBrainCount: 0,
                 reproductionCalls,
                 reproductionRunsObserved,
                 effectiveTemplateDefinition,
@@ -1528,6 +1536,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         if (currentGenerationBest is not null
+            && currentGenerationBest.ActiveBrainId is Guid retainedBrainId
+            && retainedBrainId != Guid.Empty
             && HasSameDefinitionArtifact(currentGenerationBest.DefinitionArtifact, bestCandidateSoFar!.DefinitionArtifact))
         {
             var retainedPopulation = await RetainWinningCandidateAsync(population, currentGenerationBest, cancellationToken).ConfigureAwait(false);

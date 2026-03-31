@@ -369,8 +369,9 @@ public sealed class BasicsExecutionSessionTests
                     snapshot.State == BasicsExecutionState.Running
                     && snapshot.StatusText.Contains("Generation 1 evaluated.", StringComparison.Ordinal)));
             Assert.NotNull(runningSnapshot.BestCandidate);
-            Assert.True(runningSnapshot.BestCandidate.HasRetainedBrain);
-            Assert.True(runningSnapshot.BestCandidate.HasSnapshotArtifact);
+            Assert.Empty(runningSnapshot.BestCandidate.Diagnostics);
+            Assert.False(runningSnapshot.BestCandidate.HasRetainedBrain);
+            Assert.False(runningSnapshot.BestCandidate.HasSnapshotArtifact);
         }
         finally
         {
@@ -407,7 +408,7 @@ public sealed class BasicsExecutionSessionTests
             Assert.True(final.BestCandidate.HasSnapshotArtifact);
             Assert.Equal(final.EffectiveTemplateDefinition.ToSha256Hex(), final.BestCandidate.ArtifactSha256);
             Assert.Equal(1, runtimeClient.LiveBrainCount);
-            Assert.Equal(2, runtimeClient.SnapshotRequestCount);
+            Assert.Equal(1, runtimeClient.SnapshotRequestCount);
         }
         finally
         {
@@ -540,7 +541,7 @@ public sealed class BasicsExecutionSessionTests
             Assert.True(final.BestCandidate.HasSnapshotArtifact);
             Assert.True(runtimeClient.AwaitSpawnPlacementCallCount >= 2);
             Assert.Equal(1, runtimeClient.LiveBrainCount);
-            Assert.Equal(2, runtimeClient.SnapshotRequestCount);
+            Assert.Equal(1, runtimeClient.SnapshotRequestCount);
         }
         finally
         {

@@ -35,6 +35,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(ShowAccuracyEmptyState),
         nameof(ShowFitnessEmptyState),
         nameof(AccuracyChartPoints),
+        nameof(BestAccuracyChartPoints),
         nameof(FitnessChartPoints),
         nameof(ExecutionStatus),
         nameof(ExecutionDetail),
@@ -720,6 +721,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     public bool ShowFitnessEmptyState => !HasFitnessChartData;
 
     public IReadOnlyList<Point> AccuracyChartPoints => BuildChartPoints(_accuracyHistory);
+
+    public IReadOnlyList<Point> BestAccuracyChartPoints => BuildChartPoints(BuildCumulativeBestHistory(_accuracyHistory));
 
     public IReadOnlyList<Point> FitnessChartPoints => BuildChartPoints(_fitnessHistory);
 
@@ -2332,7 +2335,26 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowAccuracyEmptyState));
         OnPropertyChanged(nameof(ShowFitnessEmptyState));
         OnPropertyChanged(nameof(AccuracyChartPoints));
+        OnPropertyChanged(nameof(BestAccuracyChartPoints));
         OnPropertyChanged(nameof(FitnessChartPoints));
+    }
+
+    private static IReadOnlyList<float> BuildCumulativeBestHistory(IReadOnlyList<float> history)
+    {
+        if (history.Count == 0)
+        {
+            return Array.Empty<float>();
+        }
+
+        var result = new float[history.Count];
+        var best = 0f;
+        for (var i = 0; i < history.Count; i++)
+        {
+            best = Math.Max(best, history[i]);
+            result[i] = best;
+        }
+
+        return result;
     }
 
     private static IReadOnlyList<Point> BuildChartPoints(IReadOnlyList<float> history)
