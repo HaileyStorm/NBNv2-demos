@@ -641,6 +641,64 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_PreservesAccuracyAndFitnessHistories_InEvaluationProgressSnapshots()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "zero"
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        TargetAccuracy = 1.1f,
+                        TargetFitness = 1.1f,
+                        MaximumGenerations = 2
+                    }),
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+
+            var generationOneSummary = Assert.Single(
+                snapshots.Where(snapshot =>
+                    snapshot.State == BasicsExecutionState.Running
+                    && snapshot.StatusText.Contains("Generation 1 evaluated.", StringComparison.Ordinal)));
+            var generationTwoEvaluationSnapshot = snapshots.FirstOrDefault(snapshot =>
+                snapshot.State == BasicsExecutionState.Running
+                && snapshot.StatusText.Contains("Evaluating generation 2...", StringComparison.Ordinal)
+                && snapshot.OffspringAccuracyHistory.Count > 0);
+
+            Assert.True(generationOneSummary.OffspringBestAccuracy > 0f);
+            Assert.True(generationOneSummary.OffspringBestFitness > generationOneSummary.OffspringBestAccuracy);
+            Assert.NotNull(generationTwoEvaluationSnapshot);
+            Assert.Equal(
+                generationOneSummary.OffspringBestAccuracy,
+                generationTwoEvaluationSnapshot!.OffspringAccuracyHistory[^1]);
+            Assert.Equal(
+                generationOneSummary.BestAccuracy,
+                generationTwoEvaluationSnapshot.AccuracyHistory[^1]);
+            Assert.Equal(
+                generationOneSummary.OffspringBestFitness,
+                generationTwoEvaluationSnapshot.OffspringFitnessHistory[^1]);
+            Assert.Equal(
+                generationOneSummary.BestFitness,
+                generationTwoEvaluationSnapshot.BestFitnessHistory[^1]);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public void TransportFailure_UsesSharedBreakdownShape_ForAllImplementedTaskFamilies()
     {
         var method = typeof(BasicsExecutionSession).GetMethod("CreateTransportFailure", BindingFlags.Static | BindingFlags.NonPublic);
