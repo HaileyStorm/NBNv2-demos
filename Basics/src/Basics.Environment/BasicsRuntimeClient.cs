@@ -88,6 +88,21 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
         Guid? brainId = null,
         CancellationToken cancellationToken = default);
 
+    Task<IoCommandAck?> SetCostEnergyEnabledAsync(
+        Guid brainId,
+        bool enabled,
+        CancellationToken cancellationToken = default);
+
+    Task<IoCommandAck?> SetPlasticityEnabledAsync(
+        Guid brainId,
+        bool enabled,
+        CancellationToken cancellationToken = default);
+
+    Task<IoCommandAck?> SetHomeostasisEnabledAsync(
+        Guid brainId,
+        bool enabled,
+        CancellationToken cancellationToken = default);
+
     Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByArtifactsAsync(
         ReproduceByArtifactsRequest request,
         CancellationToken cancellationToken = default);
@@ -701,6 +716,114 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                     ? brainId.Value.ToProtoUuid()
                     : null
             };
+        }
+    }
+
+    public async Task<IoCommandAck?> SetCostEnergyEnabledAsync(
+        Guid brainId,
+        bool enabled,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _system.Root.RequestAsync<IoCommandAck>(
+                    _ioPid,
+                    new SetCostEnergyEnabled
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        CostEnabled = enabled,
+                        EnergyEnabled = enabled
+                    },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<IoCommandAck?> SetPlasticityEnabledAsync(
+        Guid brainId,
+        bool enabled,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _system.Root.RequestAsync<IoCommandAck>(
+                    _ioPid,
+                    new SetPlasticityEnabled
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        PlasticityEnabled = enabled,
+                        PlasticityRate = 0f,
+                        ProbabilisticUpdates = false,
+                        PlasticityDelta = 0f,
+                        PlasticityRebaseThreshold = 0,
+                        PlasticityRebaseThresholdPct = 0f,
+                        PlasticityEnergyCostModulationEnabled = false,
+                        PlasticityEnergyCostReferenceTickCost = 1,
+                        PlasticityEnergyCostResponseStrength = 0f,
+                        PlasticityEnergyCostMinScale = 0f,
+                        PlasticityEnergyCostMaxScale = 0f
+                    },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<IoCommandAck?> SetHomeostasisEnabledAsync(
+        Guid brainId,
+        bool enabled,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _system.Root.RequestAsync<IoCommandAck>(
+                    _ioPid,
+                    new SetHomeostasisEnabled
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        HomeostasisEnabled = enabled,
+                        HomeostasisTargetMode = Nbn.Proto.Control.HomeostasisTargetMode.HomeostasisTargetZero,
+                        HomeostasisUpdateMode = Nbn.Proto.Control.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+                        HomeostasisBaseProbability = 0f,
+                        HomeostasisMinStepCodes = 1,
+                        HomeostasisEnergyCouplingEnabled = false,
+                        HomeostasisEnergyTargetScale = 1f,
+                        HomeostasisEnergyProbabilityScale = 1f
+                    },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
         }
     }
 

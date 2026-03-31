@@ -902,6 +902,36 @@ public sealed class BasicsExecutionSessionTests
         }
     }
 
+    [Fact]
+    public async Task ExecutionSession_DisablesAdaptiveRuntimeFeatures_ForEvaluationBrains()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient();
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1
+                    }),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.Contains(runtimeClient.SetCostEnergyEnabledRequests, request => request.BrainId != Guid.Empty && !request.Enabled);
+            Assert.Contains(runtimeClient.SetPlasticityEnabledRequests, request => request.BrainId != Guid.Empty && !request.Enabled);
+            Assert.Contains(runtimeClient.SetHomeostasisEnabledRequests, request => request.BrainId != Guid.Empty && !request.Enabled);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
     private static BasicsEnvironmentPlan CreatePlan(
         BasicsOutputObservationMode outputObservationMode,
         BasicsExecutionStopCriteria? stopCriteria = null,
@@ -982,6 +1012,9 @@ public sealed class BasicsExecutionSessionTests
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
         public int AwaitSpawnPlacementCallCount { get; private set; }
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
+        public List<(Guid BrainId, bool Enabled)> SetCostEnergyEnabledRequests { get; } = new();
+        public List<(Guid BrainId, bool Enabled)> SetPlasticityEnabledRequests { get; } = new();
+        public List<(Guid BrainId, bool Enabled)> SetHomeostasisEnabledRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
         public List<TimeSpan> VectorWaitTimeouts { get; } = new();
         public List<TimeSpan> EventWaitTimeouts { get; } = new();
@@ -1270,6 +1303,51 @@ public sealed class BasicsExecutionSessionTests
                 Success = true,
                 OutputVectorSource = outputVectorSource,
                 BrainId = brainId.HasValue && brainId.Value != Guid.Empty ? brainId.Value.ToProtoUuid() : null
+            });
+        }
+
+        public Task<IoCommandAck?> SetCostEnergyEnabledAsync(
+            Guid brainId,
+            bool enabled,
+            CancellationToken cancellationToken = default)
+        {
+            SetCostEnergyEnabledRequests.Add((brainId, enabled));
+            return Task.FromResult<IoCommandAck?>(new IoCommandAck
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Command = "set_cost_energy",
+                Success = true,
+                Message = "applied"
+            });
+        }
+
+        public Task<IoCommandAck?> SetPlasticityEnabledAsync(
+            Guid brainId,
+            bool enabled,
+            CancellationToken cancellationToken = default)
+        {
+            SetPlasticityEnabledRequests.Add((brainId, enabled));
+            return Task.FromResult<IoCommandAck?>(new IoCommandAck
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Command = "set_plasticity",
+                Success = true,
+                Message = "applied"
+            });
+        }
+
+        public Task<IoCommandAck?> SetHomeostasisEnabledAsync(
+            Guid brainId,
+            bool enabled,
+            CancellationToken cancellationToken = default)
+        {
+            SetHomeostasisEnabledRequests.Add((brainId, enabled));
+            return Task.FromResult<IoCommandAck?>(new IoCommandAck
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Command = "set_homeostasis",
+                Success = true,
+                Message = "applied"
             });
         }
 

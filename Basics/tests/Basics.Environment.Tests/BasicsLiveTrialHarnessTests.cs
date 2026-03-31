@@ -528,6 +528,24 @@ public sealed class BasicsLiveTrialHarnessTests
         public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(OutputVectorSource outputVectorSource, Guid? brainId = null, CancellationToken cancellationToken = default)
             => Task.FromResult<Nbn.Proto.Io.SetOutputVectorSourceAck?>(null);
 
+        public Task<IoCommandAck?> SetCostEnergyEnabledAsync(
+            Guid brainId,
+            bool enabled,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IoCommandAck?>(null);
+
+        public Task<IoCommandAck?> SetPlasticityEnabledAsync(
+            Guid brainId,
+            bool enabled,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IoCommandAck?>(null);
+
+        public Task<IoCommandAck?> SetHomeostasisEnabledAsync(
+            Guid brainId,
+            bool enabled,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IoCommandAck?>(null);
+
         public Task<Repro.ReproduceResult?> ReproduceByArtifactsAsync(Repro.ReproduceByArtifactsRequest request, CancellationToken cancellationToken = default)
             => Task.FromResult<Repro.ReproduceResult?>(null);
 

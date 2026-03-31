@@ -158,6 +158,24 @@ public sealed class BasicsEnvironmentPlannerTests
             CancellationToken cancellationToken = default)
             => Task.FromResult<Nbn.Proto.Io.SetOutputVectorSourceAck?>(null);
 
+        public Task<IoCommandAck?> SetCostEnergyEnabledAsync(
+            Guid brainId,
+            bool enabled,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IoCommandAck?>(null);
+
+        public Task<IoCommandAck?> SetPlasticityEnabledAsync(
+            Guid brainId,
+            bool enabled,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IoCommandAck?>(null);
+
+        public Task<IoCommandAck?> SetHomeostasisEnabledAsync(
+            Guid brainId,
+            bool enabled,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IoCommandAck?>(null);
+
         public Task<Repro.ReproduceResult?> ReproduceByArtifactsAsync(
             Repro.ReproduceByArtifactsRequest request,
             CancellationToken cancellationToken = default)

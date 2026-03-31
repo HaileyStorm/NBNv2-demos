@@ -647,6 +647,50 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
     }
 
+    private async Task ConfigureBrainEvaluationRuntimeStateAsync(
+        Guid brainId,
+        CancellationToken cancellationToken)
+    {
+        if (brainId == Guid.Empty)
+        {
+            return;
+        }
+
+        var costAck = await _runtimeClient.SetCostEnergyEnabledAsync(brainId, enabled: false, cancellationToken).ConfigureAwait(false);
+        ValidateIoCommandAck(costAck, brainId, "set_cost_energy");
+
+        var plasticityAck = await _runtimeClient.SetPlasticityEnabledAsync(brainId, enabled: false, cancellationToken).ConfigureAwait(false);
+        ValidateIoCommandAck(plasticityAck, brainId, "set_plasticity");
+
+        var homeostasisAck = await _runtimeClient.SetHomeostasisEnabledAsync(brainId, enabled: false, cancellationToken).ConfigureAwait(false);
+        ValidateIoCommandAck(homeostasisAck, brainId, "set_homeostasis");
+    }
+
+    private static void ValidateIoCommandAck(
+        IoCommandAck? ack,
+        Guid brainId,
+        string command)
+    {
+        if (ack is null)
+        {
+            throw new InvalidOperationException($"{command} returned no response for brain {brainId}.");
+        }
+
+        if (!ack.Success)
+        {
+            throw new InvalidOperationException(
+                $"{command} failed for brain {brainId}: {ack.Message}".Trim());
+        }
+
+        if (ack.BrainId is not null
+            && ack.BrainId.TryToGuid(out var acknowledgedBrainId)
+            && acknowledgedBrainId != brainId)
+        {
+            throw new InvalidOperationException(
+                $"{command} targeted brain {brainId} but acknowledged {acknowledgedBrainId}.");
+        }
+    }
+
     private async Task<(ArtifactRef TemplateDefinition, BasicsResolvedSeedShape? SeedShape, BasicsDefinitionComplexitySummary? Complexity)> ResolveTemplateDefinitionAsync(
         BasicsSeedTemplateContract template,
         CancellationToken cancellationToken)
@@ -1119,6 +1163,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, setup, observation, totalStopwatch.Elapsed);
             }
 
+            await ConfigureBrainEvaluationRuntimeStateAsync(brainId, cancellationToken).ConfigureAwait(false);
             await ConfigureBrainOutputObservationModeAsync(brainId, outputObservationMode, brainInfo, cancellationToken).ConfigureAwait(false);
 
             if (outputObservationMode.UsesVectorSubscription())
