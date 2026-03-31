@@ -861,6 +861,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             cancellationToken.ThrowIfCancellationRequested();
 
             var batch = population.Skip(chunkIndex * maxConcurrent).Take(maxConcurrent).ToArray();
+            var reusedBatchMembers = batch
+                .Where(CanReuseEvaluation)
+                .Select(static member => member with
+                {
+                    ActiveBrainId = Guid.Empty,
+                    SnapshotArtifact = null
+                })
+                .ToArray();
+            var membersToEvaluate = batch.Where(static member => !CanReuseEvaluation(member)).ToArray();
             var completedBatchTimings = batchTimings.Count == 0 ? null : batchTimings[^1];
             onSnapshot?.Invoke(CreateSnapshot(
                 plan.StopCriteria,
@@ -870,7 +879,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 speciationEpochId,
                 generation,
                 evaluated.Concat(batch).ToArray(),
-                activeBrainCount: batch.Length,
+                activeBrainCount: membersToEvaluate.Length,
                 reproductionCalls,
                 reproductionRunsObserved,
                 effectiveTemplateDefinition,
@@ -884,9 +893,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 latestGenerationTiming: BuildGenerationTimingSummary(generation, batchTimings)));
 
             var batchStopwatch = Stopwatch.StartNew();
-            var batchEvaluations = await Task.WhenAll(
-                    batch.Select(member => EvaluateMemberAsync(taskPlugin, member, outputObservationMode, setupGate, spawnPacer, cancellationToken)))
-                .ConfigureAwait(false);
+            var batchEvaluations = membersToEvaluate.Length == 0
+                ? Array.Empty<MemberEvaluationResult>()
+                : await Task.WhenAll(
+                        membersToEvaluate.Select(member => EvaluateMemberAsync(taskPlugin, member, outputObservationMode, setupGate, spawnPacer, cancellationToken)))
+                    .ConfigureAwait(false);
             var cleanedBatchMembers = await TeardownPopulationBrainsAsync(
                     batchEvaluations.Select(static result => result.Member).ToArray(),
                     CancellationToken.None)
@@ -896,6 +907,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 .ToArray();
             var batchTiming = BuildBatchTimingSummary(generation, chunkIndex + 1, chunkCount, batchResults, batchStopwatch.Elapsed);
             batchTimings.Add(batchTiming);
+            evaluated.AddRange(reusedBatchMembers);
             evaluated.AddRange(batchResults.Select(static result => result.Member));
 
             onSnapshot?.Invoke(CreateSnapshot(
@@ -1136,8 +1148,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
     private static int ResolveSetupConcurrency(int eligibleWorkerCount, int maxConcurrent)
     {
-        var workerScaled = Math.Max(1, eligibleWorkerCount) * 2;
-        return Math.Max(1, Math.Min(maxConcurrent, workerScaled));
+        return Math.Max(1, Math.Min(maxConcurrent, Math.Max(1, eligibleWorkerCount)));
     }
 
     private sealed class SpawnRequestPacer
@@ -1317,6 +1328,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var delimiter = diagnostic.IndexOf(':');
         return delimiter <= 0 ? diagnostic : diagnostic[..delimiter];
     }
+
+    private static bool CanReuseEvaluation(PopulationMember member)
+        => member.LastEvaluation is not null && member.LastEvaluation.Diagnostics.Count == 0;
 
     private static string FormatSeconds(double seconds)
         => seconds >= 10d
@@ -1637,22 +1651,23 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<PopulationMember> population,
         CancellationToken cancellationToken)
     {
-        var updated = new List<PopulationMember>(population.Count);
-        foreach (var member in population)
+        var activeBrainIds = population
+            .Select(static member => member.ActiveBrainId)
+            .Where(static brainId => brainId != Guid.Empty)
+            .Distinct()
+            .ToArray();
+        if (activeBrainIds.Length > 0)
         {
-            if (member.ActiveBrainId != Guid.Empty)
-            {
-                await TeardownBrainAsync(member.ActiveBrainId, cancellationToken).ConfigureAwait(false);
-            }
+            await Task.WhenAll(activeBrainIds.Select(brainId => TeardownBrainAsync(brainId, cancellationToken))).ConfigureAwait(false);
+        }
 
-            updated.Add(member with
+        return population
+            .Select(static member => member with
             {
                 ActiveBrainId = Guid.Empty,
                 SnapshotArtifact = null
-            });
-        }
-
-        return updated;
+            })
+            .ToList();
     }
 
     private async Task<ArtifactRef?> TryRequestSnapshotArtifactAsync(Guid brainId, CancellationToken cancellationToken)
@@ -1767,7 +1782,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             : Math.Max(1, (int)Math.Ceiling(ranked.Length * effectiveScheduling.ParentSelection.EliteFraction));
         eliteCount = Math.Min(eliteCount, Math.Min(ranked.Length, targetPopulation));
 
-        var nextGeneration = ranked.Take(eliteCount).Select(static member => member with { LastEvaluation = null }).ToList();
+        var nextGeneration = ranked.Take(eliteCount).Select(static member => member with
+        {
+            ActiveBrainId = Guid.Empty,
+            SnapshotArtifact = null
+        }).ToList();
         var parentPool = BuildParentPool(effectiveScheduling.ParentSelection, population);
         if (parentPool.Count == 0)
         {
