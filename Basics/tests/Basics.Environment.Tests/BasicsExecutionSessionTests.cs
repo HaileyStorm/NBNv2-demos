@@ -870,6 +870,38 @@ public sealed class BasicsExecutionSessionTests
         }
     }
 
+    [Fact]
+    public async Task ExecutionSession_RetriesTransientSpawnFailures()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            TransientSpawnFailureCount = 1
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1
+                    }),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.True(final.BestAccuracy > 0f);
+            Assert.True(runtimeClient.SpawnRequestCount >= 3, $"Expected at least one retried spawn, observed {runtimeClient.SpawnRequestCount} spawn request(s).");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
     private static BasicsEnvironmentPlan CreatePlan(
         BasicsOutputObservationMode outputObservationMode,
         BasicsExecutionStopCriteria? stopCriteria = null,
@@ -938,9 +970,11 @@ public sealed class BasicsExecutionSessionTests
         public int SingleSubscriptionCount { get; private set; }
         public int SnapshotRequestCount { get; private set; }
         public int LiveBrainCount => _brainDefinitions.Count;
+        public int SpawnRequestCount { get; private set; }
         public int? ThrowOnReproduceCallNumber { get; init; }
         public int? ReturnNoChildrenOnReproduceCallNumber { get; init; }
         public int? ReturnNoChildrenStartingAtReproduceCallNumber { get; init; }
+        public int TransientSpawnFailureCount { get; set; }
         public TimeSpan SpawnDelay { get; init; }
         public string DefaultBehavior { get; init; } = "zero";
         public bool OnlyEmitOutputVectorOnChange { get; init; }
@@ -985,10 +1019,27 @@ public sealed class BasicsExecutionSessionTests
             UpdateMaxObservedConcurrentSpawnRequests(active);
             try
             {
+                SpawnRequestCount++;
                 SpawnRequestStartedAtUtc.Enqueue(DateTimeOffset.UtcNow);
                 if (SpawnDelay > TimeSpan.Zero)
                 {
                     await Task.Delay(SpawnDelay, cancellationToken);
+                }
+
+                if (TransientSpawnFailureCount > 0)
+                {
+                    TransientSpawnFailureCount--;
+                    return new SpawnBrainViaIOAck
+                    {
+                        Ack = new SpawnBrainAck
+                        {
+                            BrainId = Guid.NewGuid().ToProtoUuid(),
+                            AcceptedForPlacement = false,
+                            PlacementReady = false,
+                            FailureReasonCode = "spawn_request_failed",
+                            FailureMessage = "transient_test_failure"
+                        }
+                    };
                 }
 
                 var brainId = Guid.NewGuid();

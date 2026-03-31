@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Avalonia;
 using Nbn.Demos.Basics.Environment;
 using Nbn.Demos.Basics.Tasks;
@@ -40,6 +42,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(BestFitnessChartPoints),
         nameof(ExecutionStatus),
         nameof(ExecutionDetail),
+        nameof(ExecutionLogPath),
         nameof(IsExecutionRunning),
         nameof(MetricsStatus),
         nameof(MetricsSecondaryStatus),
@@ -57,6 +60,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private IBasicsRuntimeClient? _runtimeClient;
     private BasicsExecutionSession? _executionSession;
     private CancellationTokenSource? _executionCts;
+    private BasicsExecutionRunLog? _executionRunLog;
     private BasicsEnvironmentPlan? _lastPlan;
     private bool _suppressValidationRefresh;
     private bool _isExecutionRunning;
@@ -123,6 +127,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _lastPlanSummary = "No environment plan built yet.";
     private string _executionStatus = "Idle";
     private string _executionDetail = "Connect to IO, build capacity bounds, then start an implemented task plugin.";
+    private string _executionLogPath = "Run log: none yet.";
     private string _metricsStatus = "Connect to IO, fetch capacity, and start an implemented task to populate live metrics.";
     private string _metricsSecondaryStatus = "Population and resource summaries update when capacity is fetched or a run is active.";
     private string _winnerExportStatus = "No best-so-far brain retained.";
@@ -235,6 +240,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AsyncRelayCommand AddInitialBrainsCommand { get; }
 
     public RelayCommand ClearInitialBrainsCommand { get; }
+
+    public string ExecutionLogPath
+    {
+        get => _executionLogPath;
+        private set => SetProperty(ref _executionLogPath, value);
+    }
 
     public string IoAddress
     {
@@ -1203,6 +1214,17 @@ public sealed class MainWindowViewModel : ViewModelBase
 
             _dispatcher.Post(() => ClearWinnerState(clearArtifacts: true));
 
+            _executionRunLog?.Dispose();
+            try
+            {
+                _executionRunLog = BasicsExecutionRunLog.Create(plan);
+                _executionRunLog.AppendRunStarted(plan);
+            }
+            catch
+            {
+                _executionRunLog = null;
+            }
+
             var session = new BasicsExecutionSession(
                 _runtimeClient,
                 new BasicsTemplatePublishingOptions
@@ -1219,6 +1241,9 @@ public sealed class MainWindowViewModel : ViewModelBase
                     IsExecutionRunning = true;
                     ExecutionStatus = "Starting...";
                     ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}. Diversity {FormatDiversityPreset(plan.DiversityPreset)} with adaptive stall boost {(plan.AdaptiveDiversity.Enabled ? "on" : "off")}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
+                    ExecutionLogPath = _executionRunLog is null
+                        ? "Run log: unavailable."
+                        : $"Run log: {_executionRunLog.Path}";
                     RaiseCommandStates();
                 });
 
@@ -1227,7 +1252,11 @@ public sealed class MainWindowViewModel : ViewModelBase
                 await session.RunAsync(
                         plan,
                         plugin,
-                        snapshot => _dispatcher.Post(() => ApplyExecutionSnapshot(snapshot, plan.Capacity.RecommendedMaxConcurrentBrains)),
+                        snapshot =>
+                        {
+                            _executionRunLog?.AppendSnapshot(snapshot);
+                            _dispatcher.Post(() => ApplyExecutionSnapshot(snapshot, plan.Capacity.RecommendedMaxConcurrentBrains));
+                        },
                         _executionCts.Token)
                     .ConfigureAwait(false);
             }
@@ -1241,6 +1270,8 @@ public sealed class MainWindowViewModel : ViewModelBase
                 _executionSession = null;
                 _executionCts?.Dispose();
                 _executionCts = null;
+                _executionRunLog?.Dispose();
+                _executionRunLog = null;
                 _dispatcher.Post(() =>
                 {
                     IsExecutionRunning = false;
@@ -1250,6 +1281,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
+            _executionRunLog?.Dispose();
+            _executionRunLog = null;
             _dispatcher.Post(() =>
             {
                 ExecutionStatus = "Execution failed.";
@@ -2516,6 +2549,163 @@ public sealed class MainWindowViewModel : ViewModelBase
             BasicsDiversityPreset.Extreme => "extreme",
             _ => "medium"
         };
+
+    private sealed class BasicsExecutionRunLog : IDisposable
+    {
+        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+        private readonly StreamWriter _writer;
+        private readonly object _gate = new();
+
+        private BasicsExecutionRunLog(string path, StreamWriter writer)
+        {
+            Path = path;
+            _writer = writer;
+        }
+
+        public string Path { get; }
+
+        public static BasicsExecutionRunLog Create(BasicsEnvironmentPlan plan)
+        {
+            var root = ResolveRunLogRoot();
+            Directory.CreateDirectory(root);
+            var taskSegment = SanitizePathSegment(plan.SelectedTask.TaskId);
+            var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            var path = System.IO.Path.Combine(root, $"basics-ui-{taskSegment}-{timestamp}.jsonl");
+            var writer = new StreamWriter(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read))
+            {
+                AutoFlush = true
+            };
+            return new BasicsExecutionRunLog(path, writer);
+        }
+
+        public void AppendRunStarted(BasicsEnvironmentPlan plan)
+        {
+            WriteRecord(new
+            {
+                eventType = "run_started",
+                timestampUtc = DateTimeOffset.UtcNow,
+                taskId = plan.SelectedTask.TaskId,
+                taskDisplayName = plan.SelectedTask.DisplayName,
+                outputObservationMode = plan.OutputObservationMode.ToString(),
+                diversityPreset = plan.DiversityPreset.ToString(),
+                adaptiveDiversityEnabled = plan.AdaptiveDiversity.Enabled,
+                targetAccuracy = plan.StopCriteria.TargetAccuracy,
+                targetFitness = plan.StopCriteria.TargetFitness,
+                maximumGenerations = plan.StopCriteria.MaximumGenerations,
+                recommendedInitialPopulation = plan.Capacity.RecommendedInitialPopulationCount,
+                recommendedMaxConcurrentBrains = plan.Capacity.RecommendedMaxConcurrentBrains,
+                eligibleWorkerCount = plan.Capacity.EligibleWorkerCount
+            });
+        }
+
+        public void AppendSnapshot(BasicsExecutionSnapshot snapshot)
+        {
+            WriteRecord(new
+            {
+                eventType = "snapshot",
+                timestampUtc = DateTimeOffset.UtcNow,
+                snapshot.State,
+                snapshot.StatusText,
+                snapshot.DetailText,
+                snapshot.SpeciationEpochId,
+                snapshot.EvaluationFailureCount,
+                snapshot.EvaluationFailureSummary,
+                snapshot.Generation,
+                snapshot.PopulationCount,
+                snapshot.ActiveBrainCount,
+                snapshot.SpeciesCount,
+                snapshot.ReproductionCalls,
+                snapshot.ReproductionRunsObserved,
+                snapshot.CapacityUtilization,
+                snapshot.OffspringBestAccuracy,
+                snapshot.BestAccuracy,
+                snapshot.OffspringBestFitness,
+                snapshot.BestFitness,
+                snapshot.MeanFitness,
+                offspringAccuracyHistory = snapshot.OffspringAccuracyHistory.ToArray(),
+                accuracyHistory = snapshot.AccuracyHistory.ToArray(),
+                offspringFitnessHistory = snapshot.OffspringFitnessHistory.ToArray(),
+                bestFitnessHistory = snapshot.BestFitnessHistory.ToArray(),
+                latestBatchTiming = snapshot.LatestBatchTiming,
+                latestGenerationTiming = snapshot.LatestGenerationTiming,
+                bestCandidate = snapshot.BestCandidate is null
+                    ? null
+                    : new
+                    {
+                        snapshot.BestCandidate.ArtifactSha256,
+                        snapshot.BestCandidate.SpeciesId,
+                        snapshot.BestCandidate.Accuracy,
+                        snapshot.BestCandidate.Fitness,
+                        diagnostics = snapshot.BestCandidate.Diagnostics.ToArray()
+                    }
+            });
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                _writer.Dispose();
+            }
+        }
+
+        private void WriteRecord<T>(T record)
+        {
+            try
+            {
+                var json = JsonSerializer.Serialize(record, JsonOptions);
+                lock (_gate)
+                {
+                    _writer.WriteLine(json);
+                }
+            }
+            catch
+            {
+                // Best-effort run logging only.
+            }
+        }
+
+        private static string ResolveRunLogRoot()
+        {
+            var assemblyDirectory = System.IO.Path.GetDirectoryName(typeof(MainWindowViewModel).Assembly.Location) ?? string.Empty;
+            foreach (var start in new[] { assemblyDirectory, AppContext.BaseDirectory, global::System.Environment.CurrentDirectory })
+            {
+                var current = start;
+                while (!string.IsNullOrWhiteSpace(current))
+                {
+                    var nestedBasicsRoot = System.IO.Path.Combine(current, "Basics");
+                    if (File.Exists(System.IO.Path.Combine(nestedBasicsRoot, "Basics.sln")))
+                    {
+                        return System.IO.Path.Combine(nestedBasicsRoot, "artifacts", "ui-runs");
+                    }
+
+                    if (File.Exists(System.IO.Path.Combine(current, "Basics.sln")))
+                    {
+                        return System.IO.Path.Combine(current, "artifacts", "ui-runs");
+                    }
+
+                    current = Directory.GetParent(current)?.FullName ?? string.Empty;
+                }
+            }
+
+            throw new DirectoryNotFoundException("Could not locate the Basics root for UI run logging.");
+        }
+
+        private static string SanitizePathSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "task";
+            }
+
+            var invalid = System.IO.Path.GetInvalidFileNameChars();
+            var chars = value
+                .Trim()
+                .Select(ch => invalid.Contains(ch) || char.IsWhiteSpace(ch) ? '-' : ch)
+                .ToArray();
+            return new string(chars);
+        }
+    }
 }
 
 public sealed record TaskOption(BasicsTaskContract Contract, string StatusText)

@@ -21,6 +21,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.Zero;
     private const int MaxObservationAttempts = 3;
+    private const int MaxMemberEvaluationAttempts = 3;
     private const int MinimumPopulationSize = 2;
 
     private readonly IBasicsRuntimeClient _runtimeClient;
@@ -988,6 +989,69 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         SpawnRequestPacer spawnPacer,
         CancellationToken cancellationToken)
     {
+        var queueWaitTotal = TimeSpan.Zero;
+        var spawnRequestTotal = TimeSpan.Zero;
+        var setupTotal = TimeSpan.Zero;
+        var observationTotal = TimeSpan.Zero;
+        var totalElapsed = TimeSpan.Zero;
+
+        MemberEvaluationResult? lastResult = null;
+        for (var attempt = 1; attempt <= MaxMemberEvaluationAttempts; attempt++)
+        {
+            var result = await EvaluateMemberAttemptAsync(
+                    generation,
+                    taskPlugin,
+                    member,
+                    outputObservationMode,
+                    setupGate,
+                    spawnPacer,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            queueWaitTotal += result.Telemetry.QueueWait;
+            spawnRequestTotal += result.Telemetry.SpawnRequest;
+            setupTotal += result.Telemetry.Setup;
+            observationTotal += result.Telemetry.Observation;
+            totalElapsed += result.Telemetry.Total;
+            lastResult = result;
+
+            if (!ShouldRetryMemberEvaluation(result.Member.LastEvaluation, attempt))
+            {
+                return CreateMemberEvaluationResult(
+                    result.Member,
+                    queueWaitTotal,
+                    spawnRequestTotal,
+                    setupTotal,
+                    observationTotal,
+                    totalElapsed);
+            }
+
+            if (result.Member.ActiveBrainId != Guid.Empty)
+            {
+                await TeardownBrainAsync(result.Member.ActiveBrainId, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            await Task.Delay(EvaluationRetryDelay, cancellationToken).ConfigureAwait(false);
+        }
+
+        return CreateMemberEvaluationResult(
+            lastResult?.Member ?? member,
+            queueWaitTotal,
+            spawnRequestTotal,
+            setupTotal,
+            observationTotal,
+            totalElapsed);
+    }
+
+    private async Task<MemberEvaluationResult> EvaluateMemberAttemptAsync(
+        int generation,
+        IBasicsTaskPlugin taskPlugin,
+        PopulationMember member,
+        BasicsOutputObservationMode outputObservationMode,
+        SemaphoreSlim setupGate,
+        SpawnRequestPacer spawnPacer,
+        CancellationToken cancellationToken)
+    {
         Guid brainId = Guid.Empty;
         var setupSlotHeld = false;
         var subscribed = false;
@@ -1032,7 +1096,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         string.IsNullOrWhiteSpace(failureDetail)
                             ? $"spawn_failed:{failureCode}"
                             : $"spawn_failed:{failureCode}:{failureDetail}"),
-                    EvaluationGeneration = generation
+                    EvaluationGeneration = generation,
+                    ActiveBrainId = brainId
                 };
                 return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, setup, observation, totalStopwatch.Elapsed);
             }
@@ -1191,6 +1256,21 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 }
             }
         }
+    }
+
+    private static bool ShouldRetryMemberEvaluation(
+        BasicsTaskEvaluationResult? evaluation,
+        int attempt)
+    {
+        if (attempt >= MaxMemberEvaluationAttempts || evaluation is null || evaluation.Diagnostics.Count == 0)
+        {
+            return false;
+        }
+
+        return ResolveFailureCategory(evaluation) is "spawn_failed"
+            or "spawn_not_placed"
+            or "output_timeout_or_width_mismatch"
+            or "evaluation_failed";
     }
 
     private static int ResolveSetupConcurrency(int eligibleWorkerCount, int maxConcurrent)

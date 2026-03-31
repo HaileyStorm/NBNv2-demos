@@ -55,6 +55,10 @@
                                        Foreground="#D5C9B5"
                                        FontSize="12"
                                        TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding ExecutionLogPath}"
+                                       Foreground="#D5C9B5"
+                                       FontSize="11"
+                                       TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -489,6 +493,9 @@
                                        VerticalAlignment="Center"
                                        Foreground="#425466" />
                         </Grid>
+                        <TextBlock Text="{Binding ExecutionLogPath}"
+                                   TextWrapping="Wrap"
+                                   Foreground="#6C7A89" />
                         <Grid ColumnDefinitions="Auto,*"
                               ColumnSpacing="12">
                             <Button Grid.Column="0"
