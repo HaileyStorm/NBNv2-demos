@@ -62,6 +62,34 @@ public sealed class BasicsEnvironmentPlannerTests
     }
 
     [Fact]
+    public async Task BuildPlanAsync_RejectsMultiplicationToleranceAboveAdjacentInputDelta()
+    {
+        var planner = new BasicsEnvironmentPlanner(new FakeBasicsRuntimeClient());
+        var options = new BasicsEnvironmentOptions
+        {
+            SelectedTask = new BasicsTaskContract(
+                TaskId: "multiplication",
+                DisplayName: "Multiplication",
+                InputWidth: BasicsIoGeometry.InputWidth,
+                OutputWidth: BasicsIoGeometry.OutputWidth,
+                UsesTickAlignedEvaluation: true,
+                Description: "Bounded scalar multiplication."),
+            TaskSettings = new BasicsTaskSettings
+            {
+                Multiplication = new BasicsMultiplicationTaskSettings
+                {
+                    UniqueInputValueCount = 3,
+                    AccuracyTolerance = 0.5001f
+                }
+            }
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => planner.BuildPlanAsync(options));
+
+        Assert.Contains("adjacent input delta", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ValidateBrainGeometryAsync_RejectsNonTwoByOneBrains()
     {
         var runtimeClient = new FakeBasicsRuntimeClient(

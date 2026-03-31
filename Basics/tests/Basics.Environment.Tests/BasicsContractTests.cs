@@ -137,4 +137,39 @@ public sealed class BasicsContractTests
         Assert.True(requireEither.IsSatisfied(0.2f, 0.95f));
         Assert.False(requireEither.IsSatisfied(0.2f, 0.3f));
     }
+
+    [Fact]
+    public void MultiplicationTaskSettings_RejectToleranceAboveAdjacentInputDelta()
+    {
+        var settings = new BasicsTaskSettings
+        {
+            Multiplication = new BasicsMultiplicationTaskSettings
+            {
+                UniqueInputValueCount = 3,
+                AccuracyTolerance = 0.5001f
+            }
+        };
+
+        var validation = settings.ValidateForTask("multiplication");
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, error => error.Contains("adjacent input delta (0.5)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MultiplicationTaskSettings_AllowsToleranceAtAdjacentInputDeltaBoundary()
+    {
+        var settings = new BasicsTaskSettings
+        {
+            Multiplication = new BasicsMultiplicationTaskSettings
+            {
+                UniqueInputValueCount = 3,
+                AccuracyTolerance = 0.5f
+            }
+        };
+
+        var validation = settings.ValidateForTask("multiplication");
+
+        Assert.True(validation.IsValid);
+    }
 }

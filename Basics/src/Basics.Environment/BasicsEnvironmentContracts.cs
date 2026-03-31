@@ -499,9 +499,20 @@ public sealed record BasicsMultiplicationTaskSettings
         {
             errors.Add($"Multiplication accuracy tolerance must be a finite value between 0 and {MaximumAccuracyTolerance:0.###}.");
         }
+        else if (UniqueInputValueCount >= BasicsScalarGridTaskSettings.MinimumUniqueInputValueCount)
+        {
+            var adjacentInputDelta = ResolveAdjacentInputDelta();
+            if (AccuracyTolerance > adjacentInputDelta)
+            {
+                errors.Add($"Multiplication accuracy tolerance must be <= adjacent input delta ({adjacentInputDelta:0.######}) for {UniqueInputValueCount} unique input values.");
+            }
+        }
 
         return BasicsContractValidationResult.FromErrors(errors);
     }
+
+    public float ResolveAdjacentInputDelta()
+        => UniqueInputValueCount <= 1 ? 0f : 1f / (UniqueInputValueCount - 1f);
 }
 
 public sealed record BasicsTaskSettings
