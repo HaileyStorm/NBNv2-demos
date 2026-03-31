@@ -124,7 +124,7 @@ public static class BasicsTaskExecutionProfiles
 
     private static readonly BasicsTaskExecutionProfile MultiplicationProfile = RicherExplorationProfile with
     {
-        OutputObservationMode = BasicsOutputObservationMode.VectorBuffer,
+        OutputObservationMode = BasicsOutputObservationMode.EventedOutput,
         VariationBand = RicherExplorationProfile.VariationBand with
         {
             MaxAxonDelta = 14

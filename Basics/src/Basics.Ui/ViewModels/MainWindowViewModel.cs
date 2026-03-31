@@ -132,6 +132,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private ArtifactRef? _winnerDefinitionArtifact;
     private ArtifactRef? _winnerSnapshotArtifact;
     private Guid _retainedWinnerBrainId;
+    private Guid _liveWinnerBrainId;
+    private string? _lastExportedWinnerArtifactSha;
     private TaskOption? _selectedTask;
     private StrengthSourceOption? _selectedStrengthSource;
     private OutputObservationModeOption? _selectedOutputObservationMode;
@@ -166,8 +168,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         FetchCapacityCommand = new AsyncRelayCommand(FetchCapacityAsync, CanBuildPlan);
         StartCommand = new AsyncRelayCommand(StartAsync, CanStart);
         StopCommand = new AsyncRelayCommand(StopAsync, CanStop);
-        ExportDefinitionCommand = new AsyncRelayCommand(ExportWinningDefinitionAsync, CanExportWinnerDefinition);
-        ExportSnapshotCommand = new AsyncRelayCommand(ExportWinningSnapshotAsync, CanExportWinnerSnapshot);
+        ExportBestCommand = new AsyncRelayCommand(ExportWinningArtifactsAsync, CanExportBest);
         ApplySuggestedBoundsCommand = new RelayCommand(ApplySuggestedBounds, () => _lastPlan is not null);
         StartWorkersCommand = new AsyncRelayCommand(StartWorkersAsync, CanStartWorkers);
         StopWorkersCommand = new AsyncRelayCommand(StopWorkersAsync, CanStopWorkers);
@@ -219,9 +220,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public AsyncRelayCommand StopCommand { get; }
 
-    public AsyncRelayCommand ExportDefinitionCommand { get; }
-
-    public AsyncRelayCommand ExportSnapshotCommand { get; }
+    public AsyncRelayCommand ExportBestCommand { get; }
 
     public RelayCommand ApplySuggestedBoundsCommand { get; }
 
@@ -1420,9 +1419,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private bool CanStop() => (IsExecutionRunning && _executionCts is not null) || _retainedWinnerBrainId != Guid.Empty;
 
-    private bool CanExportWinnerDefinition() => HasArtifactRef(_winnerDefinitionArtifact);
-
-    private bool CanExportWinnerSnapshot() => HasArtifactRef(_winnerSnapshotArtifact);
+    private bool CanExportBest() => HasArtifactRef(_winnerDefinitionArtifact);
 
     private bool CanStartWorkers() => !IsWorkerLauncherBusy;
 
@@ -1435,8 +1432,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         FetchCapacityCommand.RaiseCanExecuteChanged();
         StartCommand.RaiseCanExecuteChanged();
         StopCommand.RaiseCanExecuteChanged();
-        ExportDefinitionCommand.RaiseCanExecuteChanged();
-        ExportSnapshotCommand.RaiseCanExecuteChanged();
+        ExportBestCommand.RaiseCanExecuteChanged();
         ApplySuggestedBoundsCommand.RaiseCanExecuteChanged();
         StartWorkersCommand.RaiseCanExecuteChanged();
         StopWorkersCommand.RaiseCanExecuteChanged();
@@ -1890,24 +1886,19 @@ public sealed class MainWindowViewModel : ViewModelBase
                 ? "Instrumentation appears after the first evaluated batch."
                 : "Average sample-observation time per brain; long waits here usually mean output timeouts/retries.");
 
-        if (snapshot.State == BasicsExecutionState.Succeeded && CanUseBestCandidateForExport(snapshot.BestCandidate))
+        if (CanUseBestCandidateForExport(snapshot.BestCandidate))
         {
-            ApplyWinnerArtifacts(snapshot.BestCandidate!);
+            ApplyWinnerArtifacts(
+                snapshot.BestCandidate!,
+                retainWinner: snapshot.State is BasicsExecutionState.Succeeded or BasicsExecutionState.Failed or BasicsExecutionState.Stopped);
         }
         else if (snapshot.State is BasicsExecutionState.Failed or BasicsExecutionState.Stopped)
         {
-            if (CanUseBestCandidateForExport(snapshot.BestCandidate))
-            {
-                ApplyWinnerArtifacts(snapshot.BestCandidate!);
-            }
-            else
-            {
-                ClearWinnerState(clearArtifacts: false);
-            }
+            ClearWinnerState(clearArtifacts: false);
         }
     }
 
-    private async Task ExportWinningDefinitionAsync()
+    private async Task ExportWinningArtifactsAsync()
     {
         if (!HasArtifactRef(_winnerDefinitionArtifact))
         {
@@ -1918,17 +1909,54 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         try
         {
-            var path = await _artifactExportService.ExportAsync(
-                    _winnerDefinitionArtifact!,
+            var definitionArtifact = _winnerDefinitionArtifact!.Clone();
+            var winnerArtifactSha = definitionArtifact.ToSha256Hex();
+            var definitionPath = await _artifactExportService.ExportAsync(
+                    definitionArtifact,
                     title: "Export best definition",
                     suggestedFileName: BuildSuggestedArtifactFileName("best", "nbn"))
                 .ConfigureAwait(false);
+            if (definitionPath is null)
+            {
+                _dispatcher.Post(() =>
+                {
+                    WinnerExportStatus = "Best-so-far export canceled.";
+                    WinnerExportDetail = "The best-so-far .nbn artifact is still available for export.";
+                    RaiseCommandStates();
+                });
+                return;
+            }
+
+            var snapshotEligible = HasArtifactRef(_winnerSnapshotArtifact) || CanCaptureLiveWinnerSnapshot();
+            var snapshotAvailable = HasArtifactRef(_winnerSnapshotArtifact);
+            ArtifactRef? snapshotArtifact = null;
+            if (!snapshotAvailable && CanCaptureLiveWinnerSnapshot())
+            {
+                snapshotArtifact = await TryCaptureLiveWinnerSnapshotAsync(winnerArtifactSha).ConfigureAwait(false);
+                snapshotAvailable = HasArtifactRef(snapshotArtifact);
+            }
+
+            string? snapshotPath = null;
+            if (snapshotAvailable)
+            {
+                snapshotArtifact ??= _winnerSnapshotArtifact!.Clone();
+                snapshotPath = await _artifactExportService.ExportAsync(
+                        snapshotArtifact,
+                        title: "Export best snapshot",
+                        suggestedFileName: BuildSuggestedArtifactFileName("best-state", "nbs"))
+                    .ConfigureAwait(false);
+            }
+
             _dispatcher.Post(() =>
             {
-                WinnerExportStatus = path is null ? "Definition export canceled." : "Best-so-far definition exported.";
-                WinnerExportDetail = path is null
-                    ? "The best-so-far .nbn artifact is still available for export."
-                    : path;
+                var exportResult = BuildExportResult(
+                    definitionPath,
+                    snapshotPath,
+                    winnerArtifactSha,
+                    snapshotEligible,
+                    snapshotAvailable);
+                WinnerExportStatus = exportResult.Status;
+                WinnerExportDetail = exportResult.Detail;
                 RaiseCommandStates();
             });
         }
@@ -1936,43 +1964,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             _dispatcher.Post(() =>
             {
-                WinnerExportStatus = "Definition export failed.";
-                WinnerExportDetail = ex.GetBaseException().Message;
-                RaiseCommandStates();
-            });
-        }
-    }
-
-    private async Task ExportWinningSnapshotAsync()
-    {
-        if (!HasArtifactRef(_winnerSnapshotArtifact))
-        {
-            WinnerExportStatus = "No best-so-far snapshot available.";
-            WinnerExportDetail = "Snapshot export is only available when runtime state was captured for the retained best-so-far brain.";
-            return;
-        }
-
-        try
-        {
-            var path = await _artifactExportService.ExportAsync(
-                    _winnerSnapshotArtifact!,
-                    title: "Export best snapshot",
-                    suggestedFileName: BuildSuggestedArtifactFileName("best-state", "nbs"))
-                .ConfigureAwait(false);
-            _dispatcher.Post(() =>
-            {
-                WinnerExportStatus = path is null ? "Snapshot export canceled." : "Best-so-far snapshot exported.";
-                WinnerExportDetail = path is null
-                    ? "The best-so-far .nbs artifact is still available for export."
-                    : path;
-                RaiseCommandStates();
-            });
-        }
-        catch (Exception ex)
-        {
-            _dispatcher.Post(() =>
-            {
-                WinnerExportStatus = "Snapshot export failed.";
+                WinnerExportStatus = "Best-so-far export failed.";
                 WinnerExportDetail = ex.GetBaseException().Message;
                 RaiseCommandStates();
             });
@@ -2004,22 +1996,37 @@ public sealed class MainWindowViewModel : ViewModelBase
         });
     }
 
-    private void ApplyWinnerArtifacts(BasicsExecutionBestCandidateSummary winner)
+    private void ApplyWinnerArtifacts(BasicsExecutionBestCandidateSummary winner, bool retainWinner)
     {
+        var currentWinnerSha = _winnerDefinitionArtifact?.ToSha256Hex();
+        var nextWinnerSha = winner.DefinitionArtifact.ToSha256Hex();
+        var sameWinner = string.Equals(currentWinnerSha, nextWinnerSha, StringComparison.OrdinalIgnoreCase);
+
         _winnerDefinitionArtifact = winner.DefinitionArtifact.Clone();
-        _winnerSnapshotArtifact = winner.SnapshotArtifact?.Clone();
-        _retainedWinnerBrainId = winner.ActiveBrainId ?? Guid.Empty;
+        if (HasArtifactRef(winner.SnapshotArtifact))
+        {
+            _winnerSnapshotArtifact = winner.SnapshotArtifact!.Clone();
+        }
+        else if (!sameWinner)
+        {
+            _winnerSnapshotArtifact = null;
+        }
+
+        _liveWinnerBrainId = winner.ActiveBrainId ?? Guid.Empty;
+        _retainedWinnerBrainId = retainWinner ? _liveWinnerBrainId : Guid.Empty;
         UpdateWinnerExportSummary();
         RaiseCommandStates();
     }
 
     private void ClearWinnerState(bool clearArtifacts)
     {
+        _liveWinnerBrainId = Guid.Empty;
         _retainedWinnerBrainId = Guid.Empty;
         if (clearArtifacts)
         {
             _winnerDefinitionArtifact = null;
             _winnerSnapshotArtifact = null;
+            _lastExportedWinnerArtifactSha = null;
         }
 
         UpdateWinnerExportSummary();
@@ -2037,7 +2044,9 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         WinnerExportStatus = _retainedWinnerBrainId != Guid.Empty
             ? "Best-so-far brain retained for export."
-            : "Best-so-far artifacts retained.";
+            : IsExecutionRunning
+                ? "Current best-so-far artifacts available."
+                : "Best-so-far artifacts retained.";
 
         var detailParts = new List<string>
         {
@@ -2049,15 +2058,106 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
         else
         {
-            detailParts.Add("No snapshot artifact was produced for this retained candidate.");
+            detailParts.Add(CanCaptureLiveWinnerSnapshot()
+                ? "Snapshot .nbs can be captured from the current live best brain on export."
+                : "No snapshot artifact is currently available for this candidate.");
         }
 
         if (_retainedWinnerBrainId != Guid.Empty)
         {
             detailParts.Add($"Live best brain {_retainedWinnerBrainId:N} stays active until the retained export is cleared by Stop, Disconnect, or the next run.");
         }
+        else if (IsExecutionRunning)
+        {
+            detailParts.Add("These artifacts can change while the run is still active.");
+        }
 
         WinnerExportDetail = string.Join(' ', detailParts);
+    }
+
+    private bool CanCaptureLiveWinnerSnapshot()
+        => _liveWinnerBrainId != Guid.Empty && _runtimeClient is not null;
+
+    private async Task<ArtifactRef?> TryCaptureLiveWinnerSnapshotAsync(string expectedWinnerArtifactSha)
+    {
+        var runtimeClient = _runtimeClient;
+        var liveWinnerBrainId = _liveWinnerBrainId;
+        if (runtimeClient is null || liveWinnerBrainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            var ready = await runtimeClient.RequestSnapshotAsync(liveWinnerBrainId).ConfigureAwait(false);
+            if (!HasArtifactRef(ready?.Snapshot))
+            {
+                return null;
+            }
+
+            var snapshotArtifact = ready!.Snapshot!.Clone();
+
+            _dispatcher.Post(() =>
+            {
+                if (!HasArtifactRef(_winnerDefinitionArtifact)
+                    || !string.Equals(_winnerDefinitionArtifact!.ToSha256Hex(), expectedWinnerArtifactSha, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                _winnerSnapshotArtifact = snapshotArtifact.Clone();
+                UpdateWinnerExportSummary();
+                RaiseCommandStates();
+            });
+            return snapshotArtifact;
+        }
+        catch
+        {
+            // Snapshot capture is opportunistic during active runs.
+            return null;
+        }
+    }
+
+    private (string Status, string Detail) BuildExportResult(
+        string definitionPath,
+        string? snapshotPath,
+        string winnerArtifactSha,
+        bool snapshotEligible,
+        bool snapshotAvailable)
+    {
+        var warning = string.Empty;
+        if (!string.IsNullOrWhiteSpace(_lastExportedWinnerArtifactSha)
+            && !string.Equals(_lastExportedWinnerArtifactSha, winnerArtifactSha, StringComparison.OrdinalIgnoreCase))
+        {
+            warning = " Warning: the best-so-far brain changed since the previous export, so these files may not match the earlier export.";
+        }
+
+        _lastExportedWinnerArtifactSha = winnerArtifactSha;
+
+        if (!string.IsNullOrWhiteSpace(snapshotPath))
+        {
+            return (
+                Status: "Best-so-far definition + snapshot exported.",
+                Detail: $"Definition: {definitionPath} Snapshot: {snapshotPath}.{warning}");
+        }
+
+        if (snapshotEligible && snapshotAvailable)
+        {
+            return (
+                Status: "Best-so-far definition exported; snapshot export canceled.",
+                Detail: $"Definition: {definitionPath} The .nbs export was canceled.{warning}");
+        }
+
+        if (snapshotEligible)
+        {
+            return (
+                Status: "Best-so-far definition exported.",
+                Detail: $"Definition: {definitionPath} Snapshot state was not available for this export.{warning}");
+        }
+
+        return (
+            Status: "Best-so-far definition exported.",
+            Detail: $"Definition: {definitionPath}{warning}");
     }
 
     private async Task DisposeRuntimeClientAsync()

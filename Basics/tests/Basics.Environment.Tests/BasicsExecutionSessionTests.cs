@@ -345,6 +345,40 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_PublishesRunningSnapshotWithExportableBestCandidate()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            ThrowOnReproduceCallNumber = 2
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential),
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+
+            var runningSnapshot = Assert.Single(
+                snapshots.Where(snapshot =>
+                    snapshot.State == BasicsExecutionState.Running
+                    && snapshot.StatusText.Contains("Generation 1 evaluated.", StringComparison.Ordinal)));
+            Assert.NotNull(runningSnapshot.BestCandidate);
+            Assert.True(runningSnapshot.BestCandidate.HasRetainedBrain);
+            Assert.True(runningSnapshot.BestCandidate.HasSnapshotArtifact);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_StopsAtConfiguredTarget_RetainsWinner_AndPrefersSimplerStructure()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
@@ -373,7 +407,7 @@ public sealed class BasicsExecutionSessionTests
             Assert.True(final.BestCandidate.HasSnapshotArtifact);
             Assert.Equal(final.EffectiveTemplateDefinition.ToSha256Hex(), final.BestCandidate.ArtifactSha256);
             Assert.Equal(1, runtimeClient.LiveBrainCount);
-            Assert.Equal(1, runtimeClient.SnapshotRequestCount);
+            Assert.Equal(2, runtimeClient.SnapshotRequestCount);
         }
         finally
         {
@@ -506,7 +540,7 @@ public sealed class BasicsExecutionSessionTests
             Assert.True(final.BestCandidate.HasSnapshotArtifact);
             Assert.True(runtimeClient.AwaitSpawnPlacementCallCount >= 2);
             Assert.Equal(1, runtimeClient.LiveBrainCount);
-            Assert.Equal(1, runtimeClient.SnapshotRequestCount);
+            Assert.Equal(2, runtimeClient.SnapshotRequestCount);
         }
         finally
         {

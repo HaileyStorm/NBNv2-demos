@@ -264,8 +264,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         evaluationResult.GenerationTiming);
                 }
 
+                var previousBestCandidate = bestCandidateSoFar;
                 var generationImproved = DidGenerationImprove(generationMetrics, bestAccuracySoFar, bestFitnessSoFar);
                 UpdateBestSoFar(generationMetrics, ref bestAccuracySoFar, ref bestFitnessSoFar, ref bestCandidateSoFar);
+                bestCandidateSoFar = await EnsureBestCandidateSnapshotAsync(previousBestCandidate, bestCandidateSoFar, cancellationToken).ConfigureAwait(false);
                 stalledGenerationCount = generationImproved ? 0 : stalledGenerationCount + 1;
                 accuracyHistory.Add(generationMetrics.BestAccuracy);
                 fitnessHistory.Add(generationMetrics.BestFitness);
@@ -1652,6 +1654,50 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         var ready = await _runtimeClient.RequestSnapshotAsync(brainId, cancellationToken).ConfigureAwait(false);
         return HasArtifactRef(ready?.Snapshot) ? ready!.Snapshot.Clone() : null;
+    }
+
+    private async Task<BasicsExecutionBestCandidateSummary?> EnsureBestCandidateSnapshotAsync(
+        BasicsExecutionBestCandidateSummary? previousBestCandidate,
+        BasicsExecutionBestCandidateSummary? currentBestCandidate,
+        CancellationToken cancellationToken)
+    {
+        if (!IsViableBestCandidate(currentBestCandidate))
+        {
+            return CloneBestCandidate(currentBestCandidate);
+        }
+
+        var sameWinner = previousBestCandidate is not null
+            && HasSameDefinitionArtifact(previousBestCandidate.DefinitionArtifact, currentBestCandidate!.DefinitionArtifact);
+        if (sameWinner && HasArtifactRef(previousBestCandidate!.SnapshotArtifact))
+        {
+            return CloneBestCandidate(currentBestCandidate! with
+            {
+                SnapshotArtifact = previousBestCandidate.SnapshotArtifact!.Clone()
+            });
+        }
+
+        if (HasArtifactRef(currentBestCandidate!.SnapshotArtifact))
+        {
+            return CloneBestCandidate(currentBestCandidate);
+        }
+
+        if (currentBestCandidate.ActiveBrainId is not Guid activeBrainId || activeBrainId == Guid.Empty)
+        {
+            return CloneBestCandidate(currentBestCandidate);
+        }
+
+        try
+        {
+            var snapshotArtifact = await TryRequestSnapshotArtifactAsync(activeBrainId, cancellationToken).ConfigureAwait(false);
+            return CloneBestCandidate(currentBestCandidate with
+            {
+                SnapshotArtifact = snapshotArtifact?.Clone()
+            });
+        }
+        catch
+        {
+            return CloneBestCandidate(currentBestCandidate);
+        }
     }
 
     private async Task CleanupTrackedBrainsAsync(CancellationToken cancellationToken)

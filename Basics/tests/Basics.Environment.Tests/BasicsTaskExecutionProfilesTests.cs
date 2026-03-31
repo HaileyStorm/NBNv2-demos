@@ -56,7 +56,7 @@ public sealed class BasicsTaskExecutionProfilesTests
     {
         var profile = BasicsTaskExecutionProfiles.Resolve("multiplication");
 
-        Assert.Equal(BasicsOutputObservationMode.VectorBuffer, profile.OutputObservationMode);
+        Assert.Equal(BasicsOutputObservationMode.EventedOutput, profile.OutputObservationMode);
         Assert.Equal(3, profile.VariationBand.MaxInternalNeuronDelta);
         Assert.Equal(14, profile.VariationBand.MaxAxonDelta);
         Assert.True(profile.VariationBand.AllowFunctionMutation);

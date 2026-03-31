@@ -489,17 +489,13 @@
                                        VerticalAlignment="Center"
                                        Foreground="#425466" />
                         </Grid>
-                        <Grid ColumnDefinitions="Auto,Auto,*"
+                        <Grid ColumnDefinitions="Auto,*"
                               ColumnSpacing="12">
                             <Button Grid.Column="0"
-                                    Content="Export best .nbn"
-                                    Command="{Binding ExportDefinitionCommand}"
-                                    MinWidth="120" />
-                            <Button Grid.Column="1"
-                                    Content="Export best .nbs"
-                                    Command="{Binding ExportSnapshotCommand}"
-                                    MinWidth="120" />
-                            <TextBlock Grid.Column="2"
+                                    Content="Export best available"
+                                    Command="{Binding ExportBestCommand}"
+                                    MinWidth="180" />
+                            <TextBlock Grid.Column="1"
                                        Text="{Binding WinnerExportStatus}"
                                        TextWrapping="Wrap"
                                        VerticalAlignment="Center"
