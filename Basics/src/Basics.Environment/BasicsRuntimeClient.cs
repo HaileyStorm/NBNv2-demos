@@ -38,6 +38,11 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
 
     Task<SpawnBrainViaIOAck?> SpawnBrainAsync(SpawnBrain request, CancellationToken cancellationToken = default);
 
+    Task<AwaitSpawnPlacementViaIOAck?> AwaitSpawnPlacementAsync(
+        Guid brainId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
+
     Task<BrainDefinitionReady?> ExportBrainDefinitionAsync(
         Guid brainId,
         bool rebaseOverlays,
@@ -279,6 +284,66 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 Ack = new SpawnBrainAck
                 {
                     BrainId = Guid.Empty.ToProtoUuid(),
+                    FailureReasonCode = "spawn_request_failed",
+                    FailureMessage = detail
+                }
+            };
+        }
+    }
+
+    public async Task<AwaitSpawnPlacementViaIOAck?> AwaitSpawnPlacementAsync(
+        Guid brainId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var timeoutMs = timeout <= TimeSpan.Zero
+            ? 0UL
+            : checked((ulong)Math.Min(timeout.TotalMilliseconds, ulong.MaxValue));
+
+        try
+        {
+            return await _system.Root.RequestAsync<AwaitSpawnPlacementViaIOAck>(
+                    _ioPid,
+                    new AwaitSpawnPlacementViaIO
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        TimeoutMs = timeoutMs
+                    },
+                    timeout > TimeSpan.Zero ? timeout + TimeSpan.FromSeconds(1) : _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex)
+        {
+            var detail = BuildFailureDetail(ex);
+            return new AwaitSpawnPlacementViaIOAck
+            {
+                FailureReasonCode = "spawn_request_canceled",
+                FailureMessage = detail,
+                Ack = new SpawnBrainAck
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    FailureReasonCode = "spawn_request_canceled",
+                    FailureMessage = detail
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            var detail = BuildFailureDetail(ex);
+            return new AwaitSpawnPlacementViaIOAck
+            {
+                FailureReasonCode = "spawn_request_failed",
+                FailureMessage = detail,
+                Ack = new SpawnBrainAck
+                {
+                    BrainId = brainId.ToProtoUuid(),
                     FailureReasonCode = "spawn_request_failed",
                     FailureMessage = detail
                 }

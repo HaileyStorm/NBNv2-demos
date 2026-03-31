@@ -424,6 +424,92 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_WaitsForPlacementBeforeEvaluatingBrains()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "or",
+            RequirePlacementWaitForVisibility = true
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential, taskPlugin: new OrTaskPlugin()),
+                new OrTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.NotNull(final.BestCandidate);
+            Assert.True(final.BestCandidate.HasRetainedBrain);
+            Assert.True(final.BestCandidate.HasSnapshotArtifact);
+            Assert.True(runtimeClient.AwaitSpawnPlacementCallCount >= 2);
+            Assert.Equal(1, runtimeClient.LiveBrainCount);
+            Assert.Equal(1, runtimeClient.SnapshotRequestCount);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task RespawnBestCandidateForExport_WaitsForPlacementBeforeReturningLiveBrain()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            RequirePlacementWaitForVisibility = true
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var method = typeof(BasicsExecutionSession).GetMethod(
+                "RespawnBestCandidateForExportAsync",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(method);
+
+            var bestCandidate = new BasicsExecutionBestCandidateSummary(
+                runtimeClient.CreateDefinitionArtifact("and"),
+                SnapshotArtifact: null,
+                ActiveBrainId: null,
+                SpeciesId: "species.default",
+                Accuracy: 1f,
+                Fitness: 1f,
+                Complexity: new BasicsDefinitionComplexitySummary(1, 1, 3),
+                ScoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+                {
+                    ["task_accuracy"] = 1f,
+                    ["truth_table_coverage"] = 1f
+                },
+                Diagnostics: Array.Empty<string>());
+
+            var taskObject = method!.Invoke(
+                session,
+                new object[] { new AndTaskPlugin().Contract, bestCandidate, CancellationToken.None });
+            var task = Assert.IsAssignableFrom<Task>(taskObject);
+            await task;
+
+            var result = task.GetType().GetProperty("Result")!.GetValue(task);
+            Assert.NotNull(result);
+
+            var summary = Assert.IsType<BasicsExecutionBestCandidateSummary>(
+                result!.GetType().GetField("Item2")!.GetValue(result));
+            Assert.True(summary.HasRetainedBrain);
+            Assert.True(summary.HasSnapshotArtifact);
+            Assert.Equal(1, runtimeClient.AwaitSpawnPlacementCallCount);
+            Assert.Equal(1, runtimeClient.LiveBrainCount);
+            Assert.Equal(1, runtimeClient.SnapshotRequestCount);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_KeepsAtLeastTwoBrains_WhenReproductionProducesNoChildren()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -679,6 +765,7 @@ public sealed class BasicsExecutionSessionTests
         private readonly Dictionary<Guid, Queue<BasicsRuntimeOutputVector>> _outputs = new();
         private readonly Dictionary<Guid, Queue<BasicsRuntimeOutputEvent>> _outputEvents = new();
         private readonly Dictionary<Guid, ulong> _ticks = new();
+        private readonly Dictionary<Guid, ArtifactRef> _pendingBrainDefinitions = new();
         private readonly Dictionary<string, string> _behaviorByArtifactSha = new(StringComparer.OrdinalIgnoreCase);
         private readonly string _artifactRoot = Path.Combine(Path.GetTempPath(), "nbn-basics-tests", Guid.NewGuid().ToString("N"));
         private readonly LocalArtifactStore _artifactStore;
@@ -705,7 +792,9 @@ public sealed class BasicsExecutionSessionTests
         public TimeSpan SpawnDelay { get; init; }
         public string DefaultBehavior { get; init; } = "zero";
         public bool OnlyEmitOutputVectorOnChange { get; init; }
+        public bool RequirePlacementWaitForVisibility { get; init; }
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
+        public int AwaitSpawnPlacementCallCount { get; private set; }
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
         public List<TimeSpan> VectorWaitTimeouts { get; } = new();
@@ -751,16 +840,22 @@ public sealed class BasicsExecutionSessionTests
                 }
 
                 var brainId = Guid.NewGuid();
-                _brainDefinitions[brainId] = request.BrainDef.Clone();
-                _outputs[brainId] = new Queue<BasicsRuntimeOutputVector>();
-                _outputEvents[brainId] = new Queue<BasicsRuntimeOutputEvent>();
-                _ticks[brainId] = 0;
-                _lastVectorOutputByBrain.Remove(brainId);
+                if (RequirePlacementWaitForVisibility)
+                {
+                    _pendingBrainDefinitions[brainId] = request.BrainDef.Clone();
+                }
+                else
+                {
+                    ActivateBrain(brainId, request.BrainDef);
+                }
+
                 return new SpawnBrainViaIOAck
                 {
                     Ack = new SpawnBrainAck
                     {
-                        BrainId = brainId.ToProtoUuid()
+                        BrainId = brainId.ToProtoUuid(),
+                        AcceptedForPlacement = true,
+                        PlacementReady = !RequirePlacementWaitForVisibility
                     }
                 };
             }
@@ -768,6 +863,33 @@ public sealed class BasicsExecutionSessionTests
             {
                 Interlocked.Decrement(ref _activeSpawnRequests);
             }
+        }
+
+        public Task<AwaitSpawnPlacementViaIOAck?> AwaitSpawnPlacementAsync(
+            Guid brainId,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+        {
+            AwaitSpawnPlacementCallCount++;
+            if (_pendingBrainDefinitions.Remove(brainId, out var definition))
+            {
+                ActivateBrain(brainId, definition);
+            }
+
+            var placed = _brainDefinitions.ContainsKey(brainId);
+            return Task.FromResult<AwaitSpawnPlacementViaIOAck?>(new AwaitSpawnPlacementViaIOAck
+            {
+                Ack = new SpawnBrainAck
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    AcceptedForPlacement = placed,
+                    PlacementReady = placed,
+                    FailureReasonCode = placed ? string.Empty : "spawn_unknown_brain",
+                    FailureMessage = placed ? string.Empty : "Pending spawn was not found."
+                },
+                FailureReasonCode = placed ? string.Empty : "spawn_unknown_brain",
+                FailureMessage = placed ? string.Empty : "Pending spawn was not found."
+            });
         }
 
         public Task<BrainDefinitionReady?> ExportBrainDefinitionAsync(
@@ -915,6 +1037,7 @@ public sealed class BasicsExecutionSessionTests
         public Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default)
         {
             _brainDefinitions.Remove(brainId);
+            _pendingBrainDefinitions.Remove(brainId);
             _brainSnapshots.Remove(brainId);
             _outputs.Remove(brainId);
             _outputEvents.Remove(brainId);
@@ -1060,6 +1183,9 @@ public sealed class BasicsExecutionSessionTests
             });
         }
 
+        public ArtifactRef CreateDefinitionArtifact(string behavior)
+            => CreateArtifactRef(_childIndex++, behavior);
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         private string ResolveBehavior(ArtifactRef artifact)
@@ -1097,6 +1223,15 @@ public sealed class BasicsExecutionSessionTests
             using var stream = new MemoryStream(bytes, writable: false);
             var manifest = _artifactStore.StoreAsync(stream, mediaType).GetAwaiter().GetResult();
             return manifest.ArtifactId.ToHex().ToArtifactRef((ulong)manifest.ByteLength, mediaType, _artifactRoot);
+        }
+
+        private void ActivateBrain(Guid brainId, ArtifactRef definition)
+        {
+            _brainDefinitions[brainId] = definition.Clone();
+            _outputs[brainId] = new Queue<BasicsRuntimeOutputVector>();
+            _outputEvents[brainId] = new Queue<BasicsRuntimeOutputEvent>();
+            _ticks[brainId] = 0;
+            _lastVectorOutputByBrain.Remove(brainId);
         }
 
         private void UpdateMaxObservedConcurrentSpawnRequests(int active)

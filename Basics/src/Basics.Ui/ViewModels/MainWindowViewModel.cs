@@ -1733,11 +1733,12 @@ public sealed class MainWindowViewModel : ViewModelBase
             _dispatcher.Post(() =>
             {
                 ExecutionStatus = "Stopping...";
-                ExecutionDetail = "Releasing the retained best-so-far brain.";
+                ExecutionDetail = "Releasing the retained best-so-far brain and export artifacts.";
                 RaiseCommandStates();
             });
 
             await ReleaseRetainedWinnerAsync("basics_ui_release_winner").ConfigureAwait(false);
+            _dispatcher.Post(() => ClearWinnerState(clearArtifacts: true));
         }
     }
 
@@ -2048,7 +2049,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         if (_retainedWinnerBrainId != Guid.Empty)
         {
-            detailParts.Add($"Live best brain {_retainedWinnerBrainId:N} stays active until Stop, Disconnect, or the next run.");
+            detailParts.Add($"Live best brain {_retainedWinnerBrainId:N} stays active until the retained export is cleared by Stop, Disconnect, or the next run.");
         }
 
         WinnerExportDetail = string.Join(' ', detailParts);

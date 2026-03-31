@@ -16,6 +16,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan VectorObservationTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EventedObservationTimeout = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan SpawnPlacementTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.Zero;
@@ -941,7 +942,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             setupSlotHeld = true;
 
             var spawnStopwatch = Stopwatch.StartNew();
-            var spawnAck = await _runtimeClient.SpawnBrainAsync(
+            var spawnAck = await SpawnPlacedBrainAsync(
                     new SpawnBrain
                     {
                         BrainDef = member.Definition.Clone(),
@@ -951,10 +952,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     cancellationToken)
                 .ConfigureAwait(false);
             spawnRequest = spawnStopwatch.Elapsed;
-            if (spawnAck?.Ack is null || !spawnAck.Ack.BrainId.TryToGuid(out brainId) || brainId == Guid.Empty)
+            if (spawnAck is null
+                || !spawnAck.BrainId.TryToGuid(out brainId)
+                || brainId == Guid.Empty
+                || !string.IsNullOrWhiteSpace(spawnAck.FailureReasonCode)
+                || !spawnAck.PlacementReady)
             {
-                var failureCode = spawnAck?.FailureReasonCode ?? spawnAck?.Ack?.FailureReasonCode ?? "unknown";
-                var failureDetail = TrimDiagnosticDetail(spawnAck?.FailureMessage ?? spawnAck?.Ack?.FailureMessage);
+                var failureCode = string.IsNullOrWhiteSpace(spawnAck?.FailureReasonCode)
+                    ? "spawn_not_placed"
+                    : spawnAck.FailureReasonCode;
+                var failureDetail = TrimDiagnosticDetail(spawnAck?.FailureMessage);
                 resultMember = member with
                 {
                     LastEvaluation = CreateTransportFailure(
@@ -1542,7 +1549,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionBestCandidateSummary bestCandidate,
         CancellationToken cancellationToken)
     {
-        var spawnAck = await _runtimeClient.SpawnBrainAsync(
+        var spawnAck = await SpawnPlacedBrainAsync(
                 new SpawnBrain
                 {
                     BrainDef = bestCandidate.DefinitionArtifact.Clone(),
@@ -1551,7 +1558,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 },
                 cancellationToken)
             .ConfigureAwait(false);
-        if (spawnAck?.Ack is null || !spawnAck.Ack.BrainId.TryToGuid(out var brainId) || brainId == Guid.Empty)
+        if (spawnAck is null
+            || !spawnAck.BrainId.TryToGuid(out var brainId)
+            || brainId == Guid.Empty
+            || !string.IsNullOrWhiteSpace(spawnAck.FailureReasonCode)
+            || !spawnAck.PlacementReady)
         {
             return null;
         }
@@ -1579,6 +1590,35 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             new Dictionary<string, float>(bestCandidate.ScoreBreakdown, StringComparer.Ordinal),
             bestCandidate.Diagnostics.ToArray());
         return (retainedMember, retainedSummary);
+    }
+
+    private async Task<SpawnBrainAck?> SpawnPlacedBrainAsync(
+        SpawnBrain request,
+        CancellationToken cancellationToken)
+    {
+        var spawn = await _runtimeClient.SpawnBrainAsync(request, cancellationToken).ConfigureAwait(false);
+        var ack = spawn?.Ack;
+        if (ack is null)
+        {
+            return null;
+        }
+
+        if (!ack.BrainId.TryToGuid(out var brainId) || brainId == Guid.Empty)
+        {
+            return ack;
+        }
+
+        if (ack.PlacementReady || !string.IsNullOrWhiteSpace(ack.FailureReasonCode))
+        {
+            return ack;
+        }
+
+        var awaited = await _runtimeClient.AwaitSpawnPlacementAsync(
+                brainId,
+                SpawnPlacementTimeout,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return awaited?.Ack ?? ack;
     }
 
     private async Task<List<PopulationMember>> TeardownPopulationBrainsAsync(
