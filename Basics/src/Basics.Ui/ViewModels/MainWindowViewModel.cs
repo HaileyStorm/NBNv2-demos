@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using Avalonia;
 using Nbn.Demos.Basics.Environment;
@@ -133,6 +135,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private TaskOption? _selectedTask;
     private StrengthSourceOption? _selectedStrengthSource;
     private OutputObservationModeOption? _selectedOutputObservationMode;
+    private DiversityPresetOption? _selectedDiversityPreset;
 
     public MainWindowViewModel(
         UiDispatcher dispatcher,
@@ -149,6 +152,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         SelectedOutputObservationMode = OutputObservationModes.First(static option => option.Mode == BasicsOutputObservationMode.VectorPotential);
 
         Tasks = new ObservableCollection<TaskOption>(BuildTasks());
+        DiversityPresets = new ObservableCollection<DiversityPresetOption>(BuildDiversityPresets());
 
         StrengthSources = new ObservableCollection<StrengthSourceOption>(BuildStrengthSources());
         SelectedStrengthSource = StrengthSources.First(static option => option.Value == Repro.StrengthSource.StrengthBaseOnly);
@@ -170,6 +174,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         AddInitialBrainsCommand = new AsyncRelayCommand(AddInitialBrainsAsync);
         ClearInitialBrainsCommand = new RelayCommand(ClearInitialBrains, () => InitialBrainSeeds.Count > 0);
 
+        SelectedDiversityPreset = DiversityPresets.First(static option => option.Value == BasicsDiversityPreset.Medium);
         SelectedTask = Tasks.FirstOrDefault();
 
         PropertyChanged += (_, args) =>
@@ -191,6 +196,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     }
 
     public ObservableCollection<TaskOption> Tasks { get; }
+
+    public ObservableCollection<DiversityPresetOption> DiversityPresets { get; }
 
     public ObservableCollection<StrengthSourceOption> StrengthSources { get; }
 
@@ -546,6 +553,23 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _selectedStrengthSource;
         set => SetProperty(ref _selectedStrengthSource, value);
+    }
+
+    public DiversityPresetOption? SelectedDiversityPreset
+    {
+        get => _selectedDiversityPreset;
+        set
+        {
+            if (!SetProperty(ref _selectedDiversityPreset, value))
+            {
+                return;
+            }
+
+            if (!_suppressValidationRefresh)
+            {
+                ApplyDiversityPreset(value);
+            }
+        }
     }
 
     public OutputObservationModeOption? SelectedOutputObservationMode
@@ -1070,9 +1094,50 @@ public sealed class MainWindowViewModel : ViewModelBase
             MaxRunsPerPairText = profile.Scheduling.RunAllocation.MaxRunsPerPair.ToString(CultureInfo.InvariantCulture);
             FitnessExponentText = profile.Scheduling.RunAllocation.FitnessExponent.ToString("0.##", CultureInfo.InvariantCulture);
             DiversityBoostText = profile.Scheduling.RunAllocation.DiversityBoost.ToString("0.##", CultureInfo.InvariantCulture);
+            SelectedDiversityPreset = DiversityPresets.FirstOrDefault(option => option.Value == profile.DiversityPreset)
+                ?? SelectedDiversityPreset;
 
             SelectedOutputObservationMode = OutputObservationModes.FirstOrDefault(option => option.Mode == profile.OutputObservationMode)
                 ?? SelectedOutputObservationMode;
+        }
+        finally
+        {
+            _suppressValidationRefresh = false;
+        }
+
+        RefreshValidationState();
+    }
+
+    private void ApplyDiversityPreset(DiversityPresetOption? preset)
+    {
+        if (preset is null)
+        {
+            return;
+        }
+
+        var variation = BasicsDiversityTuning.CreateVariationBand(preset.Value);
+        var scheduling = BasicsDiversityTuning.CreateScheduling(preset.Value);
+        _suppressValidationRefresh = true;
+        try
+        {
+            MaxInternalNeuronDeltaText = variation.MaxInternalNeuronDelta.ToString(CultureInfo.InvariantCulture);
+            MaxAxonDeltaText = variation.MaxAxonDelta.ToString(CultureInfo.InvariantCulture);
+            MaxStrengthCodeDeltaText = variation.MaxStrengthCodeDelta.ToString(CultureInfo.InvariantCulture);
+            MaxParameterCodeDeltaText = variation.MaxParameterCodeDelta.ToString(CultureInfo.InvariantCulture);
+            AllowFunctionMutation = variation.AllowFunctionMutation;
+            AllowAxonReroute = variation.AllowAxonReroute;
+            AllowRegionSetChange = variation.AllowRegionSetChange;
+
+            FitnessWeightText = scheduling.ParentSelection.FitnessWeight.ToString("0.##", CultureInfo.InvariantCulture);
+            DiversityWeightText = scheduling.ParentSelection.DiversityWeight.ToString("0.##", CultureInfo.InvariantCulture);
+            SpeciesBalanceWeightText = scheduling.ParentSelection.SpeciesBalanceWeight.ToString("0.##", CultureInfo.InvariantCulture);
+            EliteFractionText = scheduling.ParentSelection.EliteFraction.ToString("0.##", CultureInfo.InvariantCulture);
+            ExplorationFractionText = scheduling.ParentSelection.ExplorationFraction.ToString("0.##", CultureInfo.InvariantCulture);
+            MaxParentsPerSpeciesText = scheduling.ParentSelection.MaxParentsPerSpecies.ToString(CultureInfo.InvariantCulture);
+            MinRunsPerPairText = scheduling.RunAllocation.MinRunsPerPair.ToString(CultureInfo.InvariantCulture);
+            MaxRunsPerPairText = scheduling.RunAllocation.MaxRunsPerPair.ToString(CultureInfo.InvariantCulture);
+            FitnessExponentText = scheduling.RunAllocation.FitnessExponent.ToString("0.##", CultureInfo.InvariantCulture);
+            DiversityBoostText = scheduling.RunAllocation.DiversityBoost.ToString("0.##", CultureInfo.InvariantCulture);
         }
         finally
         {
@@ -1103,6 +1168,18 @@ public sealed class MainWindowViewModel : ViewModelBase
                 return;
             }
 
+            await StopExecutionAsync().ConfigureAwait(false);
+
+            if (!TaskPluginRegistry.TryGet(options.SelectedTask.TaskId, out var plugin))
+            {
+                _dispatcher.Post(() =>
+                {
+                    ExecutionStatus = "Start blocked.";
+                    ExecutionDetail = $"{options.SelectedTask.DisplayName} is not implemented yet.";
+                });
+                return;
+            }
+
             if (!await RestartRuntimeClientForRunAsync(runtimeOptions).ConfigureAwait(false))
             {
                 return;
@@ -1112,17 +1189,6 @@ public sealed class MainWindowViewModel : ViewModelBase
             var plan = await planner.BuildPlanAsync(options).ConfigureAwait(false);
             _dispatcher.Post(() => ApplyPlan(plan));
 
-            if (!TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out var plugin))
-            {
-                _dispatcher.Post(() =>
-                {
-                    ExecutionStatus = "Start blocked.";
-                    ExecutionDetail = $"{plan.SelectedTask.DisplayName} is not implemented yet.";
-                });
-                return;
-            }
-
-            await StopExecutionAsync().ConfigureAwait(false);
             _dispatcher.Post(() => ClearWinnerState(clearArtifacts: true));
 
             var session = new BasicsExecutionSession(
@@ -1140,7 +1206,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                     ResetCharts();
                     IsExecutionRunning = true;
                     ExecutionStatus = "Starting...";
-                    ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
+                    ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}. Diversity {FormatDiversityPreset(plan.DiversityPreset)} with adaptive stall boost {(plan.AdaptiveDiversity.Enabled ? "on" : "off")}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
                     RaiseCommandStates();
                 });
 
@@ -1184,42 +1250,84 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         await DisposeRuntimeClientAsync().ConfigureAwait(false);
 
-        try
+        Exception? lastFailure = null;
+        foreach (var candidate in BuildRunScopedRuntimeClientCandidates(runtimeOptions))
         {
-            var runtimeClient = await BasicsRuntimeClient.StartAsync(runtimeOptions).ConfigureAwait(false);
-            var ack = await runtimeClient.ConnectAsync(ClientName.Trim()).ConfigureAwait(false);
-            if (ack is null)
+            try
             {
-                await runtimeClient.DisposeAsync().ConfigureAwait(false);
+                var runtimeClient = await BasicsRuntimeClient.StartAsync(candidate).ConfigureAwait(false);
+                var ack = await runtimeClient.ConnectAsync(ClientName.Trim()).ConfigureAwait(false);
+                if (ack is null)
+                {
+                    lastFailure = new InvalidOperationException("ConnectAck was not received.");
+                    await runtimeClient.DisposeAsync().ConfigureAwait(false);
+                    continue;
+                }
+
+                _runtimeClient = runtimeClient;
                 _dispatcher.Post(() =>
                 {
-                    ConnectionStatus = "IO reconnect failed.";
-                    ExecutionStatus = "Start blocked.";
-                    ExecutionDetail = "Could not reconnect the runtime client for a fresh run.";
+                    ConnectionStatus = $"Connected to {IoAddress} as {ack.ServerName}";
+                    if (candidate.Port != runtimeOptions.Port)
+                    {
+                        PortText = candidate.Port.ToString(CultureInfo.InvariantCulture);
+                    }
+
                     RaiseCommandStates();
                 });
-                return false;
+                return true;
             }
+            catch (Exception ex)
+            {
+                lastFailure = ex;
+            }
+        }
 
-            _runtimeClient = runtimeClient;
-            _dispatcher.Post(() =>
-            {
-                ConnectionStatus = $"Connected to {IoAddress} as {ack.ServerName}";
-                RaiseCommandStates();
-            });
-            return true;
-        }
-        catch (Exception ex)
+        _dispatcher.Post(() =>
         {
-            _dispatcher.Post(() =>
-            {
-                ConnectionStatus = $"IO reconnect failed: {ex.GetBaseException().Message}";
-                ExecutionStatus = "Start blocked.";
-                ExecutionDetail = "Could not reconnect the runtime client for a fresh run.";
-                RaiseCommandStates();
-            });
-            return false;
+            ConnectionStatus = $"IO reconnect failed: {lastFailure?.GetBaseException().Message ?? "unknown"}";
+            ExecutionStatus = "Start blocked.";
+            ExecutionDetail = "Could not reconnect the runtime client for a fresh run.";
+            RaiseCommandStates();
+        });
+        return false;
+    }
+
+    private IEnumerable<BasicsRuntimeClientOptions> BuildRunScopedRuntimeClientCandidates(BasicsRuntimeClientOptions runtimeOptions)
+    {
+        yield return runtimeOptions;
+
+        if (runtimeOptions.AdvertisePort.HasValue)
+        {
+            yield break;
         }
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            yield return runtimeOptions with
+            {
+                Port = ReserveLoopbackPort(runtimeOptions.BindHost)
+            };
+        }
+    }
+
+    private static int ReserveLoopbackPort(string bindHost)
+    {
+        IPAddress address;
+        if (string.IsNullOrWhiteSpace(bindHost)
+            || string.Equals(bindHost.Trim(), "0.0.0.0", StringComparison.Ordinal)
+            || string.Equals(bindHost.Trim(), "::", StringComparison.Ordinal))
+        {
+            address = IPAddress.Loopback;
+        }
+        else if (!IPAddress.TryParse(bindHost.Trim(), out address!))
+        {
+            address = IPAddress.Loopback;
+        }
+
+        using var listener = new TcpListener(address, 0);
+        listener.Start();
+        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     private Task StopAsync() => StopExecutionAsync();
@@ -1236,12 +1344,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         MetricsStatus = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
             ? $"{plan.SelectedTask.DisplayName} plugin is available; Start will seed an artifact pool, evaluate live brains, and update metrics here."
             : $"{plan.SelectedTask.DisplayName} plugin is not implemented yet.";
-        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, base run count {plan.Capacity.RecommendedReproductionRunCount}, output mode {FormatOutputObservationMode(plan.OutputObservationMode)}, stop target {plan.StopCriteria.TargetAccuracy:0.###}/{plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
+        MetricsSecondaryStatus = $"Population {plan.Capacity.RecommendedInitialPopulationCount}, concurrent {plan.Capacity.RecommendedMaxConcurrentBrains}, base run count {plan.Capacity.RecommendedReproductionRunCount}, output mode {FormatOutputObservationMode(plan.OutputObservationMode)}, diversity {FormatDiversityPreset(plan.DiversityPreset)}, stop target {plan.StopCriteria.TargetAccuracy:0.###}/{plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
         if (!IsExecutionRunning)
         {
             ExecutionStatus = "Ready to start.";
             ExecutionDetail = TaskPluginRegistry.TryGet(plan.SelectedTask.TaskId, out _)
-                ? $"Template {plan.SeedTemplate.TemplateId} will be published automatically if no artifact ref is supplied. Output mode: {FormatOutputObservationMode(plan.OutputObservationMode)}. Stop target: accuracy >= {plan.StopCriteria.TargetAccuracy:0.###}, fitness >= {plan.StopCriteria.TargetFitness:0.###}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}."
+                ? $"Template {plan.SeedTemplate.TemplateId} will be published automatically if no artifact ref is supplied. Output mode: {FormatOutputObservationMode(plan.OutputObservationMode)}. Diversity preset: {FormatDiversityPreset(plan.DiversityPreset)} with adaptive stall boost {(plan.AdaptiveDiversity.Enabled ? "on" : "off")}."
                 : $"{plan.SelectedTask.DisplayName} cannot start until its plugin issue is implemented.";
         }
 
@@ -1523,6 +1631,10 @@ public sealed class MainWindowViewModel : ViewModelBase
             TargetFitness = ParseRequiredFloat(TargetFitnessText, "Stop fitness target", errors),
             MaximumGenerations = ParseOptionalInt(MaximumGenerationsText, "Maximum generations", errors)
         };
+        var diversityPreset = SelectedDiversityPreset?.Value ?? BasicsDiversityPreset.Medium;
+        var reproductionConfig = ReproductionSettings.CreateDefaultConfig();
+        reproductionConfig.ProtectIoRegionNeuronCounts = true;
+        BasicsDiversityTuning.ApplyPresetToConfig(reproductionConfig, diversityPreset);
 
         options = new BasicsEnvironmentOptions
         {
@@ -1537,8 +1649,11 @@ public sealed class MainWindowViewModel : ViewModelBase
             SeedTemplate = seedTemplate,
             SizingOverrides = overrides,
             OutputObservationMode = SelectedOutputObservationMode?.Mode ?? BasicsOutputObservationMode.VectorPotential,
+            DiversityPreset = diversityPreset,
+            AdaptiveDiversity = new BasicsAdaptiveDiversityOptions(),
             Reproduction = new BasicsReproductionPolicy
             {
+                Config = reproductionConfig,
                 StrengthSource = SelectedStrengthSource?.Value ?? Repro.StrengthSource.StrengthBaseOnly
             },
             Scheduling = scheduling,
@@ -2229,6 +2344,14 @@ public sealed class MainWindowViewModel : ViewModelBase
             "Full vector every tick from persistent buffer values, applied per spawned brain.");
     }
 
+    private static IEnumerable<DiversityPresetOption> BuildDiversityPresets()
+    {
+        yield return new DiversityPresetOption(BasicsDiversityPreset.Low, "Low", "Conservative reproduction and low exploration.");
+        yield return new DiversityPresetOption(BasicsDiversityPreset.Medium, "Medium", "Balanced exploration and mutation pressure.");
+        yield return new DiversityPresetOption(BasicsDiversityPreset.High, "High", "More structural churn and stronger diversity pressure.");
+        yield return new DiversityPresetOption(BasicsDiversityPreset.Extreme, "Extreme", "Maximum exploration pressure for stubborn plateaus.");
+    }
+
     private static IEnumerable<MetricSummaryItemViewModel> BuildMetricSummaryItems()
     {
         yield return new MetricSummaryItemViewModel(BasicsMetricId.Accuracy, "Latest accuracy", "—", "No runtime samples yet.");
@@ -2255,6 +2378,15 @@ public sealed class MainWindowViewModel : ViewModelBase
             _ => "continuous potential"
         };
     }
+
+    private static string FormatDiversityPreset(BasicsDiversityPreset preset)
+        => preset switch
+        {
+            BasicsDiversityPreset.Low => "low",
+            BasicsDiversityPreset.High => "high",
+            BasicsDiversityPreset.Extreme => "extreme",
+            _ => "medium"
+        };
 }
 
 public sealed record TaskOption(BasicsTaskContract Contract, string StatusText)
@@ -2268,6 +2400,11 @@ public sealed record StrengthSourceOption(Repro.StrengthSource Value, string Dis
 
 public sealed record OutputObservationModeOption(
     BasicsOutputObservationMode Mode,
+    string DisplayName,
+    string DetailText);
+
+public sealed record DiversityPresetOption(
+    BasicsDiversityPreset Value,
     string DisplayName,
     string DetailText);
 

@@ -64,6 +64,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         ulong reproductionRunsObserved = 0;
         float bestAccuracySoFar = 0f;
         float bestFitnessSoFar = 0f;
+        var stalledGenerationCount = 0;
         BasicsExecutionBestCandidateSummary? bestCandidateSoFar = null;
         List<PopulationMember> population = new();
         BasicsExecutionSnapshot? lastObservedSnapshot = null;
@@ -262,7 +263,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         evaluationResult.GenerationTiming);
                 }
 
+                var generationImproved = DidGenerationImprove(generationMetrics, bestAccuracySoFar, bestFitnessSoFar);
                 UpdateBestSoFar(generationMetrics, ref bestAccuracySoFar, ref bestFitnessSoFar, ref bestCandidateSoFar);
+                stalledGenerationCount = generationImproved ? 0 : stalledGenerationCount + 1;
                 accuracyHistory.Add(generationMetrics.BestAccuracy);
                 fitnessHistory.Add(generationMetrics.BestFitness);
 
@@ -364,6 +367,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         population,
                         targetPopulation,
                         minimumPopulation,
+                        stalledGenerationCount,
                         cancellationToken,
                         onBreedProgress: (detail, activePopulationCount) =>
                         {
@@ -1645,6 +1649,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<PopulationMember> population,
         int targetPopulation,
         int minimumPopulation,
+        int stalledGenerationCount,
         CancellationToken cancellationToken,
         Action<string, int>? onBreedProgress,
         Action<uint>? onReproductionObserved)
@@ -1658,13 +1663,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return new List<PopulationMember>();
         }
 
+        var adaptiveBoostSteps = BasicsDiversityTuning.ResolveAdaptiveBoostSteps(plan.AdaptiveDiversity, stalledGenerationCount);
+        var effectivePreset = BasicsDiversityTuning.ResolveEffectivePreset(plan.DiversityPreset, adaptiveBoostSteps);
+        var effectiveScheduling = BasicsDiversityTuning.ApplyAdaptiveBoost(plan.Scheduling, adaptiveBoostSteps);
         var eliteCount = ranked.Length == 1
             ? 1
-            : Math.Max(1, (int)Math.Ceiling(ranked.Length * plan.Scheduling.ParentSelection.EliteFraction));
+            : Math.Max(1, (int)Math.Ceiling(ranked.Length * effectiveScheduling.ParentSelection.EliteFraction));
         eliteCount = Math.Min(eliteCount, Math.Min(ranked.Length, targetPopulation));
 
         var nextGeneration = ranked.Take(eliteCount).Select(static member => member with { LastEvaluation = null }).ToList();
-        var parentPool = BuildParentPool(plan.Scheduling.ParentSelection, population);
+        var parentPool = BuildParentPool(effectiveScheduling.ParentSelection, population);
         if (parentPool.Count == 0)
         {
             return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation, minimumPopulation);
@@ -1686,16 +1694,19 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ComputeNovelty(parentA, population),
                 ComputeNovelty(parentB, population));
             var runCount = BasicsReproductionBudgetPlanner.ResolveRunCount(
-                plan.Scheduling.RunAllocation,
+                effectiveScheduling.RunAllocation,
                 plan.Capacity.RecommendedReproductionRunCount,
                 normalizedFitness,
                 normalizedNovelty);
             onBreedProgress?.Invoke(
-                $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId}; requesting {runCount} child run(s).",
+                adaptiveBoostSteps > 0
+                    ? $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId}; requesting {runCount} child run(s). Adaptive diversity {plan.DiversityPreset} -> {effectivePreset} after {stalledGenerationCount} stalled generation(s)."
+                    : $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId}; requesting {runCount} child run(s). Diversity preset {plan.DiversityPreset}.",
                 nextGeneration.Count);
 
             var reproduceConfig = plan.Reproduction.Config.Clone();
             ApplyVariationBand(reproduceConfig, plan.SeedTemplate.InitialVariationBand);
+            BasicsDiversityTuning.ApplyAdaptiveBoost(reproduceConfig, adaptiveBoostSteps);
             reproduceConfig.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
             var result = await _runtimeClient.ReproduceByArtifactsAsync(
                     new Repro.ReproduceByArtifactsRequest
@@ -2441,6 +2452,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         bestCandidateSoFar = SelectBestCandidateSummary(bestCandidateSoFar, generationMetrics.BestCandidate);
     }
+
+    private static bool DidGenerationImprove(
+        GenerationMetrics generationMetrics,
+        float bestAccuracySoFar,
+        float bestFitnessSoFar)
+        => generationMetrics.BestAccuracy > bestAccuracySoFar + 0.0001f
+           || generationMetrics.BestFitness > bestFitnessSoFar + 0.0001f;
 
     private static BasicsExecutionBestCandidateSummary? SelectBestCandidateSummary(
         BasicsExecutionBestCandidateSummary? left,

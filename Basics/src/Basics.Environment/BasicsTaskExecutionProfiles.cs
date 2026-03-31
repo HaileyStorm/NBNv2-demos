@@ -2,6 +2,7 @@ namespace Nbn.Demos.Basics.Environment;
 
 public sealed record BasicsTaskExecutionProfile(
     BasicsOutputObservationMode OutputObservationMode,
+    BasicsDiversityPreset DiversityPreset,
     BasicsSeedVariationBand VariationBand,
     BasicsSeedShapeConstraints SeedShape,
     BasicsSizingOverrides Sizing,
@@ -11,6 +12,7 @@ public static class BasicsTaskExecutionProfiles
 {
     private static readonly BasicsTaskExecutionProfile DefaultProfile = new(
         OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
+        DiversityPreset: BasicsDiversityPreset.Medium,
         VariationBand: new BasicsSeedVariationBand
         {
             MaxInternalNeuronDelta = 2,
@@ -45,6 +47,7 @@ public static class BasicsTaskExecutionProfiles
 
     private static readonly BasicsTaskExecutionProfile ConservativeBooleanProfile = new(
         OutputObservationMode: BasicsOutputObservationMode.EventedOutput,
+        DiversityPreset: BasicsDiversityPreset.Low,
         VariationBand: new BasicsSeedVariationBand
         {
             MaxInternalNeuronDelta = 1,
@@ -85,6 +88,7 @@ public static class BasicsTaskExecutionProfiles
     private static readonly BasicsTaskExecutionProfile RicherExplorationProfile = DefaultProfile with
     {
         OutputObservationMode = BasicsOutputObservationMode.VectorPotential,
+        DiversityPreset = BasicsDiversityPreset.High,
         VariationBand = new BasicsSeedVariationBand
         {
             MaxInternalNeuronDelta = 3,

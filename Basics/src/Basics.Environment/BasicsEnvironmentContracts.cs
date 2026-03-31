@@ -390,6 +390,31 @@ public enum BasicsOutputObservationMode
     VectorBuffer = 2
 }
 
+public enum BasicsDiversityPreset
+{
+    Low = 0,
+    Medium = 1,
+    High = 2,
+    Extreme = 3
+}
+
+public sealed record BasicsAdaptiveDiversityOptions
+{
+    public bool Enabled { get; init; } = true;
+    public int StallGenerationWindow { get; init; } = 4;
+
+    public BasicsContractValidationResult Validate()
+    {
+        var errors = new List<string>();
+        if (StallGenerationWindow < 2)
+        {
+            errors.Add("StallGenerationWindow must be >= 2.");
+        }
+
+        return BasicsContractValidationResult.FromErrors(errors);
+    }
+}
+
 public static class BasicsOutputObservationModeExtensions
 {
     public static bool UsesVectorSubscription(this BasicsOutputObservationMode mode)
@@ -416,6 +441,8 @@ public sealed record BasicsEnvironmentOptions
     public IReadOnlyList<BasicsInitialBrainSeed> InitialBrainSeeds { get; init; } = Array.Empty<BasicsInitialBrainSeed>();
     public BasicsMetricsContract Metrics { get; init; } = BasicsMetricsContract.Default;
     public BasicsOutputObservationMode OutputObservationMode { get; init; } = BasicsOutputObservationMode.VectorPotential;
+    public BasicsDiversityPreset DiversityPreset { get; init; } = BasicsDiversityPreset.Medium;
+    public BasicsAdaptiveDiversityOptions AdaptiveDiversity { get; init; } = new();
     public BasicsReproductionPolicy Reproduction { get; init; } = BasicsReproductionPolicy.CreateDefault();
     public BasicsReproductionSchedulingPolicy Scheduling { get; init; } = BasicsReproductionSchedulingPolicy.Default;
     public BasicsExecutionStopCriteria StopCriteria { get; init; } = new();
@@ -441,6 +468,7 @@ public sealed record BasicsEnvironmentOptions
         AddValidationErrors(SeedTemplate.Validate(), errors);
         AddValidationErrors(SizingOverrides.Validate(), errors);
         AddValidationErrors(Reproduction.Validate(), errors);
+        AddValidationErrors(AdaptiveDiversity.Validate(), errors);
         AddValidationErrors(Scheduling.Validate(), errors);
         AddValidationErrors(StopCriteria.Validate(), errors);
         foreach (var seed in InitialBrainSeeds)
@@ -472,6 +500,8 @@ public sealed record BasicsEnvironmentPlan(
     IReadOnlyList<BasicsInitialBrainSeed> InitialBrainSeeds,
     BasicsCapacityRecommendation Capacity,
     BasicsOutputObservationMode OutputObservationMode,
+    BasicsDiversityPreset DiversityPreset,
+    BasicsAdaptiveDiversityOptions AdaptiveDiversity,
     BasicsReproductionPolicy Reproduction,
     BasicsReproductionSchedulingPolicy Scheduling,
     BasicsMetricsContract Metrics,

@@ -32,6 +32,8 @@ public sealed class BasicsEnvironmentPlanner
             InitialBrainSeeds: options.InitialBrainSeeds.ToArray(),
             Capacity: capacity,
             OutputObservationMode: options.OutputObservationMode,
+            DiversityPreset: options.DiversityPreset,
+            AdaptiveDiversity: options.AdaptiveDiversity,
             Reproduction: options.Reproduction,
             Scheduling: options.Scheduling,
             Metrics: options.Metrics,

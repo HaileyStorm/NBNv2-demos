@@ -527,7 +527,7 @@
                                    FontWeight="SemiBold"
                                    Foreground="#182436" />
                         <Grid ColumnDefinitions="Auto,140,Auto,140,Auto,140"
-                              RowDefinitions="Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Strength source" VerticalAlignment="Center" />
@@ -542,9 +542,17 @@
                             </ComboBox>
                             <TextBlock Grid.Row="0" Grid.Column="2" Text="Protect IO neurons" VerticalAlignment="Center" />
                             <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding ProtectIoRegionNeuronCountsDisplay}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Row="0" Grid.Column="4" Text="Max parents/species" VerticalAlignment="Center"
-                                       ToolTip.Tip="Caps how many parent candidates any one species can contribute before exploration picks from the remainder." />
-                            <TextBox Grid.Row="0" Grid.Column="5" Text="{Binding MaxParentsPerSpeciesText}" />
+                            <TextBlock Grid.Row="0" Grid.Column="4" Text="Diversity preset" VerticalAlignment="Center"
+                                       ToolTip.Tip="Fast control for overall exploration pressure. It adjusts scheduling plus hidden reproduction mutation probabilities, and adaptive stall boost escalates it automatically during plateaus." />
+                            <ComboBox Grid.Row="0" Grid.Column="5"
+                                      ItemsSource="{Binding DiversityPresets}"
+                                      SelectedItem="{Binding SelectedDiversityPreset}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:DiversityPresetOption">
+                                        <TextBlock Text="{Binding DisplayName}" ToolTip.Tip="{Binding DetailText}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
 
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Fitness weight" VerticalAlignment="Center" />
                             <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FitnessWeightText}" />
@@ -561,6 +569,15 @@
                             <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding ExplorationFractionText}" />
                             <TextBlock Grid.Row="2" Grid.Column="4" Text="Fitness exponent" VerticalAlignment="Center" />
                             <TextBox Grid.Row="2" Grid.Column="5" Text="{Binding FitnessExponentText}" />
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Max parents/species" VerticalAlignment="Center"
+                                       ToolTip.Tip="Caps how many parent candidates any one species can contribute before exploration picks from the remainder." />
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MaxParentsPerSpeciesText}" />
+                            <TextBlock Grid.Row="3" Grid.Column="2" Grid.ColumnSpan="4"
+                                       Text="Adaptive stall boost is on by default and escalates diversity after several stagnant generations."
+                                       Foreground="#6C7A89"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap" />
                         </Grid>
 
                         <Grid ColumnDefinitions="Auto,120,Auto,120,Auto,120"
