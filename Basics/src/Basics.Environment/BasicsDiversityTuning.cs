@@ -76,18 +76,18 @@ public static class BasicsDiversityTuning
                 ParentSelection = new BasicsParentSelectionPolicy
                 {
                     FitnessWeight = 0.50d,
-                    DiversityWeight = 0.45d,
+                    DiversityWeight = 0.43d,
                     SpeciesBalanceWeight = 0.15d,
-                    EliteFraction = 0.08d,
-                    ExplorationFraction = 0.40d,
-                    MaxParentsPerSpecies = 10
+                    EliteFraction = 0.25d,
+                    ExplorationFraction = 0.53d,
+                    MaxParentsPerSpecies = 8
                 },
                 RunAllocation = new BasicsRunAllocationPolicy
                 {
-                    MinRunsPerPair = 2,
+                    MinRunsPerPair = 3,
                     MaxRunsPerPair = 8,
                     FitnessExponent = 1.10d,
-                    DiversityBoost = 0.55d
+                    DiversityBoost = 0.60d
                 }
             },
             BasicsDiversityPreset.Extreme => new BasicsReproductionSchedulingPolicy

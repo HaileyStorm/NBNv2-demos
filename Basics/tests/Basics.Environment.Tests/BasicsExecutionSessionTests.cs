@@ -8,6 +8,7 @@ using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Validation;
+using System.Security.Cryptography;
 using Repro = Nbn.Proto.Repro;
 using System.Reflection;
 using System.Collections.Concurrent;
@@ -278,6 +279,64 @@ public sealed class BasicsExecutionSessionTests
                 runtimeClient.SetOutputVectorSourceRequests,
                 static request => request.BrainId != Guid.Empty && request.OutputVectorSource == OutputVectorSource.Buffer);
             Assert.True(runtimeClient.VectorSubscriptionCount > 0);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_TracksBestAccuracyFromUploadedInitialBrains()
+    {
+        var plugin = new MultiplicationTaskPlugin();
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "zero"
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var strongSeedBytes = runtimeClient.CreateDefinitionBytes("multiplication");
+            var weakSeedBytes = runtimeClient.CreateDefinitionBytes("zero");
+            var strongSeedHash = Convert.ToHexString(SHA256.HashData(strongSeedBytes)).ToLowerInvariant();
+
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorBuffer, taskPlugin: plugin) with
+                {
+                    InitialBrainSeeds =
+                    [
+                        new BasicsInitialBrainSeed(
+                            DisplayName: "strong-multiplication-seed",
+                            DefinitionBytes: strongSeedBytes,
+                            DuplicateForReproduction: false,
+                            Complexity: BasicsDefinitionAnalyzer.Analyze(strongSeedBytes).Complexity),
+                        new BasicsInitialBrainSeed(
+                            DisplayName: "weak-zero-seed",
+                            DefinitionBytes: weakSeedBytes,
+                            DuplicateForReproduction: false,
+                            Complexity: BasicsDefinitionAnalyzer.Analyze(weakSeedBytes).Complexity)
+                    ],
+                    Capacity = new BasicsCapacityRecommendation(
+                        Source: BasicsCapacitySource.RuntimePlacementInventory,
+                        EligibleWorkerCount: 1,
+                        RecommendedInitialPopulationCount: 2,
+                        RecommendedReproductionRunCount: 1,
+                        RecommendedMaxConcurrentBrains: 2,
+                        CapacityScore: 1f,
+                        EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                        Summary: "test")
+                },
+                plugin,
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.Equal(1f, final.BestAccuracy);
+            Assert.NotNull(final.BestCandidate);
+            Assert.Equal(1f, final.BestCandidate.Accuracy);
+            Assert.Equal(strongSeedHash, final.BestCandidate.ArtifactSha256);
         }
         finally
         {
@@ -1104,7 +1163,7 @@ public sealed class BasicsExecutionSessionTests
             for (var runIndex = 0; runIndex < result.RequestedRunCount; runIndex++)
             {
                 var behavior = ReproduceCallCount >= 2 ? "and" : DefaultBehavior;
-                var child = CreateArtifactRef(_childIndex++, behavior);
+                var child = CreateStoredDefinition(_childIndex++, behavior).Artifact;
                 result.Runs.Add(new Repro.ReproduceRunOutcome
                 {
                     RunIndex = (uint)runIndex,
@@ -1184,7 +1243,10 @@ public sealed class BasicsExecutionSessionTests
         }
 
         public ArtifactRef CreateDefinitionArtifact(string behavior)
-            => CreateArtifactRef(_childIndex++, behavior);
+            => CreateStoredDefinition(_childIndex++, behavior).Artifact;
+
+        public byte[] CreateDefinitionBytes(string behavior)
+            => CreateStoredDefinition(_childIndex++, behavior).Bytes.ToArray();
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
@@ -1200,7 +1262,7 @@ public sealed class BasicsExecutionSessionTests
             return DefaultBehavior;
         }
 
-        private ArtifactRef CreateArtifactRef(int index, string behavior)
+        private (byte[] Bytes, ArtifactRef Artifact) CreateStoredDefinition(int index, string behavior)
         {
             var template = BasicsSeedTemplateContract.CreateDefault() with
             {
@@ -1215,7 +1277,7 @@ public sealed class BasicsExecutionSessionTests
             var build = BasicsTemplateArtifactBuilder.Build(template);
             var artifact = StoreArtifact(build.Bytes, "application/x-nbn");
             _behaviorByArtifactSha[artifact.ToSha256Hex()] = behavior;
-            return artifact;
+            return (build.Bytes, artifact);
         }
 
         private ArtifactRef StoreArtifact(byte[] bytes, string mediaType)

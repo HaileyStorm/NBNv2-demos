@@ -90,4 +90,33 @@ public sealed class BasicsContractTests
         Assert.Contains(validation.Errors, error => error.Contains("Internal neuron count minimum", StringComparison.Ordinal));
         Assert.Contains(validation.Errors, error => error.Contains("Axon count maximum", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void DiversityTuning_HighScheduling_MatchesCurrentMultiplicationSessionDefaults()
+    {
+        var scheduling = BasicsDiversityTuning.CreateScheduling(BasicsDiversityPreset.High);
+
+        Assert.Equal(0.50d, scheduling.ParentSelection.FitnessWeight);
+        Assert.Equal(0.43d, scheduling.ParentSelection.DiversityWeight);
+        Assert.Equal(0.15d, scheduling.ParentSelection.SpeciesBalanceWeight);
+        Assert.Equal(0.25d, scheduling.ParentSelection.EliteFraction);
+        Assert.Equal(0.53d, scheduling.ParentSelection.ExplorationFraction);
+        Assert.Equal(8, scheduling.ParentSelection.MaxParentsPerSpecies);
+        Assert.Equal((uint)3, scheduling.RunAllocation.MinRunsPerPair);
+        Assert.Equal((uint)8, scheduling.RunAllocation.MaxRunsPerPair);
+        Assert.Equal(1.10d, scheduling.RunAllocation.FitnessExponent);
+        Assert.Equal(0.60d, scheduling.RunAllocation.DiversityBoost);
+    }
+
+    [Fact]
+    public void ExecutionStopCriteria_DefaultsToUnlimitedGenerations()
+    {
+        var criteria = new BasicsExecutionStopCriteria();
+
+        var validation = criteria.Validate();
+
+        Assert.True(validation.IsValid);
+        Assert.Null(criteria.MaximumGenerations);
+        Assert.False(criteria.IsGenerationLimitReached(64));
+    }
 }

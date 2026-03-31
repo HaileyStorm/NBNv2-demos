@@ -6,7 +6,8 @@ public sealed record BasicsTaskExecutionProfile(
     BasicsSeedVariationBand VariationBand,
     BasicsSeedShapeConstraints SeedShape,
     BasicsSizingOverrides Sizing,
-    BasicsReproductionSchedulingPolicy Scheduling);
+    BasicsReproductionSchedulingPolicy Scheduling,
+    BasicsExecutionStopCriteria StopCriteria);
 
 public static class BasicsTaskExecutionProfiles
 {
@@ -43,7 +44,8 @@ public static class BasicsTaskExecutionProfiles
                 FitnessExponent = 1.20d,
                 DiversityBoost = 0.35d
             }
-        });
+        },
+        StopCriteria: new BasicsExecutionStopCriteria());
 
     private static readonly BasicsTaskExecutionProfile ConservativeBooleanProfile = new(
         OutputObservationMode: BasicsOutputObservationMode.EventedOutput,
@@ -83,7 +85,8 @@ public static class BasicsTaskExecutionProfiles
                 FitnessExponent = 1.20d,
                 DiversityBoost = 0.35d
             }
-        });
+        },
+        StopCriteria: new BasicsExecutionStopCriteria());
 
     private static readonly BasicsTaskExecutionProfile RicherExplorationProfile = DefaultProfile with
     {
@@ -114,25 +117,7 @@ public static class BasicsTaskExecutionProfiles
             ReproductionRunCount = 4,
             MaxConcurrentBrains = 2
         },
-        Scheduling = new BasicsReproductionSchedulingPolicy
-        {
-            ParentSelection = new BasicsParentSelectionPolicy
-            {
-                FitnessWeight = 0.50d,
-                DiversityWeight = 0.45d,
-                SpeciesBalanceWeight = 0.15d,
-                EliteFraction = 0.08d,
-                ExplorationFraction = 0.40d,
-                MaxParentsPerSpecies = 8
-            },
-            RunAllocation = new BasicsRunAllocationPolicy
-            {
-                MinRunsPerPair = 2,
-                MaxRunsPerPair = 6,
-                FitnessExponent = 1.10d,
-                DiversityBoost = 0.55d
-            }
-        }
+        Scheduling = BasicsDiversityTuning.CreateScheduling(BasicsDiversityPreset.High)
     };
 
     private static readonly BasicsTaskExecutionProfile XorProfile = RicherExplorationProfile;
@@ -140,30 +125,17 @@ public static class BasicsTaskExecutionProfiles
     private static readonly BasicsTaskExecutionProfile MultiplicationProfile = RicherExplorationProfile with
     {
         OutputObservationMode = BasicsOutputObservationMode.VectorBuffer,
+        VariationBand = RicherExplorationProfile.VariationBand with
+        {
+            MaxAxonDelta = 14
+        },
         Sizing = new BasicsSizingOverrides
         {
-            InitialPopulationCount = 2,
-            ReproductionRunCount = 2,
-            MaxConcurrentBrains = 1
-        },
-        Scheduling = new BasicsReproductionSchedulingPolicy
-        {
-            ParentSelection = new BasicsParentSelectionPolicy
-            {
-                FitnessWeight = 0.50d,
-                DiversityWeight = 0.45d,
-                SpeciesBalanceWeight = 0.15d,
-                EliteFraction = 0.08d,
-                ExplorationFraction = 0.40d,
-                MaxParentsPerSpecies = 8
-            },
-            RunAllocation = new BasicsRunAllocationPolicy
-            {
-                MinRunsPerPair = 2,
-                MaxRunsPerPair = 4,
-                FitnessExponent = 1.10d,
-                DiversityBoost = 0.55d
-            }
+            InitialPopulationCount = 24,
+            MinimumPopulationCount = 12,
+            MaximumPopulationCount = 64,
+            ReproductionRunCount = 3,
+            MaxConcurrentBrains = 8
         }
     };
 

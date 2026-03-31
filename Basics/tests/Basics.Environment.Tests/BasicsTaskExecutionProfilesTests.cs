@@ -18,8 +18,11 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(4, profile.Sizing.InitialPopulationCount);
         Assert.Equal((uint)4, profile.Sizing.ReproductionRunCount);
         Assert.Equal(2, profile.Sizing.MaxConcurrentBrains);
-        Assert.Equal(0.40d, profile.Scheduling.ParentSelection.ExplorationFraction);
-        Assert.Equal(0.55d, profile.Scheduling.RunAllocation.DiversityBoost);
+        Assert.Equal(0.25d, profile.Scheduling.ParentSelection.EliteFraction);
+        Assert.Equal(0.53d, profile.Scheduling.ParentSelection.ExplorationFraction);
+        Assert.Equal((uint)8, profile.Scheduling.RunAllocation.MaxRunsPerPair);
+        Assert.Equal(0.60d, profile.Scheduling.RunAllocation.DiversityBoost);
+        Assert.Null(profile.StopCriteria.MaximumGenerations);
     }
 
     [Fact]
@@ -55,12 +58,19 @@ public sealed class BasicsTaskExecutionProfilesTests
 
         Assert.Equal(BasicsOutputObservationMode.VectorBuffer, profile.OutputObservationMode);
         Assert.Equal(3, profile.VariationBand.MaxInternalNeuronDelta);
+        Assert.Equal(14, profile.VariationBand.MaxAxonDelta);
         Assert.True(profile.VariationBand.AllowFunctionMutation);
-        Assert.Equal(2, profile.Sizing.InitialPopulationCount);
-        Assert.Equal((uint)2, profile.Sizing.ReproductionRunCount);
-        Assert.Equal(1, profile.Sizing.MaxConcurrentBrains);
-        Assert.Equal(0.40d, profile.Scheduling.ParentSelection.ExplorationFraction);
-        Assert.Equal((uint)4, profile.Scheduling.RunAllocation.MaxRunsPerPair);
+        Assert.Equal(24, profile.Sizing.InitialPopulationCount);
+        Assert.Equal(12, profile.Sizing.MinimumPopulationCount);
+        Assert.Equal(64, profile.Sizing.MaximumPopulationCount);
+        Assert.Equal((uint)3, profile.Sizing.ReproductionRunCount);
+        Assert.Equal(8, profile.Sizing.MaxConcurrentBrains);
+        Assert.Equal(0.43d, profile.Scheduling.ParentSelection.DiversityWeight);
+        Assert.Equal(0.53d, profile.Scheduling.ParentSelection.ExplorationFraction);
+        Assert.Equal((uint)3, profile.Scheduling.RunAllocation.MinRunsPerPair);
+        Assert.Equal((uint)8, profile.Scheduling.RunAllocation.MaxRunsPerPair);
+        Assert.Equal(0.60d, profile.Scheduling.RunAllocation.DiversityBoost);
+        Assert.Null(profile.StopCriteria.MaximumGenerations);
     }
 
     [Fact]
@@ -72,5 +82,6 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Null(profile.Sizing.InitialPopulationCount);
         Assert.Equal(2, profile.VariationBand.MaxInternalNeuronDelta);
         Assert.True(profile.VariationBand.AllowAxonReroute);
+        Assert.Null(profile.StopCriteria.MaximumGenerations);
     }
 }

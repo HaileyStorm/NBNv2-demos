@@ -1081,6 +1081,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             MaxAxonCountText = FormatOptionalInt(profile.SeedShape.MaxAxonCount);
 
             InitialPopulationOverrideText = FormatOptionalInt(profile.Sizing.InitialPopulationCount);
+            MinimumPopulationOverrideText = FormatOptionalInt(profile.Sizing.MinimumPopulationCount);
+            MaximumPopulationOverrideText = FormatOptionalInt(profile.Sizing.MaximumPopulationCount);
             ReproductionRunCountOverrideText = FormatOptionalUInt(profile.Sizing.ReproductionRunCount);
             MaxConcurrentBrainsOverrideText = FormatOptionalInt(profile.Sizing.MaxConcurrentBrains);
 
@@ -1094,6 +1096,9 @@ public sealed class MainWindowViewModel : ViewModelBase
             MaxRunsPerPairText = profile.Scheduling.RunAllocation.MaxRunsPerPair.ToString(CultureInfo.InvariantCulture);
             FitnessExponentText = profile.Scheduling.RunAllocation.FitnessExponent.ToString("0.##", CultureInfo.InvariantCulture);
             DiversityBoostText = profile.Scheduling.RunAllocation.DiversityBoost.ToString("0.##", CultureInfo.InvariantCulture);
+            TargetAccuracyText = profile.StopCriteria.TargetAccuracy.ToString("0.0##", CultureInfo.InvariantCulture);
+            TargetFitnessText = profile.StopCriteria.TargetFitness.ToString("0.0##", CultureInfo.InvariantCulture);
+            MaximumGenerationsText = FormatOptionalInt(profile.StopCriteria.MaximumGenerations);
             SelectedDiversityPreset = DiversityPresets.FirstOrDefault(option => option.Value == profile.DiversityPreset)
                 ?? SelectedDiversityPreset;
 
