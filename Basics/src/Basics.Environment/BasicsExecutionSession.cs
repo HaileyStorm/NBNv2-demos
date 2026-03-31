@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using Nbn.Proto;
 using Nbn.Proto.Control;
@@ -203,7 +204,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             while (!cancellationToken.IsCancellationRequested)
             {
                 generation++;
-                population = await EvaluatePopulationAsync(
+                var evaluationResult = await EvaluatePopulationAsync(
                         plan,
                         taskPlugin,
                         generation,
@@ -222,6 +223,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         publishSnapshot,
                         cancellationToken)
                     .ConfigureAwait(false);
+                population = evaluationResult.Population.ToList();
 
                 var generationMetrics = BuildGenerationMetrics(population, plan.StopCriteria, includeWinnerRuntimeState: true);
                 if (IsGenerationFullyFailed(population))
@@ -255,7 +257,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         lastObservedSnapshot,
                         bestAccuracySoFar,
                         bestFitnessSoFar,
-                        bestCandidateSoFar);
+                        bestCandidateSoFar,
+                        evaluationResult.LatestBatchTiming,
+                        evaluationResult.GenerationTiming);
                 }
 
                 UpdateBestSoFar(generationMetrics, ref bestAccuracySoFar, ref bestFitnessSoFar, ref bestCandidateSoFar);
@@ -266,7 +270,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     plan.StopCriteria,
                     BasicsExecutionState.Running,
                     $"Generation {generation} evaluated.",
-                    BuildGenerationDetail(generation, generationMetrics),
+                    BuildGenerationDetail(generation, generationMetrics, evaluationResult.GenerationTiming),
                     speciationEpochId,
                     generation,
                     population,
@@ -279,7 +283,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     fitnessHistory,
                     overallBestAccuracy: bestAccuracySoFar,
                     overallBestFitness: bestFitnessSoFar,
-                    overallBestCandidate: bestCandidateSoFar);
+                    overallBestCandidate: bestCandidateSoFar,
+                    latestBatchTiming: evaluationResult.LatestBatchTiming,
+                    latestGenerationTiming: evaluationResult.GenerationTiming);
                 publishSnapshot(generationSummary);
 
                 if (plan.StopCriteria.IsSatisfied(generationMetrics.BestAccuracy, generationMetrics.BestFitness))
@@ -311,7 +317,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         lastObservedSnapshot,
                         bestAccuracySoFar,
                         bestFitnessSoFar,
-                        bestCandidateSoFar);
+                        bestCandidateSoFar,
+                        evaluationResult.LatestBatchTiming,
+                        evaluationResult.GenerationTiming);
                 }
 
                 if (plan.StopCriteria.IsGenerationLimitReached(generation))
@@ -344,7 +352,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         lastObservedSnapshot,
                         bestAccuracySoFar,
                         bestFitnessSoFar,
-                        bestCandidateSoFar);
+                        bestCandidateSoFar,
+                        evaluationResult.LatestBatchTiming,
+                        evaluationResult.GenerationTiming);
                 }
 
                 population = await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
@@ -404,7 +414,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         lastObservedSnapshot,
                         bestAccuracySoFar,
                         bestFitnessSoFar,
-                        bestCandidateSoFar);
+                        bestCandidateSoFar,
+                        evaluationResult.LatestBatchTiming,
+                        evaluationResult.GenerationTiming);
                 }
 
                 population = nextGeneration;
@@ -807,7 +819,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return children;
     }
 
-    private async Task<List<PopulationMember>> EvaluatePopulationAsync(
+    private async Task<PopulationEvaluationResult> EvaluatePopulationAsync(
         BasicsEnvironmentPlan plan,
         IBasicsTaskPlugin taskPlugin,
         int generation,
@@ -827,6 +839,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         CancellationToken cancellationToken)
     {
         var evaluated = new List<PopulationMember>(population.Count);
+        var batchTimings = new List<BasicsExecutionBatchTimingSummary>();
         var maxConcurrent = Math.Max(1, plan.Capacity.RecommendedMaxConcurrentBrains);
         var chunkCount = (int)Math.Ceiling(population.Count / (double)maxConcurrent);
         var setupConcurrency = ResolveSetupConcurrency(plan.Capacity.EligibleWorkerCount, maxConcurrent);
@@ -840,11 +853,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             cancellationToken.ThrowIfCancellationRequested();
 
             var batch = population.Skip(chunkIndex * maxConcurrent).Take(maxConcurrent).ToArray();
+            var completedBatchTimings = batchTimings.Count == 0 ? null : batchTimings[^1];
             onSnapshot?.Invoke(CreateSnapshot(
                 plan.StopCriteria,
                 BasicsExecutionState.Running,
                 $"Evaluating generation {generation}...",
-                $"Batch {chunkIndex + 1}/{chunkCount} with {batch.Length} active brain(s).",
+                BuildBatchStartDetail(chunkIndex + 1, chunkCount, batch.Length, setupConcurrency, completedBatchTimings),
                 speciationEpochId,
                 generation,
                 evaluated.Concat(batch).ToArray(),
@@ -857,18 +871,47 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 fitnessHistory,
                 overallBestAccuracy: overallBestAccuracy,
                 overallBestFitness: overallBestFitness,
-                overallBestCandidate: overallBestCandidate));
+                overallBestCandidate: overallBestCandidate,
+                latestBatchTiming: completedBatchTimings,
+                latestGenerationTiming: BuildGenerationTimingSummary(generation, batchTimings)));
 
+            var batchStopwatch = Stopwatch.StartNew();
             var batchEvaluations = await Task.WhenAll(
                     batch.Select(member => EvaluateMemberAsync(taskPlugin, member, outputObservationMode, setupGate, spawnPacer, cancellationToken)))
                 .ConfigureAwait(false);
-            evaluated.AddRange(batchEvaluations);
+            var batchTiming = BuildBatchTimingSummary(generation, chunkIndex + 1, chunkCount, batchEvaluations, batchStopwatch.Elapsed);
+            batchTimings.Add(batchTiming);
+            evaluated.AddRange(batchEvaluations.Select(static result => result.Member));
+
+            onSnapshot?.Invoke(CreateSnapshot(
+                plan.StopCriteria,
+                BasicsExecutionState.Running,
+                $"Evaluating generation {generation}...",
+                BuildBatchCompletionDetail(batchTiming),
+                speciationEpochId,
+                generation,
+                evaluated.ToArray(),
+                activeBrainCount: evaluated.Count(member => member.ActiveBrainId != Guid.Empty),
+                reproductionCalls,
+                reproductionRunsObserved,
+                effectiveTemplateDefinition,
+                seedShape,
+                accuracyHistory,
+                fitnessHistory,
+                overallBestAccuracy: overallBestAccuracy,
+                overallBestFitness: overallBestFitness,
+                overallBestCandidate: overallBestCandidate,
+                latestBatchTiming: batchTiming,
+                latestGenerationTiming: BuildGenerationTimingSummary(generation, batchTimings)));
         }
 
-        return evaluated;
+        return new PopulationEvaluationResult(
+            evaluated,
+            batchTimings.Count == 0 ? null : batchTimings[^1],
+            BuildGenerationTimingSummary(generation, batchTimings));
     }
 
-    private async Task<PopulationMember> EvaluateMemberAsync(
+    private async Task<MemberEvaluationResult> EvaluateMemberAsync(
         IBasicsTaskPlugin taskPlugin,
         PopulationMember member,
         BasicsOutputObservationMode outputObservationMode,
@@ -879,12 +922,21 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         Guid brainId = Guid.Empty;
         var setupSlotHeld = false;
         var subscribed = false;
+        var totalStopwatch = Stopwatch.StartNew();
+        var queueWait = TimeSpan.Zero;
+        var spawnRequest = TimeSpan.Zero;
+        var setup = TimeSpan.Zero;
+        var observation = TimeSpan.Zero;
+        PopulationMember resultMember = member;
         try
         {
+            var queueStopwatch = Stopwatch.StartNew();
             await spawnPacer.WaitAsync(cancellationToken).ConfigureAwait(false);
             await setupGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            queueWait = queueStopwatch.Elapsed;
             setupSlotHeld = true;
 
+            var spawnStopwatch = Stopwatch.StartNew();
             var spawnAck = await _runtimeClient.SpawnBrainAsync(
                     new SpawnBrain
                     {
@@ -894,30 +946,35 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
+            spawnRequest = spawnStopwatch.Elapsed;
             if (spawnAck?.Ack is null || !spawnAck.Ack.BrainId.TryToGuid(out brainId) || brainId == Guid.Empty)
             {
                 var failureCode = spawnAck?.FailureReasonCode ?? spawnAck?.Ack?.FailureReasonCode ?? "unknown";
                 var failureDetail = TrimDiagnosticDetail(spawnAck?.FailureMessage ?? spawnAck?.Ack?.FailureMessage);
-                return member with
+                resultMember = member with
                 {
                     LastEvaluation = CreateTransportFailure(
                         string.IsNullOrWhiteSpace(failureDetail)
                             ? $"spawn_failed:{failureCode}"
                             : $"spawn_failed:{failureCode}:{failureDetail}")
                 };
+                return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, setup, observation, totalStopwatch.Elapsed);
             }
 
             _trackedBrains.TryAdd(brainId, 0);
 
+            var setupStopwatch = Stopwatch.StartNew();
             var brainInfo = await _runtimeClient.RequestBrainInfoAsync(brainId, cancellationToken).ConfigureAwait(false);
             var geometry = BasicsIoGeometry.Validate(brainInfo);
             if (!geometry.IsValid)
             {
-                return member with
+                resultMember = member with
                 {
                     LastEvaluation = CreateTransportFailure($"geometry_invalid:{geometry.FailureReason}"),
                     ActiveBrainId = brainId
                 };
+                setup = setupStopwatch.Elapsed;
+                return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, setup, observation, totalStopwatch.Elapsed);
             }
 
             await ConfigureBrainOutputObservationModeAsync(brainId, outputObservationMode, brainInfo, cancellationToken).ConfigureAwait(false);
@@ -933,6 +990,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 _runtimeClient.ResetOutputEventBuffer(brainId);
             }
             subscribed = true;
+            setup = setupStopwatch.Elapsed;
 
             setupGate.Release();
             setupSlotHeld = false;
@@ -941,6 +999,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             var samples = taskPlugin.BuildDeterministicDataset();
             ulong lastTick = 0;
 
+            var observationStopwatch = Stopwatch.StartNew();
             if (outputObservationMode.UsesVectorSubscription())
             {
                 var primeVector = ResolvePrimeInputVector(samples);
@@ -960,7 +1019,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             foreach (var sample in samples)
             {
                 var separatorVector = ResolveSeparatorInputVector(sample, samples);
-                var observation = await ObserveSampleAsync(
+                var sampleObservation = await ObserveSampleAsync(
                         brainId,
                         sample,
                         lastTick,
@@ -969,18 +1028,21 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         separatorVector,
                         cancellationToken)
                     .ConfigureAwait(false);
-                if (observation is null)
+                if (sampleObservation is null)
                 {
-                    return member with
+                    resultMember = member with
                     {
                         LastEvaluation = CreateTransportFailure("output_timeout_or_width_mismatch"),
                         ActiveBrainId = brainId
                     };
+                    observation = observationStopwatch.Elapsed;
+                    return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, setup, observation, totalStopwatch.Elapsed);
                 }
 
-                observations.Add(observation.Value);
-                lastTick = observation.Value.TickId;
+                observations.Add(sampleObservation.Value);
+                lastTick = sampleObservation.Value.TickId;
             }
+            observation = observationStopwatch.Elapsed;
 
             var evaluation = taskPlugin.Evaluate(
                 new BasicsTaskEvaluationContext(
@@ -990,11 +1052,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     TickBase: observations.Count == 0 ? 0UL : observations[0].TickId),
                 samples,
                 observations);
-            return member with
+            resultMember = member with
             {
                 LastEvaluation = evaluation,
                 ActiveBrainId = brainId
             };
+            return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, setup, observation, totalStopwatch.Elapsed);
         }
         catch (OperationCanceledException)
         {
@@ -1015,11 +1078,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
         catch (Exception ex)
         {
-            return member with
+            resultMember = member with
             {
                 LastEvaluation = CreateTransportFailure($"evaluation_failed:{ex.GetBaseException().Message}"),
                 ActiveBrainId = brainId
             };
+            return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, setup, observation, totalStopwatch.Elapsed);
         }
         finally
         {
@@ -1099,6 +1163,144 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             }
         }
     }
+
+    private static MemberEvaluationResult CreateMemberEvaluationResult(
+        PopulationMember member,
+        TimeSpan queueWait,
+        TimeSpan spawnRequest,
+        TimeSpan setup,
+        TimeSpan observation,
+        TimeSpan total)
+        => new(
+            member,
+            new MemberEvaluationTelemetry(
+                queueWait,
+                spawnRequest,
+                setup,
+                observation,
+                total,
+                ResolveFailureCategory(member.LastEvaluation)));
+
+    private static string BuildBatchStartDetail(
+        int batchIndex,
+        int batchCount,
+        int brainCount,
+        int setupConcurrency,
+        BasicsExecutionBatchTimingSummary? previousBatch)
+    {
+        var detail = $"Batch {batchIndex}/{batchCount} with {brainCount} active brain(s). Setup concurrency {setupConcurrency}.";
+        if (previousBatch is null)
+        {
+            return detail;
+        }
+
+        return $"{detail} Previous batch {FormatSeconds(previousBatch.BatchDurationSeconds)} total; queue {FormatSeconds(previousBatch.AverageQueueWaitSeconds)}/brain, spawn {FormatSeconds(previousBatch.AverageSpawnRequestSeconds)}/brain, setup {FormatSeconds(previousBatch.AverageSetupSeconds)}/brain, observe {FormatSeconds(previousBatch.AverageObservationSeconds)}/brain.";
+    }
+
+    private static string BuildBatchCompletionDetail(BasicsExecutionBatchTimingSummary timing)
+    {
+        var detail = $"Batch {timing.BatchIndex}/{timing.BatchCount} finished in {FormatSeconds(timing.BatchDurationSeconds)}; queue {FormatSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn {FormatSeconds(timing.AverageSpawnRequestSeconds)}/brain, setup {FormatSeconds(timing.AverageSetupSeconds)}/brain, observe {FormatSeconds(timing.AverageObservationSeconds)}/brain.";
+        if (!string.IsNullOrWhiteSpace(timing.FailureSummary))
+        {
+            detail = $"{detail} Failures: {timing.FailureSummary}.";
+        }
+
+        return detail;
+    }
+
+    private static BasicsExecutionBatchTimingSummary BuildBatchTimingSummary(
+        int generation,
+        int batchIndex,
+        int batchCount,
+        IReadOnlyList<MemberEvaluationResult> results,
+        TimeSpan batchDuration)
+    {
+        if (results.Count == 0)
+        {
+            return new BasicsExecutionBatchTimingSummary(
+                generation,
+                batchIndex,
+                batchCount,
+                0,
+                0,
+                0,
+                batchDuration.TotalSeconds,
+                0d,
+                0d,
+                0d,
+                0d,
+                string.Empty);
+        }
+
+        var failures = results
+            .Select(result => result.Telemetry.FailureCategory)
+            .Where(static value => !string.Equals(value, "success", StringComparison.Ordinal))
+            .GroupBy(static value => value, StringComparer.Ordinal)
+            .OrderByDescending(static group => group.Count())
+            .ThenBy(static group => group.Key, StringComparer.Ordinal)
+            .Select(static group => $"{group.Key} x{group.Count()}")
+            .ToArray();
+
+        return new BasicsExecutionBatchTimingSummary(
+            generation,
+            batchIndex,
+            batchCount,
+            results.Count,
+            results.Count(static result => string.Equals(result.Telemetry.FailureCategory, "success", StringComparison.Ordinal)),
+            results.Count(static result => !string.Equals(result.Telemetry.FailureCategory, "success", StringComparison.Ordinal)),
+            batchDuration.TotalSeconds,
+            results.Average(static result => result.Telemetry.QueueWait.TotalSeconds),
+            results.Average(static result => result.Telemetry.SpawnRequest.TotalSeconds),
+            results.Average(static result => result.Telemetry.Setup.TotalSeconds),
+            results.Average(static result => result.Telemetry.Observation.TotalSeconds),
+            string.Join("; ", failures));
+    }
+
+    private static BasicsExecutionGenerationTimingSummary? BuildGenerationTimingSummary(
+        int generation,
+        IReadOnlyList<BasicsExecutionBatchTimingSummary> batchTimings)
+    {
+        if (batchTimings.Count == 0)
+        {
+            return null;
+        }
+
+        return new BasicsExecutionGenerationTimingSummary(
+            generation,
+            batchTimings.Count,
+            batchTimings.Sum(static timing => timing.BrainCount),
+            batchTimings.Sum(static timing => timing.SuccessfulBrainCount),
+            batchTimings.Sum(static timing => timing.FailedBrainCount),
+            batchTimings.Sum(static timing => timing.BatchDurationSeconds),
+            batchTimings.Average(static timing => timing.BatchDurationSeconds),
+            batchTimings.Average(static timing => timing.AverageQueueWaitSeconds),
+            batchTimings.Average(static timing => timing.AverageSpawnRequestSeconds),
+            batchTimings.Average(static timing => timing.AverageSetupSeconds),
+            batchTimings.Average(static timing => timing.AverageObservationSeconds),
+            string.Join(
+                "; ",
+                batchTimings
+                    .Select(static timing => timing.FailureSummary)
+                    .Where(static value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.Ordinal)));
+    }
+
+    private static string ResolveFailureCategory(BasicsTaskEvaluationResult? evaluation)
+    {
+        if (evaluation is null || evaluation.Diagnostics.Count == 0)
+        {
+            return "success";
+        }
+
+        var diagnostic = evaluation.Diagnostics[0];
+        var delimiter = diagnostic.IndexOf(':');
+        return delimiter <= 0 ? diagnostic : diagnostic[..delimiter];
+    }
+
+    private static string FormatSeconds(double seconds)
+        => seconds >= 10d
+            ? $"{seconds:0.0}s"
+            : $"{seconds:0.00}s";
 
     private static IReadOnlyList<float> ResolvePrimeInputVector(IReadOnlyList<BasicsTaskSample> samples)
     {
@@ -1998,7 +2200,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionSnapshot? baselineSnapshot,
         float overallBestAccuracy,
         float overallBestFitness,
-        BasicsExecutionBestCandidateSummary? overallBestCandidate)
+        BasicsExecutionBestCandidateSummary? overallBestCandidate,
+        BasicsExecutionBatchTimingSummary? latestBatchTiming = null,
+        BasicsExecutionGenerationTimingSummary? latestGenerationTiming = null)
     {
         var snapshot = CreateTerminalSnapshot(
             stopCriteria,
@@ -2018,7 +2222,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             baselineSnapshot,
             overallBestAccuracy,
             overallBestFitness,
-            overallBestCandidate);
+            overallBestCandidate,
+            latestBatchTiming,
+            latestGenerationTiming);
         onSnapshot(snapshot);
         return snapshot;
     }
@@ -2041,7 +2247,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionSnapshot? baselineSnapshot,
         float overallBestAccuracy,
         float overallBestFitness,
-        BasicsExecutionBestCandidateSummary? overallBestCandidate)
+        BasicsExecutionBestCandidateSummary? overallBestCandidate,
+        BasicsExecutionBatchTimingSummary? latestBatchTiming,
+        BasicsExecutionGenerationTimingSummary? latestGenerationTiming)
     {
         if (!ShouldUseBaselineSnapshot(population, baselineSnapshot))
         {
@@ -2063,8 +2271,22 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 includeWinnerRuntimeState: activeBrainCount > 0,
                 overallBestAccuracy: overallBestAccuracy,
                 overallBestFitness: overallBestFitness,
-                overallBestCandidate: overallBestCandidate);
-            return currentSnapshot;
+                overallBestCandidate: overallBestCandidate,
+                latestBatchTiming: latestBatchTiming,
+                latestGenerationTiming: latestGenerationTiming);
+
+            if (!ShouldPreserveBaselinePopulationSummary(state, population, baselineSnapshot))
+            {
+                return currentSnapshot;
+            }
+
+            var baselineForPopulation = baselineSnapshot!;
+            return currentSnapshot with
+            {
+                PopulationCount = Math.Max(currentSnapshot.PopulationCount, baselineForPopulation.PopulationCount),
+                SpeciesCount = Math.Max(currentSnapshot.SpeciesCount, baselineForPopulation.SpeciesCount),
+                MeanFitness = Math.Max(currentSnapshot.MeanFitness, baselineForPopulation.MeanFitness)
+            };
         }
 
         var baseline = baselineSnapshot!;
@@ -2092,7 +2314,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             SeedShape: seedShape ?? baseline.SeedShape,
             BestCandidate: CloneBestCandidate(resolvedBestCandidate),
             AccuracyHistory: MergeHistory(accuracyHistory, baseline.AccuracyHistory),
-            BestFitnessHistory: MergeHistory(fitnessHistory, baseline.BestFitnessHistory));
+            BestFitnessHistory: MergeHistory(fitnessHistory, baseline.BestFitnessHistory),
+            LatestBatchTiming: latestBatchTiming ?? baseline.LatestBatchTiming,
+            LatestGenerationTiming: latestGenerationTiming ?? baseline.LatestGenerationTiming);
     }
 
     private static void PublishSnapshot(
@@ -2120,7 +2344,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<float> fitnessHistory,
         float overallBestAccuracy,
         float overallBestFitness,
-        BasicsExecutionBestCandidateSummary? overallBestCandidate)
+        BasicsExecutionBestCandidateSummary? overallBestCandidate,
+        BasicsExecutionBatchTimingSummary? latestBatchTiming = null,
+        BasicsExecutionGenerationTimingSummary? latestGenerationTiming = null)
     {
         onSnapshot(new BasicsExecutionSnapshot(
             state,
@@ -2143,7 +2369,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             seedShape,
             CloneBestCandidate(SelectBestCandidateSummary(bestCandidate, overallBestCandidate)),
             accuracyHistory.ToArray(),
-            fitnessHistory.ToArray()));
+            fitnessHistory.ToArray(),
+            latestBatchTiming,
+            latestGenerationTiming));
     }
 
     private static bool ShouldUseBaselineSnapshot(
@@ -2151,6 +2379,28 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionSnapshot? baselineSnapshot)
         => baselineSnapshot is not null
            && (population.Count == 0 || population.All(static member => member.LastEvaluation is null));
+
+    private static bool ShouldPreserveBaselinePopulationSummary(
+        BasicsExecutionState state,
+        IReadOnlyList<PopulationMember> population,
+        BasicsExecutionSnapshot? baselineSnapshot)
+    {
+        if (baselineSnapshot is null
+            || state is not (BasicsExecutionState.Failed or BasicsExecutionState.Stopped or BasicsExecutionState.Succeeded)
+            || population.Count == 0
+            || population.Count >= baselineSnapshot.PopulationCount)
+        {
+            return false;
+        }
+
+        if (population.Count != 1)
+        {
+            return false;
+        }
+
+        var evaluation = population[0].LastEvaluation;
+        return evaluation is not null && evaluation.Diagnostics.Count == 0;
+    }
 
     private static BasicsExecutionBestCandidateSummary? CloneBestCandidate(BasicsExecutionBestCandidateSummary? candidate)
         => candidate is null
@@ -2312,7 +2562,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         bool includeWinnerRuntimeState = false,
         float overallBestAccuracy = 0f,
         float overallBestFitness = 0f,
-        BasicsExecutionBestCandidateSummary? overallBestCandidate = null)
+        BasicsExecutionBestCandidateSummary? overallBestCandidate = null,
+        BasicsExecutionBatchTimingSummary? latestBatchTiming = null,
+        BasicsExecutionGenerationTimingSummary? latestGenerationTiming = null)
     {
         var metrics = BuildGenerationMetrics(population, stopCriteria, includeWinnerRuntimeState);
         var resolvedBestAccuracy = Math.Max(metrics.BestAccuracy, Math.Max(overallBestAccuracy, accuracyHistory.DefaultIfEmpty(0f).Max()));
@@ -2339,7 +2591,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             seedShape,
             CloneBestCandidate(resolvedBestCandidate),
             accuracyHistory.ToArray(),
-            fitnessHistory.ToArray());
+            fitnessHistory.ToArray(),
+            latestBatchTiming,
+            latestGenerationTiming);
     }
 
     private GenerationMetrics BuildGenerationMetrics(
@@ -2450,12 +2704,20 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
     }
 
-    private static string BuildGenerationDetail(int generation, GenerationMetrics metrics)
+    private static string BuildGenerationDetail(
+        int generation,
+        GenerationMetrics metrics,
+        BasicsExecutionGenerationTimingSummary? timing)
     {
         var summary = $"Generation {generation}: accuracy={metrics.BestAccuracy:0.###}, best_fitness={metrics.BestFitness:0.###}, mean_fitness={metrics.MeanFitness:0.###}, species={metrics.SpeciesCount}.";
         if (metrics.EvaluationFailureCount > 0 && !string.IsNullOrWhiteSpace(metrics.EvaluationFailureSummary))
         {
             summary += $" Evaluation failures: {metrics.EvaluationFailureSummary}.";
+        }
+
+        if (timing is not null)
+        {
+            summary += $" Timing: total={FormatSeconds(timing.TotalDurationSeconds)}, avg_batch={FormatSeconds(timing.AverageBatchDurationSeconds)}, queue={FormatSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn={FormatSeconds(timing.AverageSpawnRequestSeconds)}/brain, setup={FormatSeconds(timing.AverageSetupSeconds)}/brain, observe={FormatSeconds(timing.AverageObservationSeconds)}/brain.";
         }
 
         return summary;
@@ -2540,6 +2802,23 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         string SpeciesDisplayName,
         BasicsDefinitionComplexitySummary? Complexity,
         int ExactCopies);
+
+    private readonly record struct MemberEvaluationTelemetry(
+        TimeSpan QueueWait,
+        TimeSpan SpawnRequest,
+        TimeSpan Setup,
+        TimeSpan Observation,
+        TimeSpan Total,
+        string FailureCategory);
+
+    private readonly record struct MemberEvaluationResult(
+        PopulationMember Member,
+        MemberEvaluationTelemetry Telemetry);
+
+    private sealed record PopulationEvaluationResult(
+        IReadOnlyList<PopulationMember> Population,
+        BasicsExecutionBatchTimingSummary? LatestBatchTiming,
+        BasicsExecutionGenerationTimingSummary? GenerationTiming);
 
     private sealed record PopulationMember(
         ArtifactRef Definition,

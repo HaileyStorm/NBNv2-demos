@@ -326,7 +326,10 @@ public enum BasicsMetricId
     ReproductionCalls = 6,
     ReproductionRunsObserved = 7,
     CapacityUtilization = 8,
-    BestAccuracy = 9
+    BestAccuracy = 9,
+    LatestBatchDuration = 10,
+    LatestSetupDuration = 11,
+    LatestObservationDuration = 12
 }
 
 public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> RequiredMetrics)
@@ -343,7 +346,10 @@ public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> Require
             BasicsMetricId.SpeciesCount,
             BasicsMetricId.ReproductionCalls,
             BasicsMetricId.ReproductionRunsObserved,
-            BasicsMetricId.CapacityUtilization
+            BasicsMetricId.CapacityUtilization,
+            BasicsMetricId.LatestBatchDuration,
+            BasicsMetricId.LatestSetupDuration,
+            BasicsMetricId.LatestObservationDuration
         });
 }
 

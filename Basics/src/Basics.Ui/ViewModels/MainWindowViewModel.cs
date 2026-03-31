@@ -1250,6 +1250,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         UpdateMetricSummary(BasicsMetricId.ReproductionRunsObserved, plan.Capacity.RecommendedReproductionRunCount.ToString(CultureInfo.InvariantCulture), "Suggested base reproduction run count before per-pair min/max shaping.");
         UpdateMetricSummary(BasicsMetricId.SpeciesCount, plan.SeedTemplate.ExpectSingleBootstrapSpecies ? "1 seed family" : "multiple", "Bootstrap template-family expectation.");
         UpdateMetricSummary(BasicsMetricId.CapacityUtilization, plan.Capacity.CapacityScore.ToString("0.###", CultureInfo.InvariantCulture), plan.Capacity.Source.ToString());
+        UpdateMetricSummary(BasicsMetricId.LatestBatchDuration, "—", "Instrumentation appears after the first evaluated batch.");
+        UpdateMetricSummary(BasicsMetricId.LatestSetupDuration, "—", "Instrumentation appears after the first evaluated batch.");
+        UpdateMetricSummary(BasicsMetricId.LatestObservationDuration, "—", "Instrumentation appears after the first evaluated batch.");
         RaiseCommandStates();
     }
 
@@ -1648,6 +1651,16 @@ public sealed class MainWindowViewModel : ViewModelBase
             detailLines.Add($"Best-candidate diagnostics: {string.Join("; ", snapshot.BestCandidate.Diagnostics.Take(3))}");
         }
 
+        if (snapshot.LatestBatchTiming is not null)
+        {
+            detailLines.Add(BuildBatchTimingStatus(snapshot.LatestBatchTiming));
+        }
+
+        if (snapshot.LatestGenerationTiming is not null)
+        {
+            detailLines.Add(BuildGenerationTimingStatus(snapshot.LatestGenerationTiming));
+        }
+
         var resolvedDetail = string.Join(" ", detailLines);
         ExecutionStatus = snapshot.StatusText;
         ExecutionDetail = resolvedDetail;
@@ -1731,6 +1744,30 @@ public sealed class MainWindowViewModel : ViewModelBase
             snapshot.ActiveBrainCount > 0
                 ? "Current evaluation batch utilization."
                 : "Idle between evaluation batches.");
+        UpdateMetricSummary(
+            BasicsMetricId.LatestBatchDuration,
+            snapshot.LatestBatchTiming is null
+                ? "—"
+                : FormatRuntimeSeconds(snapshot.LatestBatchTiming.BatchDurationSeconds),
+            snapshot.LatestBatchTiming is null
+                ? "Instrumentation appears after the first evaluated batch."
+                : $"Batch {snapshot.LatestBatchTiming.BatchIndex}/{snapshot.LatestBatchTiming.BatchCount}: queue {FormatRuntimeSeconds(snapshot.LatestBatchTiming.AverageQueueWaitSeconds)}/brain, spawn {FormatRuntimeSeconds(snapshot.LatestBatchTiming.AverageSpawnRequestSeconds)}/brain.");
+        UpdateMetricSummary(
+            BasicsMetricId.LatestSetupDuration,
+            snapshot.LatestBatchTiming is null
+                ? "—"
+                : FormatRuntimeSeconds(snapshot.LatestBatchTiming.AverageSetupSeconds),
+            snapshot.LatestBatchTiming is null
+                ? "Instrumentation appears after the first evaluated batch."
+                : "Average setup-to-ready time per brain: brain-info/configure/subscribe/prime.");
+        UpdateMetricSummary(
+            BasicsMetricId.LatestObservationDuration,
+            snapshot.LatestBatchTiming is null
+                ? "—"
+                : FormatRuntimeSeconds(snapshot.LatestBatchTiming.AverageObservationSeconds),
+            snapshot.LatestBatchTiming is null
+                ? "Instrumentation appears after the first evaluated batch."
+                : "Average sample-observation time per brain; long waits here usually mean output timeouts/retries.");
 
         if (snapshot.State == BasicsExecutionState.Succeeded && CanUseBestCandidateForExport(snapshot.BestCandidate))
         {
@@ -2113,6 +2150,33 @@ public sealed class MainWindowViewModel : ViewModelBase
         item.DetailText = detail;
     }
 
+    private static string BuildBatchTimingStatus(BasicsExecutionBatchTimingSummary timing)
+    {
+        var detail = $"Last batch {timing.BatchIndex}/{timing.BatchCount}: total {FormatRuntimeSeconds(timing.BatchDurationSeconds)}, queue {FormatRuntimeSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn {FormatRuntimeSeconds(timing.AverageSpawnRequestSeconds)}/brain, setup {FormatRuntimeSeconds(timing.AverageSetupSeconds)}/brain, observe {FormatRuntimeSeconds(timing.AverageObservationSeconds)}/brain.";
+        if (!string.IsNullOrWhiteSpace(timing.FailureSummary))
+        {
+            detail += $" Failures: {timing.FailureSummary}.";
+        }
+
+        return detail;
+    }
+
+    private static string BuildGenerationTimingStatus(BasicsExecutionGenerationTimingSummary timing)
+    {
+        var detail = $"Generation timing: total {FormatRuntimeSeconds(timing.TotalDurationSeconds)}, avg batch {FormatRuntimeSeconds(timing.AverageBatchDurationSeconds)}, setup {FormatRuntimeSeconds(timing.AverageSetupSeconds)}/brain, observe {FormatRuntimeSeconds(timing.AverageObservationSeconds)}/brain.";
+        if (!string.IsNullOrWhiteSpace(timing.FailureSummary))
+        {
+            detail += $" Failures: {timing.FailureSummary}.";
+        }
+
+        return detail;
+    }
+
+    private static string FormatRuntimeSeconds(double seconds)
+        => seconds >= 10d
+            ? $"{seconds:0.0}s"
+            : $"{seconds:0.00}s";
+
     private static IEnumerable<TaskOption> BuildTasks()
     {
         yield return CreateTaskOption("and", "AND", "Boolean AND over canonical 0/1 inputs and outputs.", "Plugin pending");
@@ -2177,6 +2241,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return new MetricSummaryItemViewModel(BasicsMetricId.ReproductionCalls, "Reproduction calls", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.ReproductionRunsObserved, "Runs observed", "—", "Plan-derived once capacity is fetched.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.CapacityUtilization, "Capacity score", "—", "Filled from IO capacity planning.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.LatestBatchDuration, "Last batch", "—", "Instrumentation appears after the first evaluated batch.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.LatestSetupDuration, "Setup/brain", "—", "Average brain-info/configure/subscribe/prime time per evaluated batch.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.LatestObservationDuration, "Observe/brain", "—", "Average sample-observation time per evaluated batch.");
     }
 
     private static string FormatOutputObservationMode(BasicsOutputObservationMode mode)

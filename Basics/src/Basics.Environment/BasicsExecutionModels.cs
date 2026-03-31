@@ -88,6 +88,34 @@ public sealed record BasicsExecutionBestCandidateSummary(
     public bool HasSnapshotArtifact => SnapshotArtifact is not null && SnapshotArtifact.TryToSha256Bytes(out _);
 }
 
+public sealed record BasicsExecutionBatchTimingSummary(
+    int Generation,
+    int BatchIndex,
+    int BatchCount,
+    int BrainCount,
+    int SuccessfulBrainCount,
+    int FailedBrainCount,
+    double BatchDurationSeconds,
+    double AverageQueueWaitSeconds,
+    double AverageSpawnRequestSeconds,
+    double AverageSetupSeconds,
+    double AverageObservationSeconds,
+    string FailureSummary);
+
+public sealed record BasicsExecutionGenerationTimingSummary(
+    int Generation,
+    int BatchCount,
+    int BrainCount,
+    int SuccessfulBrainCount,
+    int FailedBrainCount,
+    double TotalDurationSeconds,
+    double AverageBatchDurationSeconds,
+    double AverageQueueWaitSeconds,
+    double AverageSpawnRequestSeconds,
+    double AverageSetupSeconds,
+    double AverageObservationSeconds,
+    string FailureSummary);
+
 public sealed record BasicsExecutionSnapshot(
     BasicsExecutionState State,
     string StatusText,
@@ -109,4 +137,6 @@ public sealed record BasicsExecutionSnapshot(
     BasicsResolvedSeedShape? SeedShape,
     BasicsExecutionBestCandidateSummary? BestCandidate,
     IReadOnlyList<float> AccuracyHistory,
-    IReadOnlyList<float> BestFitnessHistory);
+    IReadOnlyList<float> BestFitnessHistory,
+    BasicsExecutionBatchTimingSummary? LatestBatchTiming = null,
+    BasicsExecutionGenerationTimingSummary? LatestGenerationTiming = null);

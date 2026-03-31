@@ -13,6 +13,9 @@ public static class BasicsTemplateArtifactBuilder
     private const byte SumAccumulation = 0;
     private const byte ZeroReset = 0;
     private const byte MaxStrengthCode = 31;
+    private static readonly byte[] PreferredActivationFunctionIds = { 1, 5, 6, 7, 8, 9, 11, 18, 28 };
+    private static readonly byte[] PreferredResetFunctionIds = { 0, 1, 3, 17, 30, 43, 44, 45, 47, 48, 49, 58 };
+    private static readonly byte[] PreferredAccumulationFunctionIds = { 0, 1, 2 };
 
     public static BasicsTemplateBuildResult Build(BasicsSeedTemplateContract template)
     {
@@ -327,15 +330,24 @@ public static class BasicsTemplateArtifactBuilder
                 .ThenBy(static axon => axon.TargetNeuronId)
                 .ThenBy(static axon => axon.StrengthCode)
                 .ToArray();
+            var activationFunctionId = isInternal
+                ? SelectPreferredFunction(PreferredActivationFunctionIds, regionId, neuronId)
+                : IdentityActivation;
+            var resetFunctionId = isInternal
+                ? SelectPreferredFunction(PreferredResetFunctionIds, regionId, neuronId)
+                : ZeroReset;
+            var accumulationFunctionId = isInternal
+                ? SelectPreferredFunction(PreferredAccumulationFunctionIds, regionId, neuronId)
+                : SumAccumulation;
             neurons[neuronId] = new NeuronRecord(
                 axonCount: (ushort)outgoing.Length,
                 paramBCode: 0,
                 paramACode: isInternal ? (byte)8 : (byte)0,
                 activationThresholdCode: 0,
                 preActivationThresholdCode: 0,
-                resetFunctionId: ZeroReset,
-                activationFunctionId: IdentityActivation,
-                accumulationFunctionId: SumAccumulation,
+                resetFunctionId: resetFunctionId,
+                activationFunctionId: activationFunctionId,
+                accumulationFunctionId: accumulationFunctionId,
                 exists: true);
             axons.AddRange(outgoing);
         }
@@ -373,5 +385,16 @@ public static class BasicsTemplateArtifactBuilder
         directory[regionId] = new NbnRegionDirectoryEntry((uint)neuronCount, totalAxons, offset, 0);
         sections.Add(section);
         return offset + (ulong)section.ByteLength;
+    }
+
+    private static byte SelectPreferredFunction(IReadOnlyList<byte> preferredCodes, byte regionId, int neuronId)
+    {
+        if (preferredCodes.Count == 0)
+        {
+            return 0;
+        }
+
+        var index = Math.Abs((regionId * 17) + neuronId) % preferredCodes.Count;
+        return preferredCodes[index];
     }
 }
