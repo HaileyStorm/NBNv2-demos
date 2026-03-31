@@ -95,7 +95,7 @@ public static class BasicsTaskExecutionProfiles
         VariationBand = new BasicsSeedVariationBand
         {
             MaxInternalNeuronDelta = 3,
-            MaxAxonDelta = 10,
+            MaxAxonDelta = 14,
             MaxStrengthCodeDelta = 6,
             MaxParameterCodeDelta = 6,
             AllowFunctionMutation = true,
@@ -107,15 +107,15 @@ public static class BasicsTaskExecutionProfiles
             MinActiveInternalRegionCount = 1,
             MaxActiveInternalRegionCount = 1,
             MinInternalNeuronCount = 2,
-            MaxInternalNeuronCount = 3,
-            MinAxonCount = 6,
-            MaxAxonCount = 10
+            MaxInternalNeuronCount = 6,
+            MinAxonCount = 5,
+            MaxAxonCount = 33
         },
         Sizing = new BasicsSizingOverrides
         {
             InitialPopulationCount = 4,
             ReproductionRunCount = 4,
-            MaxConcurrentBrains = 2
+            MaxConcurrentBrains = 64
         },
         Scheduling = BasicsDiversityTuning.CreateScheduling(BasicsDiversityPreset.High)
     };
@@ -135,7 +135,7 @@ public static class BasicsTaskExecutionProfiles
             MinimumPopulationCount = 12,
             MaximumPopulationCount = 64,
             ReproductionRunCount = 3,
-            MaxConcurrentBrains = 8
+            MaxConcurrentBrains = 64
         }
     };
 

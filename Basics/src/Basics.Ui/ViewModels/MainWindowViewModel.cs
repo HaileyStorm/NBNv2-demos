@@ -127,7 +127,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _metricsSecondaryStatus = "Population and resource summaries update when capacity is fetched or a run is active.";
     private string _winnerExportStatus = "No best-so-far brain retained.";
     private string _winnerExportDetail = "The strongest evaluated candidate is retained for export when a run finishes or reaches a stop target.";
-    private string _workerCountText = "1";
+    private string _workerCountText = "8";
     private string _workerBasePortText = "12041";
     private string _workerStoragePctText = "95";
     private string _workerLauncherStatus = "No workers launched from Basics UI.";
