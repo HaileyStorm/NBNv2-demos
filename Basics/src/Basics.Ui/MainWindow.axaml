@@ -97,13 +97,17 @@
                             <Grid Grid.Row="3"
                                   Grid.ColumnSpan="2"
                                   ColumnDefinitions="Auto,120,Auto,120,Auto,120"
-                                  ColumnSpacing="10">
-                                <TextBlock Grid.Column="0" Text="Bind host" VerticalAlignment="Center" />
-                                <TextBox Grid.Column="1" Text="{Binding BindHost}" />
-                                <TextBlock Grid.Column="2" Text="Port" VerticalAlignment="Center" />
-                                <TextBox Grid.Column="3" Text="{Binding PortText}" />
-                                <TextBlock Grid.Column="4" Text="Timeout (s)" VerticalAlignment="Center" />
-                                <TextBox Grid.Column="5" Text="{Binding RequestTimeoutSecondsText}" />
+                                  RowDefinitions="Auto,Auto"
+                                  ColumnSpacing="10"
+                                  RowSpacing="10">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Bind host" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding BindHost}" />
+                                <TextBlock Grid.Row="0" Grid.Column="2" Text="Port" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding PortText}" />
+                                <TextBlock Grid.Row="0" Grid.Column="4" Text="Timeout (s)" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="5" Text="{Binding RequestTimeoutSecondsText}" />
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Advertise host" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="5" Text="{Binding AdvertiseHost}" Watermark="{Binding DefaultAdvertiseHostHint}" />
                             </Grid>
                         </Grid>
 

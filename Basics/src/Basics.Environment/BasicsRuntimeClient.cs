@@ -132,11 +132,13 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     private readonly PID _receiverPid;
     private readonly TimeSpan _requestTimeout;
     private readonly Channel<ConnectAck> _connectAcks;
+    private readonly SemaphoreSlim _reconnectGate;
     private readonly ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>> _outputBuffers;
     private readonly ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputEvent>> _outputEventBuffers;
     private readonly ConcurrentDictionary<Guid, int> _outputWidths;
     private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<ulong, PendingOutputVector>> _pendingOutputSegments;
     private readonly ConcurrentDictionary<Guid, Channel<BrainTerminated>> _terminationBuffers;
+    private string? _connectedClientName;
     private bool _disposed;
 
     private BasicsRuntimeClient(
@@ -154,6 +156,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             SingleReader = false,
             SingleWriter = false
         });
+        _reconnectGate = new SemaphoreSlim(1, 1);
         _outputBuffers = new ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>>();
         _outputEventBuffers = new ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputEvent>>();
         _outputWidths = new ConcurrentDictionary<Guid, int>();
@@ -203,11 +206,14 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
         try
         {
+            var normalizedClientName = clientName.Trim();
             ResetConnectAckBuffer();
-            _system.Root.Send(_receiverPid, new BasicsConnectCommand(clientName.Trim()));
+            _system.Root.Send(_receiverPid, new BasicsConnectCommand(normalizedClientName));
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(_requestTimeout);
-            return await _connectAcks.Reader.ReadAsync(timeoutCts.Token).ConfigureAwait(false);
+            var ack = await _connectAcks.Reader.ReadAsync(timeoutCts.Token).ConfigureAwait(false);
+            _connectedClientName = normalizedClientName;
+            return ack;
         }
         catch (OperationCanceledException)
         {
@@ -226,11 +232,12 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
         try
         {
-            return await _system.Root.RequestAsync<PlacementWorkerInventoryResult>(
-                    _ioPid,
-                    new GetPlacementWorkerInventory(),
-                    _requestTimeout)
-                .WaitAsync(cancellationToken)
+            return await ExecuteIoRequestWithReconnectAsync(
+                    () => _system.Root.RequestAsync<PlacementWorkerInventoryResult>(
+                            _ioPid,
+                            new GetPlacementWorkerInventory(),
+                            _requestTimeout),
+                    cancellationToken)
                 .ConfigureAwait(false);
         }
         catch
@@ -249,11 +256,12 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
         try
         {
-            var info = await _system.Root.RequestAsync<BrainInfo>(
-                    _ioPid,
-                    new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
-                    _requestTimeout)
-                .WaitAsync(cancellationToken)
+            var info = await ExecuteIoRequestWithReconnectAsync(
+                    () => _system.Root.RequestAsync<BrainInfo>(
+                            _ioPid,
+                            new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
+                            _requestTimeout),
+                    cancellationToken)
                 .ConfigureAwait(false);
             RememberOutputWidth(brainId, info);
             return info;
@@ -273,11 +281,12 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
         try
         {
-            return await _system.Root.RequestAsync<SpawnBrainViaIOAck>(
-                    _ioPid,
-                    new SpawnBrainViaIO { Request = request },
-                    _requestTimeout)
-                .WaitAsync(cancellationToken)
+            return await ExecuteIoRequestWithReconnectAsync(
+                    () => _system.Root.RequestAsync<SpawnBrainViaIOAck>(
+                            _ioPid,
+                            new SpawnBrainViaIO { Request = request },
+                            _requestTimeout),
+                    cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException ex)
@@ -329,15 +338,16 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
         try
         {
-            return await _system.Root.RequestAsync<AwaitSpawnPlacementViaIOAck>(
-                    _ioPid,
-                    new AwaitSpawnPlacementViaIO
-                    {
-                        BrainId = brainId.ToProtoUuid(),
-                        TimeoutMs = timeoutMs
-                    },
-                    timeout > TimeSpan.Zero ? timeout + TimeSpan.FromSeconds(1) : _requestTimeout)
-                .WaitAsync(cancellationToken)
+            return await ExecuteIoRequestWithReconnectAsync(
+                    () => _system.Root.RequestAsync<AwaitSpawnPlacementViaIOAck>(
+                            _ioPid,
+                            new AwaitSpawnPlacementViaIO
+                            {
+                                BrainId = brainId.ToProtoUuid(),
+                                TimeoutMs = timeoutMs
+                            },
+                            timeout > TimeSpan.Zero ? timeout + TimeSpan.FromSeconds(1) : _requestTimeout),
+                    cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException ex)
@@ -986,6 +996,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         }
 
         _connectAcks.Writer.TryComplete();
+        _reconnectGate.Dispose();
 
         await _system.Remote().ShutdownAsync(graceful: true).ConfigureAwait(false);
         await _system.ShutdownAsync().ConfigureAwait(false);
@@ -1253,6 +1264,67 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         while (_connectAcks.Reader.TryRead(out _))
         {
         }
+    }
+
+    private async Task<T?> ExecuteIoRequestWithReconnectAsync<T>(
+        Func<Task<T>> requestFactory,
+        CancellationToken cancellationToken) where T : class
+    {
+        try
+        {
+            return await requestFactory().WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (!ShouldRetryIoTransportFailure(ex)
+                || !await TryReconnectToIoAsync(cancellationToken).ConfigureAwait(false))
+            {
+                throw;
+            }
+
+            return await requestFactory().WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> TryReconnectToIoAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_connectedClientName))
+        {
+            return false;
+        }
+
+        await _reconnectGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_disposed || string.IsNullOrWhiteSpace(_connectedClientName))
+            {
+                return false;
+            }
+
+            var ack = await ConnectAsync(_connectedClientName, cancellationToken).ConfigureAwait(false);
+            return ack is not null;
+        }
+        finally
+        {
+            _reconnectGate.Release();
+        }
+    }
+
+    private static bool ShouldRetryIoTransportFailure(Exception ex)
+    {
+        var baseException = ex.GetBaseException();
+        if (string.Equals(baseException.GetType().Name, "DeadLetterException", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var message = baseException.Message;
+        return !string.IsNullOrWhiteSpace(message)
+               && message.Contains("no longer exists", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ThrowIfDisposed()

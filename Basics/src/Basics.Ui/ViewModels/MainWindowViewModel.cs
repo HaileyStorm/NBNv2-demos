@@ -76,7 +76,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _clientName = "nbn.basics.ui";
     private string _bindHost = NetworkAddressDefaults.DefaultBindHost;
     private string _portText = "12094";
-    private string _advertiseHost = string.Empty;
+    private string _advertiseHost = NetworkAddressDefaults.ResolveDefaultAdvertisedHost();
     private string _advertisePortText = string.Empty;
     private string _requestTimeoutSecondsText = "30";
     private string _optionalSettingsAddress = string.Empty;
@@ -261,6 +261,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     }
 
     public string DefaultIoAddressHint => $"{NetworkAddressDefaults.ResolveDefaultAdvertisedHost()}:12050";
+
+    public string DefaultAdvertiseHostHint => NetworkAddressDefaults.ResolveDefaultAdvertisedHost();
 
     public string IoGatewayName
     {
