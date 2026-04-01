@@ -58,6 +58,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly IBasicsBrainImportService _brainImportService;
     private readonly IBasicsLocalWorkerProcessService _workerProcessService;
     private IBasicsRuntimeClient? _runtimeClient;
+    private BasicsRuntimeClientOptions? _runtimeClientOptions;
     private BasicsExecutionSession? _executionSession;
     private CancellationTokenSource? _executionCts;
     private BasicsExecutionRunLog? _executionRunLog;
@@ -880,6 +881,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             }
 
             _runtimeClient = runtimeClient;
+            _runtimeClientOptions = options;
             _dispatcher.Post(() =>
             {
                 ConnectionStatus = $"Connected to {IoAddress} as {ack.ServerName}";
@@ -1330,8 +1332,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
             SetExecutionPhase(
                 "Starting...",
-                "Reconnecting to IO and reserving a clean runtime client for this run.");
-            if (!await RestartRuntimeClientForRunAsync(runtimeOptions).ConfigureAwait(false))
+                "Verifying the direct IO session for this run.");
+            if (!await EnsureRuntimeClientReadyForRunAsync(runtimeOptions).ConfigureAwait(false))
             {
                 return;
             }
@@ -1450,6 +1452,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 }
 
                 _runtimeClient = runtimeClient;
+                _runtimeClientOptions = candidate;
                 _dispatcher.Post(() =>
                 {
                     ConnectionStatus = $"Connected to {IoAddress} as {ack.ServerName}";
@@ -1476,6 +1479,38 @@ public sealed class MainWindowViewModel : ViewModelBase
             RaiseCommandStates();
         });
         return false;
+    }
+
+    private async Task<bool> EnsureRuntimeClientReadyForRunAsync(BasicsRuntimeClientOptions runtimeOptions)
+    {
+        if (_runtimeClient is not null
+            && _runtimeClientOptions == runtimeOptions
+            && await ProbeRuntimeClientAsync(_runtimeClient).ConfigureAwait(false))
+        {
+            _dispatcher.Post(RaiseCommandStates);
+            return true;
+        }
+
+        SetExecutionPhase(
+            "Starting...",
+            _runtimeClient is null
+                ? "Opening a direct IO session for this run."
+                : _runtimeClientOptions == runtimeOptions
+                    ? "Current IO session failed a direct probe; reconnecting."
+                    : "Connection settings changed since Connect; opening a matching IO session for this run.");
+        return await RestartRuntimeClientForRunAsync(runtimeOptions).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> ProbeRuntimeClientAsync(IBasicsRuntimeClient runtimeClient)
+    {
+        try
+        {
+            return await runtimeClient.GetPlacementWorkerInventoryAsync().ConfigureAwait(false) is not null;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private IEnumerable<BasicsRuntimeClientOptions> BuildRunScopedRuntimeClientCandidates(BasicsRuntimeClientOptions runtimeOptions)
@@ -2379,6 +2414,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         var current = _runtimeClient;
         _runtimeClient = null;
+        _runtimeClientOptions = null;
         await current.DisposeAsync().ConfigureAwait(false);
     }
 
