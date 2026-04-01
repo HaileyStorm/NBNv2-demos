@@ -81,6 +81,10 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
 
+    Task<IoCommandAck?> PauseBrainAsync(Guid brainId, string? reason, CancellationToken cancellationToken = default);
+
+    Task<IoCommandAck?> ResumeBrainAsync(Guid brainId, CancellationToken cancellationToken = default);
+
     Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default);
 
     Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
@@ -644,6 +648,66 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                     },
                     _requestTimeout)
                 .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<IoCommandAck?> PauseBrainAsync(
+        Guid brainId,
+        string? reason,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await ExecuteIoRequestWithReconnectAsync(
+                    () => _system.Root.RequestAsync<IoCommandAck>(
+                            _ioPid,
+                            new PauseBrain
+                            {
+                                BrainId = brainId.ToProtoUuid(),
+                                Reason = reason ?? string.Empty
+                            },
+                            _requestTimeout),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<IoCommandAck?> ResumeBrainAsync(
+        Guid brainId,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await ExecuteIoRequestWithReconnectAsync(
+                    () => _system.Root.RequestAsync<IoCommandAck>(
+                            _ioPid,
+                            new ResumeBrain
+                            {
+                                BrainId = brainId.ToProtoUuid()
+                            },
+                            _requestTimeout),
+                    cancellationToken)
                 .ConfigureAwait(false);
         }
         catch

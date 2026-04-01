@@ -516,6 +516,29 @@ public sealed class BasicsLiveTrialHarnessTests
         public Task<BasicsRuntimeOutputEvent?> WaitForOutputEventAsync(Guid brainId, ulong afterTickExclusive, TimeSpan timeout, CancellationToken cancellationToken = default)
             => Task.FromResult<BasicsRuntimeOutputEvent?>(null);
 
+        public Task<IoCommandAck?> PauseBrainAsync(
+            Guid brainId,
+            string? reason,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IoCommandAck?>(new IoCommandAck
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Command = "pause_brain",
+                Success = true,
+                Message = "queued"
+            });
+
+        public Task<IoCommandAck?> ResumeBrainAsync(
+            Guid brainId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IoCommandAck?>(new IoCommandAck
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Command = "resume_brain",
+                Success = true,
+                Message = "queued"
+            });
+
         public Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default)
             => Task.FromResult<KillBrainViaIOAck?>(null);
 

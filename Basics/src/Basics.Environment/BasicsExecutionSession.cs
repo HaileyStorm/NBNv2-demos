@@ -1285,7 +1285,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         batchBrainOrdinal,
                         batchBrainCount,
                         attempt,
-                        phase)))
+                        phase)),
+                    pauseDuringSetup: true)
                 .ConfigureAwait(false);
             spawnRequest = spawnStopwatch.Elapsed;
             if (spawnAck is null
@@ -1351,6 +1352,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
             setupGate.Release();
             setupSlotHeld = false;
+
+            var resumeAck = await _runtimeClient.ResumeBrainAsync(brainId, cancellationToken).ConfigureAwait(false);
+            ValidateIoCommandAck(resumeAck, brainId, "resume_brain");
 
             var observations = new List<BasicsTaskObservation>();
             var samples = taskPlugin.BuildDeterministicDataset();
@@ -2048,7 +2052,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private async Task<SpawnBrainAck?> SpawnPlacedBrainAsync(
         SpawnBrain request,
         CancellationToken cancellationToken,
-        Action<InFlightBrainPhase>? onProgress = null)
+        Action<InFlightBrainPhase>? onProgress = null,
+        bool pauseDuringSetup = false)
     {
         var spawn = await _runtimeClient.SpawnBrainAsync(request, cancellationToken).ConfigureAwait(false);
         var ack = spawn?.Ack;
@@ -2060,6 +2065,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         if (!ack.BrainId.TryToGuid(out var brainId) || brainId == Guid.Empty)
         {
             return ack;
+        }
+
+        if (pauseDuringSetup && string.IsNullOrWhiteSpace(ack.FailureReasonCode))
+        {
+            var pauseAck = await _runtimeClient.PauseBrainAsync(brainId, "basics_spawn_setup", cancellationToken).ConfigureAwait(false);
+            ValidateIoCommandAck(pauseAck, brainId, "pause_brain");
         }
 
         if (ack.PlacementReady || !string.IsNullOrWhiteSpace(ack.FailureReasonCode))
