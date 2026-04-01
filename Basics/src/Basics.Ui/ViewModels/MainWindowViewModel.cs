@@ -70,7 +70,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly List<float> _fitnessHistory = new();
     private readonly List<float> _bestFitnessHistory = new();
 
-    private string _ioAddress = "127.0.0.1:12050";
+    private string _ioAddress = $"{NetworkAddressDefaults.ResolveDefaultAdvertisedHost()}:12050";
     private string _ioGatewayName = "io-gateway";
     private string _clientName = "nbn.basics.ui";
     private string _bindHost = NetworkAddressDefaults.DefaultBindHost;
@@ -258,6 +258,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         get => _ioAddress;
         set => SetProperty(ref _ioAddress, value);
     }
+
+    public string DefaultIoAddressHint => $"{NetworkAddressDefaults.ResolveDefaultAdvertisedHost()}:12050";
 
     public string IoGatewayName
     {
