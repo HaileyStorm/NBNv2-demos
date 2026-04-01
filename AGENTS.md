@@ -39,6 +39,8 @@
   1. contract/ownership map in `../NBNv2`
   2. invariant/risk map for the intended demo interaction
   3. verification/test map for affected runtime contracts
+- After any failed, aborted, or partially-applied edit attempt, immediately re-read the affected file(s) from disk and inspect `git diff` before making the next edit. Never assume a large patch landed exactly as intended.
+- For large-file edits, prefer smaller verified patches over one broad rewrite, and verify exact anchor text before every scripted replacement.
 
 ## Cross-repo editing rule
 
