@@ -166,14 +166,25 @@ public sealed class BasicsExecutionSessionTests
                 .Select(snapshot => snapshot.StatusText)
                 .ToList();
             var firstRunningIndex = snapshots.FindIndex(snapshot => snapshot.State == BasicsExecutionState.Running);
+            var firstGenerationEvaluationIndex = snapshots.FindIndex(snapshot =>
+                snapshot.State == BasicsExecutionState.Running
+                && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal));
+            var initialPopulationReadyIndex = snapshots.FindIndex(snapshot => snapshot.StatusText == "Initial population ready.");
 
             Assert.True(firstRunningIndex >= 0);
+            Assert.True(firstGenerationEvaluationIndex >= 0);
             Assert.True(snapshots.FindIndex(snapshot => snapshot.StatusText == "Starting Basics session...") >= 0);
             Assert.True(snapshots.FindIndex(snapshot => snapshot.StatusText == "Preparing speciation epoch...") > snapshots.FindIndex(snapshot => snapshot.StatusText == "Starting Basics session..."));
             Assert.True(snapshots.FindIndex(snapshot => snapshot.StatusText == "Seeding initial population...") > snapshots.FindIndex(snapshot => snapshot.StatusText == "Preparing speciation epoch..."));
             Assert.True(snapshots.FindIndex(snapshot => snapshot.StatusText == "Generating seed variations...") > snapshots.FindIndex(snapshot => snapshot.StatusText == "Seeding initial population..."));
             Assert.True(snapshots.FindIndex(snapshot => snapshot.StatusText == "Generating seed variations...") < firstRunningIndex);
+            Assert.True(initialPopulationReadyIndex >= 0);
+            Assert.True(initialPopulationReadyIndex < firstGenerationEvaluationIndex);
             Assert.Contains("Initial population ready.", startupStatuses);
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.StatusText == "Generating seed variations..."
+                            && snapshot.DetailText.Contains("attempt 1/", StringComparison.Ordinal));
         }
         finally
         {
@@ -964,12 +975,14 @@ public sealed class BasicsExecutionSessionTests
     {
         var runtimeClient = new FakeBasicsRuntimeClient
         {
-            TransientSpawnFailureCount = 1
+            TransientSpawnFailureCount = 1,
+            SpawnDelay = TimeSpan.FromMilliseconds(300)
         };
         var session = CreateSession(runtimeClient);
 
         try
         {
+            var snapshots = new List<BasicsExecutionSnapshot>();
             var final = await session.RunAsync(
                 CreatePlan(
                     BasicsOutputObservationMode.VectorPotential,
@@ -978,12 +991,24 @@ public sealed class BasicsExecutionSessionTests
                         MaximumGenerations = 1
                     }),
                 new AndTaskPlugin(),
-                _ => { },
+                snapshots.Add,
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
             Assert.Equal(BasicsExecutionState.Stopped, final.State);
             Assert.True(final.BestAccuracy > 0f);
             Assert.True(runtimeClient.SpawnRequestCount >= 3, $"Expected at least one retried spawn, observed {runtimeClient.SpawnRequestCount} spawn request(s).");
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Running
+                            && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("brain 1/1", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("attempt 1/3", StringComparison.Ordinal));
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Running
+                            && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("brain 1/1", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("attempt 2/3", StringComparison.Ordinal));
         }
         finally
         {
