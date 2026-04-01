@@ -1313,6 +1313,9 @@ public sealed class MainWindowViewModel : ViewModelBase
                 return;
             }
 
+            SetExecutionPhase(
+                "Starting...",
+                $"Preparing a fresh {options.SelectedTask.DisplayName} run from the current capacity and seed settings.");
             await StopExecutionAsync().ConfigureAwait(false);
 
             if (!TaskPluginRegistry.TryCreate(options.SelectedTask.TaskId, options.TaskSettings, out var plugin))
@@ -1325,11 +1328,17 @@ public sealed class MainWindowViewModel : ViewModelBase
                 return;
             }
 
+            SetExecutionPhase(
+                "Starting...",
+                "Reconnecting to IO and reserving a clean runtime client for this run.");
             if (!await RestartRuntimeClientForRunAsync(runtimeOptions).ConfigureAwait(false))
             {
                 return;
             }
 
+            SetExecutionPhase(
+                "Starting...",
+                $"Building the {options.SelectedTask.DisplayName} execution plan and sizing the initial population.");
             var planner = new BasicsEnvironmentPlanner(_runtimeClient);
             var plan = await planner.BuildPlanAsync(options).ConfigureAwait(false);
             _dispatcher.Post(() => ApplyPlan(plan));
@@ -1411,6 +1420,15 @@ public sealed class MainWindowViewModel : ViewModelBase
                 ExecutionDetail = ex.GetBaseException().Message;
             });
         }
+    }
+
+    private void SetExecutionPhase(string status, string detail)
+    {
+        _dispatcher.Post(() =>
+        {
+            ExecutionStatus = status;
+            ExecutionDetail = detail;
+        });
     }
 
     private async Task<bool> RestartRuntimeClientForRunAsync(BasicsRuntimeClientOptions runtimeOptions)

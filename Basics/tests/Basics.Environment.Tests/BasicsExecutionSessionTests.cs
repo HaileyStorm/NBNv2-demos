@@ -142,6 +142,95 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_PublishesOrderedStartupStatuses_BeforeGenerationOneEvaluation()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            ReproduceDelay = TimeSpan.FromMilliseconds(50)
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential),
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+
+            var startupStatuses = snapshots
+                .Where(snapshot => snapshot.State == BasicsExecutionState.Starting)
+                .Select(snapshot => snapshot.StatusText)
+                .ToList();
+            var firstRunningIndex = snapshots.FindIndex(snapshot => snapshot.State == BasicsExecutionState.Running);
+
+            Assert.True(firstRunningIndex >= 0);
+            Assert.True(snapshots.FindIndex(snapshot => snapshot.StatusText == "Starting Basics session...") >= 0);
+            Assert.True(snapshots.FindIndex(snapshot => snapshot.StatusText == "Preparing speciation epoch...") > snapshots.FindIndex(snapshot => snapshot.StatusText == "Starting Basics session..."));
+            Assert.True(snapshots.FindIndex(snapshot => snapshot.StatusText == "Seeding initial population...") > snapshots.FindIndex(snapshot => snapshot.StatusText == "Preparing speciation epoch..."));
+            Assert.True(snapshots.FindIndex(snapshot => snapshot.StatusText == "Generating seed variations...") > snapshots.FindIndex(snapshot => snapshot.StatusText == "Seeding initial population..."));
+            Assert.True(snapshots.FindIndex(snapshot => snapshot.StatusText == "Generating seed variations...") < firstRunningIndex);
+            Assert.Contains("Initial population ready.", startupStatuses);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_PublishesUploadedSeedTemplateProgress_BeforeGenerationOneEvaluation()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            ReproduceDelay = TimeSpan.FromMilliseconds(50)
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var uploadedSeedBytes = runtimeClient.CreateDefinitionBytes("and");
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential) with
+                {
+                    InitialBrainSeeds =
+                    [
+                        new BasicsInitialBrainSeed(
+                            DisplayName: "uploaded-and-seed",
+                            DefinitionBytes: uploadedSeedBytes,
+                            DuplicateForReproduction: false,
+                            Complexity: BasicsDefinitionAnalyzer.Analyze(uploadedSeedBytes).Complexity)
+                    ]
+                },
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+
+            var firstRunningIndex = snapshots.FindIndex(snapshot => snapshot.State == BasicsExecutionState.Running);
+            var uploadTemplateIndex = snapshots.FindIndex(snapshot =>
+                snapshot.StatusText == "Resolving seed templates..."
+                && snapshot.DetailText.Contains("uploaded initial brain", StringComparison.OrdinalIgnoreCase));
+
+            Assert.True(uploadTemplateIndex >= 0);
+            Assert.True(uploadTemplateIndex < firstRunningIndex);
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.StatusText == "Resolving seed templates..."
+                            && snapshot.DetailText.Contains("uploaded-and-seed", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_SucceedsForOrTask_ThroughFakeRuntimePath()
     {
         var plugin = new OrTaskPlugin();
@@ -1042,6 +1131,7 @@ public sealed class BasicsExecutionSessionTests
         public int? ReturnNoChildrenStartingAtReproduceCallNumber { get; init; }
         public int TransientSpawnFailureCount { get; set; }
         public TimeSpan SpawnDelay { get; init; }
+        public TimeSpan ReproduceDelay { get; init; }
         public string DefaultBehavior { get; init; } = "zero";
         public bool OnlyEmitOutputVectorOnChange { get; init; }
         public bool RequirePlacementWaitForVisibility { get; init; }
@@ -1404,7 +1494,7 @@ public sealed class BasicsExecutionSessionTests
             });
         }
 
-        public Task<Repro.ReproduceResult?> ReproduceByArtifactsAsync(
+        public async Task<Repro.ReproduceResult?> ReproduceByArtifactsAsync(
             Repro.ReproduceByArtifactsRequest request,
             CancellationToken cancellationToken = default)
         {
@@ -1420,6 +1510,11 @@ public sealed class BasicsExecutionSessionTests
                 throw new InvalidOperationException($"reproduce_failed:{ReproduceCallCount}");
             }
 
+            if (ReproduceDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(ReproduceDelay, cancellationToken);
+            }
+
             var result = new Repro.ReproduceResult
             {
                 RequestedRunCount = request.RunCount == 0 ? 1u : request.RunCount
@@ -1427,12 +1522,12 @@ public sealed class BasicsExecutionSessionTests
 
             if (ReturnNoChildrenOnReproduceCallNumber.HasValue && ReproduceCallCount == ReturnNoChildrenOnReproduceCallNumber.Value)
             {
-                return Task.FromResult<Repro.ReproduceResult?>(result);
+                return result;
             }
 
             if (ReturnNoChildrenStartingAtReproduceCallNumber.HasValue && ReproduceCallCount >= ReturnNoChildrenStartingAtReproduceCallNumber.Value)
             {
-                return Task.FromResult<Repro.ReproduceResult?>(result);
+                return result;
             }
 
             for (var runIndex = 0; runIndex < result.RequestedRunCount; runIndex++)
@@ -1451,7 +1546,7 @@ public sealed class BasicsExecutionSessionTests
                 }
             }
 
-            return Task.FromResult<Repro.ReproduceResult?>(result);
+            return result;
         }
 
         public Task<SpeciationAssignResponse?> AssignSpeciationAsync(

@@ -77,48 +77,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             lastObservedSnapshot = snapshot;
             onSnapshot?.Invoke(snapshot);
         });
-
-        PublishSnapshot(
-            publishSnapshot,
-            BasicsExecutionState.Starting,
-            statusText: "Starting Basics session...",
-            detailText: $"Preparing template-seeded {plan.SelectedTask.DisplayName} population.",
-            speciationEpochId: speciationEpochId,
-            evaluationFailureCount: 0,
-            evaluationFailureSummary: string.Empty,
-            generation: 0,
-            populationCount: 0,
-            activeBrainCount: 0,
-            speciesCount: 0,
-            reproductionCalls,
-            reproductionRunsObserved,
-            capacityUtilization: 0f,
-            bestAccuracy: 0f,
-            bestFitness: 0f,
-            meanFitness: 0f,
-            effectiveTemplateDefinition,
-            seedShape,
-            bestCandidate: null,
-            accuracyHistory,
-            fitnessHistory,
-            overallBestAccuracy: bestAccuracySoFar,
-            overallBestFitness: bestFitnessSoFar,
-            overallBestCandidate: bestCandidateSoFar,
-            offspringAccuracyHistory: offspringAccuracyHistory,
-            offspringFitnessHistory: offspringFitnessHistory);
-
-        try
+        void PublishStartupStatus(string statusText, string detailText)
         {
-            var template = await ResolveTemplateDefinitionAsync(plan.SeedTemplate, cancellationToken).ConfigureAwait(false);
-            effectiveTemplateDefinition = template.TemplateDefinition;
-            seedShape = template.SeedShape;
-
             PublishSnapshot(
                 publishSnapshot,
                 BasicsExecutionState.Starting,
-                statusText: "Preparing speciation epoch...",
-                detailText: "Starting a fresh speciation epoch for this Basics run.",
-                speciationEpochId: speciationEpochId,
+                statusText,
+                detailText,
+                speciationEpochId,
                 evaluationFailureCount: 0,
                 evaluationFailureSummary: string.Empty,
                 generation: 0,
@@ -141,6 +107,21 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 overallBestCandidate: bestCandidateSoFar,
                 offspringAccuracyHistory: offspringAccuracyHistory,
                 offspringFitnessHistory: offspringFitnessHistory);
+        }
+
+        PublishStartupStatus(
+            "Starting Basics session...",
+            $"Preparing template-seeded {plan.SelectedTask.DisplayName} population.");
+
+        try
+        {
+            var template = await ResolveTemplateDefinitionAsync(plan.SeedTemplate, cancellationToken).ConfigureAwait(false);
+            effectiveTemplateDefinition = template.TemplateDefinition;
+            seedShape = template.SeedShape;
+
+            PublishStartupStatus(
+                "Preparing speciation epoch...",
+                "Requesting a fresh speciation epoch before generation 1 seeding begins.");
             speciationEpochId = await EnsureFreshSpeciationEpochAsync(cancellationToken).ConfigureAwait(false);
 
             var minimumPopulation = Math.Max(MinimumPopulationSize, plan.SizingOverrides.MinimumPopulationCount ?? MinimumPopulationSize);
@@ -177,10 +158,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     bestCandidateSoFar);
             }
 
+            PublishStartupStatus(
+                "Seeding initial population...",
+                plan.InitialBrainSeeds.Count == 0
+                    ? $"Expanding template family {plan.SeedTemplate.TemplateId} into {targetPopulation} generation-1 brains."
+                    : $"Building {targetPopulation} generation-1 brains from {plan.InitialBrainSeeds.Count} uploaded seed brain(s) and bounded variations.");
             population = await SeedInitialPopulationAsync(
                     plan,
                     template.TemplateDefinition,
                     template.Complexity,
+                    PublishStartupStatus,
                     targetPopulation,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -721,6 +708,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsEnvironmentPlan plan,
         ArtifactRef templateDefinition,
         BasicsDefinitionComplexitySummary? templateComplexity,
+        Action<string, string>? onProgress,
         int targetPopulation,
         CancellationToken cancellationToken)
     {
@@ -728,9 +716,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 plan,
                 templateDefinition,
                 templateComplexity,
+                onProgress,
                 cancellationToken)
             .ConfigureAwait(false);
         var population = new List<PopulationMember>(targetPopulation);
+        onProgress?.Invoke(
+            "Seeding initial population...",
+            $"Resolved {templates.Count} bootstrap template(s). Seeding exact copies toward {targetPopulation} generation-1 brains.");
         foreach (var template in templates)
         {
             await CommitArtifactMembershipAsync(
@@ -752,6 +744,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             }
         }
 
+        onProgress?.Invoke(
+            "Seeding initial population...",
+            $"Seeded {population.Count} of {targetPopulation} generation-1 brains from exact bootstrap copies.");
         var remaining = Math.Max(0, targetPopulation - population.Count);
         var distribution = DistributeAcrossTemplates(remaining, templates.Count);
         for (var templateIndex = 0; templateIndex < templates.Count; templateIndex++)
@@ -761,6 +756,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 continue;
             }
 
+            onProgress?.Invoke(
+                "Generating seed variations...",
+                $"Generating up to {distribution[templateIndex]} varied child seed(s) from bootstrap template {templateIndex + 1} of {templates.Count} ({population.Count}/{targetPopulation} ready so far).");
             var children = await GenerateInitialSeedChildrenAsync(
                     plan,
                     templates[templateIndex],
@@ -768,9 +766,19 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     cancellationToken)
                 .ConfigureAwait(false);
             population.AddRange(children);
+            onProgress?.Invoke(
+                "Generating seed variations...",
+                $"Prepared {population.Count} of {targetPopulation} generation-1 brains after bootstrap template {templateIndex + 1} of {templates.Count}.");
         }
 
         var refillIndex = 0;
+        if (population.Count < targetPopulation && templates.Count > 0)
+        {
+            onProgress?.Invoke(
+                "Filling remaining seed slots...",
+                $"Variation generation left {targetPopulation - population.Count} slot(s) short, so Basics is reusing exact bootstrap copies to complete generation 1.");
+        }
+
         while (population.Count < targetPopulation && templates.Count > 0)
         {
             var template = templates[refillIndex % templates.Count];
@@ -783,6 +791,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             refillIndex++;
         }
 
+        onProgress?.Invoke(
+            "Initial population ready.",
+            $"Prepared {population.Count} generation-1 brains across {population.Select(static member => member.SpeciesId).Distinct(StringComparer.Ordinal).Count()} bootstrap species.");
         return population;
     }
 
@@ -790,6 +801,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsEnvironmentPlan plan,
         ArtifactRef defaultTemplateDefinition,
         BasicsDefinitionComplexitySummary? defaultTemplateComplexity,
+        Action<string, string>? onProgress,
         CancellationToken cancellationToken)
     {
         if (plan.InitialBrainSeeds.Count == 0)
@@ -798,6 +810,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             var bootstrapSpeciesDisplayName = $"{plan.SeedTemplate.TemplateId} bootstrap";
             var resolvedTemplateComplexity = defaultTemplateComplexity
                                              ?? await ResolveDefinitionComplexityAsync(defaultTemplateDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
+            onProgress?.Invoke(
+                "Resolving seed templates...",
+                $"Using template family {plan.SeedTemplate.TemplateId} as the bootstrap template for generation 1.");
             return
             [
                 new ResolvedInitialSeedTemplate(
@@ -821,6 +836,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             })
             .ToArray();
         var templates = new List<ResolvedInitialSeedTemplate>(dedupedSeeds.Length);
+        onProgress?.Invoke(
+            "Resolving seed templates...",
+            $"Publishing {dedupedSeeds.Length} uploaded initial brain(s) as bootstrap templates.");
         foreach (var seed in dedupedSeeds)
         {
             var publication = await _artifactPublisher.PublishAsync(
@@ -838,6 +856,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 $"{seed.DisplayName} bootstrap",
                 seed.Complexity,
                 ExactCopies: seed.DuplicateForReproduction ? 2 : 1));
+            onProgress?.Invoke(
+                "Resolving seed templates...",
+                $"Published bootstrap template {templates.Count} of {dedupedSeeds.Length}: {seed.DisplayName}.");
         }
 
         return templates;
