@@ -1,0 +1,37 @@
+# Project-specific multi-agent roles for NBNv2-demos.
+
+[agents.explorer]
+description = "Read-heavy scout for demo ownership, call paths, sibling-runtime touchpoints, and candidate files."
+config_file = "agents/explorer.toml"
+
+[agents.ownership_mapper]
+description = "Focused read-only mapper for demo owners, entry points, dependent files, and runtime handoff boundaries."
+config_file = "agents/ownership_mapper.toml"
+
+[agents.invariant_mapper]
+description = "Focused read-only mapper for External World constraints, contract parity, and likely invariant gaps."
+config_file = "agents/invariant_mapper.toml"
+
+[agents.test_mapper]
+description = "Focused read-only mapper for existing demo coverage, missing regression tests, and verification commands."
+config_file = "agents/test_mapper.toml"
+
+[agents.packetizer]
+description = "Condenses noisy multi-agent findings into a clean handoff packet."
+config_file = "agents/packetizer.toml"
+
+[agents.docs_researcher]
+description = "Primary-source documentation and web research agent."
+config_file = "agents/docs_researcher.toml"
+
+[agents.nbn_demo_spec_guard]
+description = "Demo spec scout that reads ../NBNv2 canonical docs and nearby Design.md files before non-trivial External World behavior work."
+config_file = "agents/nbn_demo_spec_guard.toml"
+
+[agents.nbn_demo_io_invariants]
+description = "Demo invariant checker for IO Gateway boundaries, region 0/31 rules, tick visibility, input/output contract safety, and demo-to-runtime ownership."
+config_file = "agents/nbn_demo_io_invariants.toml"
+
+[agents.nbn_demo_docs_guard]
+description = "Demo docs guard for repo-local guidance plus canonical runtime doc updates when demo-visible behavior changes."
+config_file = "agents/nbn_demo_docs_guard.toml"

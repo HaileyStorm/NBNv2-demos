@@ -5,6 +5,7 @@ This repository holds External World demo projects for NBN. Each demo is a consu
 ## Start Here
 
 - Agent guidance for this repo: [`AGENTS.md`](AGENTS.md)
+- Repo-local Codex agent roles: [`.codex/config.toml`](.codex/config.toml) and [`.codex/agents/`](.codex/agents)
 - Canonical NBN specification: [`../NBNv2/docs/NBNv2.md`](../NBNv2/docs/NBNv2.md)
 - Canonical IO/runtime design note: [`../NBNv2/src/Nbn.Runtime.IO/Design.md`](../NBNv2/src/Nbn.Runtime.IO/Design.md)
 - Canonical shared contract ownership: [`../NBNv2/src/Nbn.Shared/Design.md`](../NBNv2/src/Nbn.Shared/Design.md)

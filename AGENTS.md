@@ -42,6 +42,26 @@
 - After any failed, aborted, or partially-applied edit attempt, immediately re-read the affected file(s) from disk and inspect `git diff` before making the next edit. Never assume a large patch landed exactly as intended.
 - For large-file edits, prefer smaller verified patches over one broad rewrite, and verify exact anchor text before every scripted replacement.
 
+## Codex multi-agent workflow (required)
+
+- For non-trivial demo behavior work, start with `nbn_demo_spec_guard` or an equivalent scout that reads the sibling runtime spec before deep code analysis.
+- For clearly bounded mechanical or docs-only edits, that full spec pass is optional when the task does not depend on runtime behavior details.
+- Default demo repo fan-out for behavior work:
+  1. `nbn_demo_spec_guard` for expected behavior, demo-vs-runtime ownership boundaries, and doc anchors in `../NBNv2`
+  2. `nbn_demo_io_invariants` for IO Gateway, region `0`/`31`, tick ordering, input/output, and reproduction safety rules
+  3. `test_mapper` or `verifier` for the demo regression surface and exact commands
+- Add `nbn_demo_docs_guard` when the change may alter demo guidance, runtime-facing behavior, or canonical docs in `../NBNv2`.
+- Prefer multiple narrow agents over one broad worker; keep final synthesis, prioritization, and merge decisions in the main thread.
+- When the spec or repo surface is large, split it across fresh read-only agents and compress the findings with `packetizer` before editing.
+- Continue to refer back to `../NBNv2/docs/NBNv2.md` and nearby `Design.md` docs throughout edits, verification, and handoff; re-run targeted repo agents when scope shifts.
+
+## Repo-specific agent roles
+
+- Local role wiring for this repo lives in `.codex/config.toml` and `.codex/agents/*.toml`.
+- `nbn_demo_spec_guard`: reads `../NBNv2/docs/NBNv2.md` and relevant `Design.md` files, then maps expected External World behavior, ownership boundaries, and doc impact for demo work.
+- `nbn_demo_io_invariants`: checks IO Gateway boundaries, region `0`/`31`, tick barriers, input/output contract safety, and reproduction protections against the assigned change.
+- `nbn_demo_docs_guard`: decides whether repo-local docs or canonical runtime docs in `../NBNv2` must change, and points to the exact doc files and verification commands.
+
 ## Cross-repo editing rule
 
 - Demo agents may inspect `../NBNv2` freely.
