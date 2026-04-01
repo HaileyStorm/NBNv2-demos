@@ -1033,6 +1033,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             var batchEvaluations = Array.Empty<MemberEvaluationResult>();
             if (membersToEvaluate.Length > 0)
             {
+                using var batchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 var pendingEvaluations = membersToEvaluate
                     .Select(member => EvaluateMemberAsync(
                         generation,
@@ -1046,7 +1047,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             Interlocked.Increment(ref completedSamples);
                             PublishBatchProgress();
                         },
-                        cancellationToken))
+                        batchCts.Token))
                     .ToList();
                 var completedEvaluations = new List<MemberEvaluationResult>(membersToEvaluate.Length);
                 while (pendingEvaluations.Count > 0)
@@ -1057,6 +1058,23 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     completedEvaluations.Add(result);
                     completedBrains++;
                     PublishBatchProgress(force: true);
+
+                    if (IsFatalSpawnFailure(result.Member.LastEvaluation))
+                    {
+                        batchCts.Cancel();
+                        try
+                        {
+                            await Task.WhenAll(pendingEvaluations).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // Best-effort cancellation of the rest of the batch.
+                        }
+
+                        var diagnostic = result.Member.LastEvaluation?.Diagnostics.FirstOrDefault(static value => !string.IsNullOrWhiteSpace(value))
+                            ?? "spawn_failed";
+                        throw new InvalidOperationException($"Generation {generation} batch {chunkIndex + 1} aborted after unrecoverable spawn failure: {diagnostic}");
+                    }
                 }
 
                 batchEvaluations = completedEvaluations.ToArray();
@@ -1400,6 +1418,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             or "output_timeout_or_width_mismatch"
             or "evaluation_failed";
     }
+
+    private static bool IsFatalSpawnFailure(BasicsTaskEvaluationResult? evaluation)
+        => evaluation is not null
+           && ResolveFailureCategory(evaluation) is "spawn_failed" or "spawn_not_placed";
 
     private static int ResolveSetupConcurrency(int eligibleWorkerCount, int maxConcurrent)
     {
