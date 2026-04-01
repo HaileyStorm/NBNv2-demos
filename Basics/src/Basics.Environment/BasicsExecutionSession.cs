@@ -930,6 +930,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         var evaluated = new List<PopulationMember>(population.Count);
         var batchTimings = new List<BasicsExecutionBatchTimingSummary>();
+        var sampleCountPerBrain = taskPlugin.BuildDeterministicDataset().Count;
         var maxConcurrent = Math.Max(1, plan.Capacity.RecommendedMaxConcurrentBrains);
         var chunkCount = (int)Math.Ceiling(population.Count / (double)maxConcurrent);
         var setupConcurrency = ResolveSetupConcurrency(plan.Capacity.EligibleWorkerCount, maxConcurrent);
@@ -953,35 +954,92 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 .ToArray();
             var membersToEvaluate = batch.Where(static member => !CanReuseEvaluation(member)).ToArray();
             var completedBatchTimings = batchTimings.Count == 0 ? null : batchTimings[^1];
-            onSnapshot?.Invoke(CreateSnapshot(
-                plan.StopCriteria,
-                BasicsExecutionState.Running,
-                $"Evaluating generation {generation}...",
-                BuildBatchStartDetail(chunkIndex + 1, chunkCount, batch.Length, setupConcurrency, completedBatchTimings),
-                speciationEpochId,
-                generation,
-                evaluated.Concat(batch).ToArray(),
-                activeBrainCount: membersToEvaluate.Length,
-                reproductionCalls,
-                reproductionRunsObserved,
-                effectiveTemplateDefinition,
-                seedShape,
-                accuracyHistory,
-                fitnessHistory,
-                offspringAccuracyHistory: offspringAccuracyHistory,
-                offspringFitnessHistory: offspringFitnessHistory,
-                overallBestAccuracy: overallBestAccuracy,
-                overallBestFitness: overallBestFitness,
-                overallBestCandidate: overallBestCandidate,
-                latestBatchTiming: completedBatchTimings,
-                latestGenerationTiming: BuildGenerationTimingSummary(generation, batchTimings)));
+            var completedBrains = reusedBatchMembers.Length;
+            var completedSamples = 0;
+            var totalSamples = membersToEvaluate.Length * sampleCountPerBrain;
+            var progressPublishStopwatch = Stopwatch.StartNew();
+
+            void PublishBatchProgress(bool force = false)
+            {
+                if (onSnapshot is null)
+                {
+                    return;
+                }
+
+                if (!force && progressPublishStopwatch.Elapsed < TimeSpan.FromMilliseconds(250))
+                {
+                    return;
+                }
+
+                progressPublishStopwatch.Restart();
+                onSnapshot(CreateSnapshot(
+                    plan.StopCriteria,
+                    BasicsExecutionState.Running,
+                    $"Evaluating generation {generation}...",
+                    BuildBatchProgressDetail(
+                        chunkIndex + 1,
+                        chunkCount,
+                        batch.Length,
+                        setupConcurrency,
+                        retainedBrainCount: reusedBatchMembers.Length,
+                        completedBrains,
+                        completedSamples,
+                        totalSamples,
+                        activeBrainCount: Math.Max(0, batch.Length - completedBrains),
+                        previousBatch: completedBatchTimings),
+                    speciationEpochId,
+                    generation,
+                    evaluated.Concat(batch).ToArray(),
+                    activeBrainCount: Math.Max(0, batch.Length - completedBrains),
+                    reproductionCalls,
+                    reproductionRunsObserved,
+                    effectiveTemplateDefinition,
+                    seedShape,
+                    accuracyHistory,
+                    fitnessHistory,
+                    offspringAccuracyHistory: offspringAccuracyHistory,
+                    offspringFitnessHistory: offspringFitnessHistory,
+                    overallBestAccuracy: overallBestAccuracy,
+                    overallBestFitness: overallBestFitness,
+                    overallBestCandidate: overallBestCandidate,
+                    latestBatchTiming: completedBatchTimings,
+                    latestGenerationTiming: BuildGenerationTimingSummary(generation, batchTimings)));
+            }
+
+            PublishBatchProgress(force: true);
 
             var batchStopwatch = Stopwatch.StartNew();
-            var batchEvaluations = membersToEvaluate.Length == 0
-                ? Array.Empty<MemberEvaluationResult>()
-                : await Task.WhenAll(
-                        membersToEvaluate.Select(member => EvaluateMemberAsync(generation, taskPlugin, member, outputObservationMode, setupGate, spawnPacer, cancellationToken)))
-                    .ConfigureAwait(false);
+            var batchEvaluations = Array.Empty<MemberEvaluationResult>();
+            if (membersToEvaluate.Length > 0)
+            {
+                var pendingEvaluations = membersToEvaluate
+                    .Select(member => EvaluateMemberAsync(
+                        generation,
+                        taskPlugin,
+                        member,
+                        outputObservationMode,
+                        setupGate,
+                        spawnPacer,
+                        () =>
+                        {
+                            Interlocked.Increment(ref completedSamples);
+                            PublishBatchProgress();
+                        },
+                        cancellationToken))
+                    .ToList();
+                var completedEvaluations = new List<MemberEvaluationResult>(membersToEvaluate.Length);
+                while (pendingEvaluations.Count > 0)
+                {
+                    var completedTask = await Task.WhenAny(pendingEvaluations).ConfigureAwait(false);
+                    pendingEvaluations.Remove(completedTask);
+                    var result = await completedTask.ConfigureAwait(false);
+                    completedEvaluations.Add(result);
+                    completedBrains++;
+                    PublishBatchProgress(force: true);
+                }
+
+                batchEvaluations = completedEvaluations.ToArray();
+            }
             var cleanedBatchMembers = await TeardownPopulationBrainsAsync(
                     batchEvaluations.Select(static result => result.Member).ToArray(),
                     CancellationToken.None)
@@ -1031,6 +1089,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsOutputObservationMode outputObservationMode,
         SemaphoreSlim setupGate,
         SpawnRequestPacer spawnPacer,
+        Action? onSampleCompleted,
         CancellationToken cancellationToken)
     {
         var queueWaitTotal = TimeSpan.Zero;
@@ -1049,6 +1108,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     outputObservationMode,
                     setupGate,
                     spawnPacer,
+                    onSampleCompleted,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -1094,6 +1154,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsOutputObservationMode outputObservationMode,
         SemaphoreSlim setupGate,
         SpawnRequestPacer spawnPacer,
+        Action? onSampleCompleted,
         CancellationToken cancellationToken)
     {
         Guid brainId = Guid.Empty;
@@ -1228,6 +1289,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 }
 
                 observations.Add(sampleObservation.Value);
+                onSampleCompleted?.Invoke();
                 lastTick = sampleObservation.Value.TickId;
             }
             observation = observationStopwatch.Elapsed;
@@ -1412,6 +1474,29 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return detail;
     }
 
+    private static string BuildBatchProgressDetail(
+        int batchIndex,
+        int batchCount,
+        int batchBrainCount,
+        int setupConcurrency,
+        int retainedBrainCount,
+        int completedBrains,
+        int completedSamples,
+        int totalSamples,
+        int activeBrainCount,
+        BasicsExecutionBatchTimingSummary? previousBatch)
+    {
+        var newlyEvaluatedTotal = Math.Max(0, batchBrainCount - retainedBrainCount);
+        var newlyEvaluatedCompleted = Math.Max(0, completedBrains - retainedBrainCount);
+        var detail = $"Batch {batchIndex}/{batchCount}: brains {completedBrains}/{batchBrainCount} ready ({retainedBrainCount} retained, {newlyEvaluatedCompleted}/{newlyEvaluatedTotal} newly evaluated), samples {completedSamples}/{totalSamples}, active {activeBrainCount}. Setup concurrency {setupConcurrency}.";
+        if (previousBatch is null)
+        {
+            return detail;
+        }
+
+        return $"{detail} Previous batch {FormatSeconds(previousBatch.BatchDurationSeconds)} total; queue {FormatSeconds(previousBatch.AverageQueueWaitSeconds)}/brain, spawn {FormatSeconds(previousBatch.AverageSpawnRequestSeconds)}/brain, setup {FormatSeconds(previousBatch.AverageSetupSeconds)}/brain, observe {FormatSeconds(previousBatch.AverageObservationSeconds)}/brain.";
+    }
+
     private static BasicsExecutionBatchTimingSummary BuildBatchTimingSummary(
         int generation,
         int batchIndex,
@@ -1575,16 +1660,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         CancellationToken cancellationToken)
     {
         var tickCursor = lastTick;
+        var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
+                brainId,
+                resetBuffer: true,
+                resetAccumulator: true,
+                cancellationToken)
+            .ConfigureAwait(false);
+        ValidateIoCommandAck(resetAck, brainId, "reset_brain_runtime_state");
+
         for (var attempt = 1; attempt <= MaxObservationAttempts; attempt++)
         {
-            var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
-                    brainId,
-                    resetBuffer: true,
-                    resetAccumulator: true,
-                    cancellationToken)
-                .ConfigureAwait(false);
-            ValidateIoCommandAck(resetAck, brainId, "reset_brain_runtime_state");
-
             await _runtimeClient.SendInputVectorAsync(
                     brainId,
                     new[] { sample.InputA, sample.InputB },
