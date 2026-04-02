@@ -1277,7 +1277,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     {
                         BrainDef = member.Definition.Clone(),
                         InputWidth = taskPlugin.Contract.InputWidth,
-                        OutputWidth = taskPlugin.Contract.OutputWidth
+                        OutputWidth = taskPlugin.Contract.OutputWidth,
+                        StartPaused = true
                     },
                     cancellationToken,
                     phase => onAttemptProgress?.Invoke(CreateInFlightBrainProgress(
@@ -1285,8 +1286,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         batchBrainOrdinal,
                         batchBrainCount,
                         attempt,
-                        phase)),
-                    pauseDuringSetup: true)
+                        phase)))
                 .ConfigureAwait(false);
             spawnRequest = spawnStopwatch.Elapsed;
             if (spawnAck is null
@@ -2052,8 +2052,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private async Task<SpawnBrainAck?> SpawnPlacedBrainAsync(
         SpawnBrain request,
         CancellationToken cancellationToken,
-        Action<InFlightBrainPhase>? onProgress = null,
-        bool pauseDuringSetup = false)
+        Action<InFlightBrainPhase>? onProgress = null)
     {
         var spawn = await _runtimeClient.SpawnBrainAsync(request, cancellationToken).ConfigureAwait(false);
         var ack = spawn?.Ack;
@@ -2065,12 +2064,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         if (!ack.BrainId.TryToGuid(out var brainId) || brainId == Guid.Empty)
         {
             return ack;
-        }
-
-        if (pauseDuringSetup && string.IsNullOrWhiteSpace(ack.FailureReasonCode))
-        {
-            var pauseAck = await _runtimeClient.PauseBrainAsync(brainId, "basics_spawn_setup", cancellationToken).ConfigureAwait(false);
-            ValidateIoCommandAck(pauseAck, brainId, "pause_brain");
         }
 
         if (ack.PlacementReady || !string.IsNullOrWhiteSpace(ack.FailureReasonCode))
