@@ -40,6 +40,18 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(BestAccuracyChartPoints),
         nameof(FitnessChartPoints),
         nameof(BestFitnessChartPoints),
+        nameof(ShowAccuracyStartGenerationTick),
+        nameof(ShowAccuracyMidGenerationTick),
+        nameof(ShowAccuracyEndGenerationTick),
+        nameof(AccuracyStartGenerationTickLabel),
+        nameof(AccuracyMidGenerationTickLabel),
+        nameof(AccuracyEndGenerationTickLabel),
+        nameof(ShowFitnessStartGenerationTick),
+        nameof(ShowFitnessMidGenerationTick),
+        nameof(ShowFitnessEndGenerationTick),
+        nameof(FitnessStartGenerationTickLabel),
+        nameof(FitnessMidGenerationTickLabel),
+        nameof(FitnessEndGenerationTickLabel),
         nameof(ExecutionStatus),
         nameof(ExecutionDetail),
         nameof(ExecutionLogPath),
@@ -70,6 +82,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly List<float> _bestAccuracyHistory = new();
     private readonly List<float> _fitnessHistory = new();
     private readonly List<float> _bestFitnessHistory = new();
+    // Keep these in sync with the fixed plot host inside MainWindow.axaml.
+    private const float ChartPlotWidth = 283f;
+    private const float ChartPlotHeight = 114f;
+    private const float ChartStrokeInset = 1f;
 
     private string _ioAddress = $"{NetworkAddressDefaults.ResolveDefaultAdvertisedHost()}:12050";
     private string _ioGatewayName = "io-gateway";
@@ -859,6 +875,46 @@ public sealed class MainWindowViewModel : ViewModelBase
     public IReadOnlyList<Point> FitnessChartPoints => BuildChartPoints(_fitnessHistory);
 
     public IReadOnlyList<Point> BestFitnessChartPoints => BuildChartPoints(_bestFitnessHistory);
+
+    public bool ShowAccuracyStartGenerationTick => ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory) > 0;
+
+    public bool ShowAccuracyMidGenerationTick
+        => HasCenteredGenerationTick(ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory));
+
+    public bool ShowAccuracyEndGenerationTick => ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory) > 1;
+
+    public string AccuracyStartGenerationTickLabel
+        => ShowAccuracyStartGenerationTick ? "1" : string.Empty;
+
+    public string AccuracyMidGenerationTickLabel
+        => ShowAccuracyMidGenerationTick
+            ? FormatGenerationTickLabel(ResolveMidpointGeneration(ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory)))
+            : string.Empty;
+
+    public string AccuracyEndGenerationTickLabel
+        => ShowAccuracyEndGenerationTick
+            ? FormatGenerationTickLabel(ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory))
+            : string.Empty;
+
+    public bool ShowFitnessStartGenerationTick => ResolveChartGenerationCount(_fitnessHistory, _bestFitnessHistory) > 0;
+
+    public bool ShowFitnessMidGenerationTick
+        => HasCenteredGenerationTick(ResolveChartGenerationCount(_fitnessHistory, _bestFitnessHistory));
+
+    public bool ShowFitnessEndGenerationTick => ResolveChartGenerationCount(_fitnessHistory, _bestFitnessHistory) > 1;
+
+    public string FitnessStartGenerationTickLabel
+        => ShowFitnessStartGenerationTick ? "1" : string.Empty;
+
+    public string FitnessMidGenerationTickLabel
+        => ShowFitnessMidGenerationTick
+            ? FormatGenerationTickLabel(ResolveMidpointGeneration(ResolveChartGenerationCount(_fitnessHistory, _bestFitnessHistory)))
+            : string.Empty;
+
+    public string FitnessEndGenerationTickLabel
+        => ShowFitnessEndGenerationTick
+            ? FormatGenerationTickLabel(ResolveChartGenerationCount(_fitnessHistory, _bestFitnessHistory))
+            : string.Empty;
 
     private async Task ConnectAsync()
     {
@@ -2600,6 +2656,18 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(BestAccuracyChartPoints));
         OnPropertyChanged(nameof(FitnessChartPoints));
         OnPropertyChanged(nameof(BestFitnessChartPoints));
+        OnPropertyChanged(nameof(ShowAccuracyStartGenerationTick));
+        OnPropertyChanged(nameof(ShowAccuracyMidGenerationTick));
+        OnPropertyChanged(nameof(ShowAccuracyEndGenerationTick));
+        OnPropertyChanged(nameof(AccuracyStartGenerationTickLabel));
+        OnPropertyChanged(nameof(AccuracyMidGenerationTickLabel));
+        OnPropertyChanged(nameof(AccuracyEndGenerationTickLabel));
+        OnPropertyChanged(nameof(ShowFitnessStartGenerationTick));
+        OnPropertyChanged(nameof(ShowFitnessMidGenerationTick));
+        OnPropertyChanged(nameof(ShowFitnessEndGenerationTick));
+        OnPropertyChanged(nameof(FitnessStartGenerationTickLabel));
+        OnPropertyChanged(nameof(FitnessMidGenerationTickLabel));
+        OnPropertyChanged(nameof(FitnessEndGenerationTickLabel));
     }
 
     private static IReadOnlyList<Point> BuildChartPoints(IReadOnlyList<float> history)
@@ -2609,25 +2677,34 @@ public sealed class MainWindowViewModel : ViewModelBase
             return Array.Empty<Point>();
         }
 
-        const float width = 308f;
-        const float height = 140f;
-        const float strokeInset = 1f;
-        var plotWidth = width - (strokeInset * 2f);
-        var plotHeight = height - (strokeInset * 2f);
+        var plotWidth = ChartPlotWidth - (ChartStrokeInset * 2f);
+        var plotHeight = ChartPlotHeight - (ChartStrokeInset * 2f);
         if (history.Count == 1)
         {
-            var y = (height - strokeInset) - (Math.Clamp(history[0], 0f, 1f) * plotHeight);
-            return new[] { new Point(strokeInset, y) };
+            var y = (ChartPlotHeight - ChartStrokeInset) - (Math.Clamp(history[0], 0f, 1f) * plotHeight);
+            return new[] { new Point(ChartStrokeInset, y) };
         }
 
         var stepX = plotWidth / (history.Count - 1f);
         return history.Select((value, index) =>
         {
-            var x = strokeInset + (index * stepX);
-            var y = (height - strokeInset) - (Math.Clamp(value, 0f, 1f) * plotHeight);
+            var x = ChartStrokeInset + (index * stepX);
+            var y = (ChartPlotHeight - ChartStrokeInset) - (Math.Clamp(value, 0f, 1f) * plotHeight);
             return new Point(x, y);
         }).ToArray();
     }
+
+    private static int ResolveChartGenerationCount(IReadOnlyList<float> firstHistory, IReadOnlyList<float> secondHistory)
+        => Math.Max(firstHistory.Count, secondHistory.Count);
+
+    private static bool HasCenteredGenerationTick(int generationCount)
+        => generationCount > 2 && generationCount % 2 == 1;
+
+    private static int ResolveMidpointGeneration(int generationCount)
+        => Math.Max(2, 1 + (generationCount / 2));
+
+    private static string FormatGenerationTickLabel(int generation)
+        => generation.ToString(CultureInfo.InvariantCulture);
 
     private void UpdateMetricSummary(BasicsMetricId metricId, string value, string detail)
     {
