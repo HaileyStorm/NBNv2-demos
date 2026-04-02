@@ -4,6 +4,8 @@ using System.Net.Sockets;
 using System.Reflection;
 using Nbn.Demos.Basics.Environment;
 using Nbn.Proto.Io;
+using Nbn.Proto.Repro;
+using Nbn.Proto.Speciation;
 using Nbn.Shared;
 using Proto;
 
@@ -105,6 +107,54 @@ public sealed class BasicsRuntimeClientTests
             });
     }
 
+    [Fact]
+    public async Task ReproduceByArtifactsAsync_PropagatesCallerCancellation()
+    {
+        var port = GetFreeTcpPort();
+        var options = new BasicsRuntimeClientOptions
+        {
+            IoAddress = $"127.0.0.1:{port}",
+            IoGatewayName = "io-gateway",
+            BindHost = "127.0.0.1",
+            Port = port
+        };
+
+        await using var client = await BasicsRuntimeClient.StartAsync(options);
+        var system = GetPrivateField<ActorSystem>(client, "_system");
+        system.Root.SpawnNamed(
+            Props.FromProducer(static () => new SilentIoGatewayActor()),
+            "io-gateway");
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.ReproduceByArtifactsAsync(
+            new ReproduceByArtifactsRequest(),
+            cancellation.Token));
+    }
+
+    [Fact]
+    public async Task AssignSpeciationAsync_PropagatesCallerCancellation()
+    {
+        var port = GetFreeTcpPort();
+        var options = new BasicsRuntimeClientOptions
+        {
+            IoAddress = $"127.0.0.1:{port}",
+            IoGatewayName = "io-gateway",
+            BindHost = "127.0.0.1",
+            Port = port
+        };
+
+        await using var client = await BasicsRuntimeClient.StartAsync(options);
+        var system = GetPrivateField<ActorSystem>(client, "_system");
+        system.Root.SpawnNamed(
+            Props.FromProducer(static () => new SilentIoGatewayActor()),
+            "io-gateway");
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.AssignSpeciationAsync(
+            new SpeciationAssignRequest(),
+            cancellation.Token));
+    }
+
     private static T GetPrivateField<T>(object instance, string fieldName) where T : class
     {
         var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
@@ -161,5 +211,10 @@ public sealed class BasicsRuntimeClientTests
 
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class SilentIoGatewayActor : IActor
+    {
+        public Task ReceiveAsync(IContext context) => Task.CompletedTask;
     }
 }

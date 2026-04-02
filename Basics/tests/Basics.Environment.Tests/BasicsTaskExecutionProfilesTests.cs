@@ -33,9 +33,9 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(BasicsOutputObservationMode.EventedOutput, profile.OutputObservationMode);
         Assert.Equal(1, profile.VariationBand.MaxInternalNeuronDelta);
         Assert.False(profile.VariationBand.AllowFunctionMutation);
-        Assert.Equal(2, profile.Sizing.InitialPopulationCount);
+        Assert.Equal(4, profile.Sizing.InitialPopulationCount);
         Assert.Equal((uint)1, profile.Sizing.ReproductionRunCount);
-        Assert.Equal(1, profile.Sizing.MaxConcurrentBrains);
+        Assert.Equal(2, profile.Sizing.MaxConcurrentBrains);
         Assert.Equal(0.35d, profile.Scheduling.ParentSelection.DiversityWeight);
         Assert.Equal((uint)12, profile.Scheduling.RunAllocation.MaxRunsPerPair);
         Assert.NotNull(profile.TaskSettings);
@@ -50,9 +50,9 @@ public sealed class BasicsTaskExecutionProfilesTests
         var profile = BasicsTaskExecutionProfiles.Resolve("gt");
 
         Assert.Equal(BasicsOutputObservationMode.EventedOutput, profile.OutputObservationMode);
-        Assert.Equal(2, profile.Sizing.InitialPopulationCount);
+        Assert.Equal(4, profile.Sizing.InitialPopulationCount);
         Assert.Equal((uint)1, profile.Sizing.ReproductionRunCount);
-        Assert.Equal(1, profile.Sizing.MaxConcurrentBrains);
+        Assert.Equal(2, profile.Sizing.MaxConcurrentBrains);
         Assert.NotNull(profile.TaskSettings);
         Assert.Equal(3, profile.TaskSettings!.Gt.UniqueInputValueCount);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);

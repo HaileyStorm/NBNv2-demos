@@ -245,6 +245,9 @@ public sealed record BasicsLiveTrialProgress(
 
 public sealed class BasicsLiveTrialHarness
 {
+    private const int EventedReadyWindowTuningStep = 4;
+    private const int EventedReadyWindowAutoTuneCap = 16;
+
     private readonly Func<BasicsRuntimeClientOptions, CancellationToken, Task<IBasicsRuntimeClient>> _runtimeClientFactory;
     private readonly Func<IBasicsRuntimeClient, BasicsTemplatePublishingOptions, IBasicsExecutionRunner> _executionRunnerFactory;
 
@@ -740,8 +743,20 @@ public sealed class BasicsLiveTrialHarness
 
         if (outcome == BasicsLiveTrialOutcome.TimedOut || terminalSnapshot.EvaluationFailureCount > 0)
         {
-            reason = "Observed live-runtime failures or timeouts; reducing pressure and preferring dense vector output.";
-            if (tuning.PreferVectorPotentialOnFailures && current.OutputObservationMode == BasicsOutputObservationMode.EventedOutput)
+            var preservedEventedOutput = false;
+            if (current.OutputObservationMode == BasicsOutputObservationMode.EventedOutput
+                && TryExpandEventedReadyWindow(current, terminalSnapshot, outcome, out next, changes))
+            {
+                preservedEventedOutput = true;
+            }
+
+            reason = preservedEventedOutput
+                ? "Observed EventedOutput readiness pressure or timeout; widening the ready window and reducing pressure before leaving evented mode."
+                : "Observed live-runtime failures or timeouts; reducing pressure and preferring dense vector output.";
+
+            if (!preservedEventedOutput
+                && tuning.PreferVectorPotentialOnFailures
+                && current.OutputObservationMode == BasicsOutputObservationMode.EventedOutput)
             {
                 next = next with { OutputObservationMode = BasicsOutputObservationMode.VectorPotential };
                 changes.Add("output_mode=continuous_potential");
@@ -865,6 +880,50 @@ public sealed class BasicsLiveTrialHarness
             Reason: reason,
             Changes: changes.ToArray(),
             NextConfiguration: CreateConfigurationSnapshot(next));
+    }
+
+    private static bool TryExpandEventedReadyWindow(
+        BasicsEnvironmentOptions current,
+        BasicsLiveTrialSnapshotRecord terminalSnapshot,
+        BasicsLiveTrialOutcome outcome,
+        out BasicsEnvironmentOptions next,
+        ICollection<string> changes)
+    {
+        next = current;
+        if (current.OutputObservationMode != BasicsOutputObservationMode.EventedOutput)
+        {
+            return false;
+        }
+
+        var looksLikeReadyWindowPressure =
+            !string.IsNullOrWhiteSpace(terminalSnapshot.EvaluationFailureSummary)
+            && terminalSnapshot.EvaluationFailureSummary.Contains("ready_window_exhausted", StringComparison.Ordinal);
+        var timedOutWithoutEvaluationFailures =
+            outcome == BasicsLiveTrialOutcome.TimedOut
+            && terminalSnapshot.EvaluationFailureCount == 0;
+        if (!looksLikeReadyWindowPressure && !timedOutWithoutEvaluationFailures)
+        {
+            return false;
+        }
+
+        var currentWindow = current.OutputSamplingPolicy.MaxReadyWindowTicks;
+        if (currentWindow >= EventedReadyWindowAutoTuneCap)
+        {
+            return false;
+        }
+
+        var nextWindow = Math.Min(
+            EventedReadyWindowAutoTuneCap,
+            Math.Max(currentWindow + EventedReadyWindowTuningStep, currentWindow + 1));
+        next = current with
+        {
+            OutputSamplingPolicy = current.OutputSamplingPolicy with
+            {
+                MaxReadyWindowTicks = nextWindow
+            }
+        };
+        changes.Add($"max_ready_window_ticks={nextWindow}");
+        return true;
     }
 
     private static BasicsParentSelectionPolicy NormalizeParentSelection(BasicsParentSelectionPolicy policy)

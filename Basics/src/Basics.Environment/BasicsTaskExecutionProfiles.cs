@@ -71,9 +71,9 @@ public static class BasicsTaskExecutionProfiles
         SeedShape: new BasicsSeedShapeConstraints(),
         Sizing: new BasicsSizingOverrides
         {
-            InitialPopulationCount = 2,
+            InitialPopulationCount = 4,
             ReproductionRunCount = 1,
-            MaxConcurrentBrains = 1
+            MaxConcurrentBrains = 2
         },
         Scheduling: new BasicsReproductionSchedulingPolicy
         {

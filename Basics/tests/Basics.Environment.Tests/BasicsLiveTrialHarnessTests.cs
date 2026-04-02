@@ -57,7 +57,7 @@ public sealed class BasicsLiveTrialHarnessTests
                     generation: 1,
                     speciesCount: 1,
                     evaluationFailureCount: 4,
-                    evaluationFailureSummary: "output_timeout_or_width_mismatch x4",
+                    evaluationFailureSummary: "output_timeout_or_width_mismatch:vector_missing x4",
                     bestAccuracy: 0f,
                     bestFitness: 0f),
                 CreateSnapshot(
@@ -67,7 +67,7 @@ public sealed class BasicsLiveTrialHarnessTests
                     generation: 1,
                     speciesCount: 1,
                     evaluationFailureCount: 4,
-                    evaluationFailureSummary: "output_timeout_or_width_mismatch x4",
+                    evaluationFailureSummary: "output_timeout_or_width_mismatch:vector_missing x4",
                     bestAccuracy: 0f,
                     bestFitness: 0f)
             }));
@@ -99,6 +99,96 @@ public sealed class BasicsLiveTrialHarnessTests
         Assert.Equal(BasicsOutputObservationMode.VectorPotential, report.FinalConfiguration.OutputObservationMode);
         Assert.Equal(192, report.FinalConfiguration.Sizing.InitialPopulationCount);
         Assert.Equal(96, report.FinalConfiguration.Sizing.MaxConcurrentBrains);
+    }
+
+    [Fact]
+    public async Task LiveTrialHarness_WidensReadyWindowBeforeLeavingEventedOutput_OnReadyWindowFailures()
+    {
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient()),
+            executionRunnerFactory: (_, _) => new ScriptedExecutionRunner(new[]
+            {
+                CreateSnapshot(
+                    BasicsExecutionState.Failed,
+                    statusText: "Execution failed.",
+                    detailText: "Ready lane stalled.",
+                    generation: 1,
+                    speciesCount: 1,
+                    evaluationFailureCount: 4,
+                    evaluationFailureSummary: "output_timeout_or_width_mismatch:ready_window_exhausted x4",
+                    bestAccuracy: 0.1f,
+                    bestFitness: 0.1f)
+            }));
+
+        var options = CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1) with
+        {
+            Environment = CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1).Environment with
+            {
+                OutputObservationMode = BasicsOutputObservationMode.EventedOutput,
+                OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                {
+                    MaxReadyWindowTicks = 4
+                },
+                SizingOverrides = new BasicsSizingOverrides
+                {
+                    InitialPopulationCount = 256,
+                    MaxConcurrentBrains = 128,
+                    ReproductionRunCount = 8
+                }
+            }
+        };
+
+        var report = await harness.RunAsync(options, new AndTaskPlugin());
+
+        var decision = Assert.Single(report.Trials).TuningDecision;
+        Assert.NotNull(decision);
+        Assert.True(decision!.Applied);
+        Assert.Contains("max_ready_window_ticks=8", decision.Changes);
+        Assert.DoesNotContain("output_mode=continuous_potential", decision.Changes);
+        Assert.Equal(BasicsOutputObservationMode.EventedOutput, report.FinalConfiguration.OutputObservationMode);
+        Assert.Equal(8, report.FinalConfiguration.MaxReadyWindowTicks);
+        Assert.Equal(192, report.FinalConfiguration.Sizing.InitialPopulationCount);
+        Assert.Equal(96, report.FinalConfiguration.Sizing.MaxConcurrentBrains);
+    }
+
+    [Fact]
+    public async Task LiveTrialHarness_EventedTimeoutWithoutFailures_WidensReadyWindowAndPreservesEventedOutput()
+    {
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient()),
+            executionRunnerFactory: (_, _) => new CancelingStoppedExecutionRunner(
+                CreateSnapshot(
+                    BasicsExecutionState.Stopped,
+                    statusText: "Execution stopped.",
+                    detailText: "The run was canceled by the operator.",
+                    generation: 1,
+                    speciesCount: 1,
+                    bestAccuracy: 0.75f,
+                    bestFitness: 0.764f)));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1) with
+            {
+                TrialTimeout = TimeSpan.FromMilliseconds(200),
+                Environment = CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1).Environment with
+                {
+                    OutputObservationMode = BasicsOutputObservationMode.EventedOutput,
+                    OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                    {
+                        MaxReadyWindowTicks = 4
+                    }
+                }
+            },
+            new AndTaskPlugin());
+
+        var trial = Assert.Single(report.Trials);
+        Assert.Equal(BasicsLiveTrialOutcome.TimedOut, trial.Outcome);
+        Assert.NotNull(trial.TuningDecision);
+        Assert.True(trial.TuningDecision!.Applied);
+        Assert.Contains("max_ready_window_ticks=8", trial.TuningDecision.Changes);
+        Assert.DoesNotContain("output_mode=continuous_potential", trial.TuningDecision.Changes);
+        Assert.Equal(BasicsOutputObservationMode.EventedOutput, report.FinalConfiguration.OutputObservationMode);
+        Assert.Equal(8, report.FinalConfiguration.MaxReadyWindowTicks);
     }
 
     [Fact]
