@@ -14,7 +14,7 @@ namespace Nbn.Demos.Basics.Environment;
 public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 {
     private static readonly TimeSpan VectorObservationTimeout = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan EventedObservationTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan EventedObservationTimeout = VectorObservationTimeout;
     private static readonly TimeSpan SpawnPlacementTimeout = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
@@ -31,6 +31,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private readonly ConcurrentDictionary<Guid, byte> _trackedBrains = new();
     private readonly ConcurrentDictionary<string, BasicsDefinitionComplexitySummary?> _definitionComplexityCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly TimeSpan _minimumSpawnRequestInterval;
+
+    private readonly record struct ObservationAttemptResult(BasicsTaskObservation? Observation, string? FailureDetail);
 
     public BasicsExecutionSession(
         IBasicsRuntimeClient runtimeClient,
@@ -1398,11 +1400,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         outputSamplingPolicy,
                         cancellationToken)
                     .ConfigureAwait(false);
-                if (sampleObservation is null)
+                if (sampleObservation.Observation is null)
                 {
+                    var failureDetail = string.IsNullOrWhiteSpace(sampleObservation.FailureDetail)
+                        ? "output_timeout_or_width_mismatch"
+                        : $"output_timeout_or_width_mismatch:{sampleObservation.FailureDetail}";
                     resultMember = member with
                 {
-                    LastEvaluation = CreateTransportFailure("output_timeout_or_width_mismatch"),
+                    LastEvaluation = CreateTransportFailure(failureDetail),
                     EvaluationGeneration = generation,
                     ActiveBrainId = brainId
                 };
@@ -1410,9 +1415,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, setup, observation, totalStopwatch.Elapsed);
                 }
 
-                observations.Add(sampleObservation.Value);
+                observations.Add(sampleObservation.Observation.Value);
                 onSampleProgress?.Invoke(batchBrainOrdinal, observations.Count);
-                lastTick = sampleObservation.Value.TickId;
+                lastTick = sampleObservation.Observation.Value.TickId;
             }
             observation = observationStopwatch.Elapsed;
 
@@ -1764,7 +1769,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             ? $"{seconds:0.0}s"
             : $"{seconds:0.00}s";
 
-    private async Task<BasicsTaskObservation?> ObserveSampleAsync(
+    private async Task<ObservationAttemptResult> ObserveSampleAsync(
         Guid brainId,
         BasicsTaskSample sample,
         ulong lastTick,
@@ -1805,7 +1810,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 .ConfigureAwait(false);
     }
 
-    private async Task<BasicsTaskObservation?> WaitForReadyVectorObservationAsync(
+    private async Task<ObservationAttemptResult> WaitForReadyVectorObservationAsync(
         Guid brainId,
         ulong afterTickExclusive,
         BasicsOutputObservationMode outputObservationMode,
@@ -1813,6 +1818,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         CancellationToken cancellationToken)
     {
         var tickCursor = afterTickExclusive;
+        var vectorsSeen = 0;
         for (var observedTicks = 0; observedTicks < outputSamplingPolicy.MaxReadyWindowTicks; observedTicks++)
         {
             var output = await _runtimeClient.WaitForOutputVectorAsync(
@@ -1823,20 +1829,25 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 .ConfigureAwait(false);
             if (!IsValidObservationVector(output))
             {
-                return null;
+                return new ObservationAttemptResult(
+                    null,
+                    $"vector_missing:vectors_seen={vectorsSeen}:last_tick={tickCursor}");
             }
 
             tickCursor = output!.TickId;
+            vectorsSeen++;
             if (output.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
             {
-                return CreateObservation(output);
+                return new ObservationAttemptResult(CreateObservation(output), null);
             }
         }
 
-        return null;
+        return new ObservationAttemptResult(
+            null,
+            $"ready_window_exhausted:vectors_seen={vectorsSeen}:last_tick={tickCursor}");
     }
 
-    private async Task<BasicsTaskObservation?> WaitForReadyEventObservationAsync(
+    private async Task<ObservationAttemptResult> WaitForReadyEventObservationAsync(
         Guid brainId,
         ulong afterTickExclusive,
         BasicsOutputSamplingPolicy outputSamplingPolicy,
@@ -1845,6 +1856,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var vectorCursor = afterTickExclusive;
         var readyEventCursor = afterTickExclusive;
         var observedTicks = 0;
+        var readyEventsSeen = 0;
         var vectorsByTick = new Dictionary<ulong, BasicsRuntimeOutputVector>();
         var readyTicks = new HashSet<ulong>();
         using var observationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -1867,10 +1879,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     var readyEvent = await nextReadyEventTask.ConfigureAwait(false);
                     if (readyEvent is not null)
                     {
+                        readyEventsSeen++;
                         readyEventCursor = Math.Max(readyEventCursor, readyEvent.TickId);
                         if (vectorsByTick.TryGetValue(readyEvent.TickId, out var readyVector))
                         {
-                            return CreateObservation(readyVector);
+                            return new ObservationAttemptResult(CreateObservation(readyVector), null);
                         }
 
                         readyTicks.Add(readyEvent.TickId);
@@ -1901,15 +1914,22 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 var output = await nextVectorTask.ConfigureAwait(false);
                 if (!IsValidObservationVector(output))
                 {
-                    return null;
+                    return new ObservationAttemptResult(
+                        null,
+                        $"vector_missing:vectors_seen={vectorsByTick.Count}:ready_events_seen={readyEventsSeen}:last_vector_tick={vectorCursor}:last_ready_tick={readyEventCursor}");
                 }
 
                 vectorsByTick[output!.TickId] = output;
                 vectorCursor = output.TickId;
                 observedTicks++;
+                if (output.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
+                {
+                    return new ObservationAttemptResult(CreateObservation(output), null);
+                }
+
                 if (readyTicks.Contains(output.TickId))
                 {
-                    return CreateObservation(output);
+                    return new ObservationAttemptResult(CreateObservation(output), null);
                 }
 
                 if (observedTicks < outputSamplingPolicy.MaxReadyWindowTicks)
@@ -1922,7 +1942,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 }
             }
 
-            return null;
+            return new ObservationAttemptResult(
+                null,
+                $"ready_window_exhausted:vectors_seen={vectorsByTick.Count}:ready_events_seen={readyEventsSeen}:last_vector_tick={vectorCursor}:last_ready_tick={readyEventCursor}");
         }
         finally
         {

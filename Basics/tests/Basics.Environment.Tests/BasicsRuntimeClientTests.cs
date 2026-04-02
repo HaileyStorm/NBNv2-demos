@@ -70,6 +70,41 @@ public sealed class BasicsRuntimeClientTests
             value => Assert.Equal(20f, value));
     }
 
+    [Fact]
+    public async Task SubscribeOutputsVectorAsync_RetriesQueuedAckUntilSubscriptionIsActive()
+    {
+        var port = GetFreeTcpPort();
+        var brainId = Guid.NewGuid();
+        var options = new BasicsRuntimeClientOptions
+        {
+            IoAddress = $"127.0.0.1:{port}",
+            IoGatewayName = "io-gateway",
+            BindHost = "127.0.0.1",
+            Port = port
+        };
+
+        await using var client = await BasicsRuntimeClient.StartAsync(options);
+        var system = GetPrivateField<ActorSystem>(client, "_system");
+        var receiverPid = GetPrivateField<PID>(client, "_receiverPid");
+        var observedSubscriptions = new TaskCompletionSource<IReadOnlyList<SubscribeOutputsVector>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        system.Root.SpawnNamed(
+            Props.FromProducer(() => new OutputSubscriptionProbeActor(observedSubscriptions)),
+            "io-gateway");
+
+        await client.SubscribeOutputsVectorAsync(brainId);
+
+        var messages = await observedSubscriptions.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, messages.Count);
+        Assert.All(
+            messages,
+            message =>
+            {
+                Assert.True(message.BrainId?.TryToGuid(out var observedBrainId) == true && observedBrainId == brainId);
+                Assert.False(string.IsNullOrWhiteSpace(message.SubscriberActor));
+                Assert.Contains(receiverPid.Id, message.SubscriberActor, StringComparison.Ordinal);
+            });
+    }
+
     private static T GetPrivateField<T>(object instance, string fieldName) where T : class
     {
         var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
@@ -90,6 +125,41 @@ public sealed class BasicsRuntimeClientTests
         finally
         {
             listener.Stop();
+        }
+    }
+
+    private sealed class OutputSubscriptionProbeActor : IActor
+    {
+        private readonly TaskCompletionSource<IReadOnlyList<SubscribeOutputsVector>> _observedSubscriptions;
+        private readonly List<SubscribeOutputsVector> _messages = new();
+
+        public OutputSubscriptionProbeActor(TaskCompletionSource<IReadOnlyList<SubscribeOutputsVector>> observedSubscriptions)
+        {
+            _observedSubscriptions = observedSubscriptions;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not SubscribeOutputsVector subscribe)
+            {
+                return Task.CompletedTask;
+            }
+
+            _messages.Add(subscribe.Clone());
+            context.Respond(new IoCommandAck
+            {
+                BrainId = subscribe.BrainId?.Clone(),
+                Command = "subscribe_outputs_vector",
+                Success = true,
+                Message = _messages.Count == 1 ? "queued" : "applied"
+            });
+
+            if (_messages.Count >= 2)
+            {
+                _observedSubscriptions.TrySetResult(_messages.ToArray());
+            }
+
+            return Task.CompletedTask;
         }
     }
 }

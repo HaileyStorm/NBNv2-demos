@@ -132,6 +132,8 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
 
 public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEventSink
 {
+    private static readonly TimeSpan OutputSubscriptionReadyTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan OutputSubscriptionRetryDelay = TimeSpan.FromMilliseconds(50);
     private readonly ActorSystem _system;
     private readonly PID _ioPid;
     private readonly PID _receiverPid;
@@ -452,8 +454,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         }
 
         EnsureOutputBuffer(brainId);
-        _system.Root.Send(_receiverPid, new BasicsSubscribeOutputsVectorCommand(brainId));
-        return Task.CompletedTask;
+        return EnsureOutputSubscriptionAsync(brainId, vector: true, cancellationToken);
     }
 
     public Task SubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
@@ -465,8 +466,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         }
 
         EnsureOutputEventBuffer(brainId);
-        _system.Root.Send(_receiverPid, new BasicsSubscribeOutputsCommand(brainId));
-        return Task.CompletedTask;
+        return EnsureOutputSubscriptionAsync(brainId, vector: false, cancellationToken);
     }
 
     public Task UnsubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
@@ -1333,6 +1333,50 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         }
     }
 
+    private async Task EnsureOutputSubscriptionAsync(
+        Guid brainId,
+        bool vector,
+        CancellationToken cancellationToken)
+    {
+        var subscriberActor = PidLabel(_receiverPid, _system.Address);
+        var deadline = DateTime.UtcNow + OutputSubscriptionReadyTimeout;
+
+        while (true)
+        {
+            var ack = await ExecuteIoRequestWithReconnectAsync(
+                    () => _system.Root.RequestAsync<IoCommandAck>(
+                            _ioPid,
+                            CreateOutputSubscriptionMessage(brainId, vector, subscriberActor),
+                            _requestTimeout),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (ack is null)
+            {
+                throw new InvalidOperationException(
+                    $"{(vector ? "subscribe_outputs_vector" : "subscribe_outputs")} returned no response for brain {brainId}.");
+            }
+
+            if (!ack.Success)
+            {
+                throw new InvalidOperationException(
+                    $"{ack.Command} failed for brain {brainId}: {ack.Message}".Trim());
+            }
+
+            if (!IsQueuedOutputSubscriptionAck(ack))
+            {
+                return;
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new InvalidOperationException(
+                    $"{ack.Command} remained queued for brain {brainId} beyond {OutputSubscriptionReadyTimeout.TotalSeconds:0.##} seconds.");
+            }
+
+            await Task.Delay(OutputSubscriptionRetryDelay, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private async Task<T?> ExecuteIoRequestWithReconnectAsync<T>(
         Func<Task<T>> requestFactory,
         CancellationToken cancellationToken) where T : class
@@ -1446,6 +1490,28 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             ? fallback
             : baseException.Message.Trim();
         return $"{baseException.GetType().Name}: {message}";
+    }
+
+    private static object CreateOutputSubscriptionMessage(Guid brainId, bool vector, string subscriberActor)
+        => vector
+            ? new SubscribeOutputsVector
+            {
+                BrainId = brainId.ToProtoUuid(),
+                SubscriberActor = subscriberActor
+            }
+            : new SubscribeOutputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                SubscriberActor = subscriberActor
+            };
+
+    private static bool IsQueuedOutputSubscriptionAck(IoCommandAck ack)
+        => string.Equals(ack.Message?.Trim(), "queued", StringComparison.OrdinalIgnoreCase);
+
+    private static string PidLabel(PID pid, string? fallbackAddress = null)
+    {
+        var address = string.IsNullOrWhiteSpace(pid.Address) ? fallbackAddress : pid.Address;
+        return string.IsNullOrWhiteSpace(address) ? pid.Id : $"{address}/{pid.Id}";
     }
 
     private sealed class RuntimeEventSinkProxy : IBasicsRuntimeEventSink

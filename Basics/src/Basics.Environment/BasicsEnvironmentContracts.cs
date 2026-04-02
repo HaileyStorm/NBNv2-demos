@@ -435,7 +435,9 @@ public sealed record BasicsAdaptiveDiversityOptions
 public static class BasicsOutputObservationModeExtensions
 {
     public static bool UsesVectorSubscription(this BasicsOutputObservationMode mode)
-        => mode is BasicsOutputObservationMode.VectorPotential or BasicsOutputObservationMode.VectorBuffer;
+        => mode is BasicsOutputObservationMode.VectorPotential
+            or BasicsOutputObservationMode.EventedOutput
+            or BasicsOutputObservationMode.VectorBuffer;
 
     public static ProtoControl.OutputVectorSource ResolveVectorSource(this BasicsOutputObservationMode mode)
         => mode == BasicsOutputObservationMode.VectorBuffer

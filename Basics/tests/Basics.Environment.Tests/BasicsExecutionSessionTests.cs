@@ -355,9 +355,9 @@ public sealed class BasicsExecutionSessionTests
             Assert.True(runtimeClient.VectorSubscriptionCount > 0);
             Assert.Empty(runtimeClient.SetOutputVectorSourceRequests);
             Assert.NotEmpty(runtimeClient.EventWaitTimeouts);
-            Assert.All(runtimeClient.EventWaitTimeouts, timeout => Assert.Equal(TimeSpan.FromSeconds(1), timeout));
+            Assert.All(runtimeClient.EventWaitTimeouts, timeout => Assert.Equal(TimeSpan.FromSeconds(10), timeout));
             Assert.NotEmpty(runtimeClient.VectorWaitTimeouts);
-            Assert.All(runtimeClient.VectorWaitTimeouts, timeout => Assert.Equal(TimeSpan.FromSeconds(1), timeout));
+            Assert.All(runtimeClient.VectorWaitTimeouts, timeout => Assert.Equal(TimeSpan.FromSeconds(10), timeout));
         }
         finally
         {
@@ -392,6 +392,93 @@ public sealed class BasicsExecutionSessionTests
 
             Assert.Equal(BasicsExecutionState.Succeeded, final.State);
             Assert.Equal(1f, final.BestAccuracy);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_EventedOutput_ForcesPotentialVectorSource_WhenBrainReportsBuffer()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            InitialOutputVectorSource = OutputVectorSource.Buffer
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.EventedOutput),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.Contains(
+                runtimeClient.SetOutputVectorSourceRequests,
+                static request => request.OutputVectorSource == OutputVectorSource.Potential);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_EventedOutput_FallsBackToReadyLaneInVectorStream_WhenSingleReadyEventIsMissing()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            SuppressReadyOutputEvents = true
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.EventedOutput),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.True(final.BestAccuracy > 0f);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_EventedOutput_ReportsWhenVectorAndReadyStreamsStaySilent()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            SuppressOutputVectors = true,
+            SuppressReadyOutputEvents = true
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.EventedOutput),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Contains(
+                "output_timeout_or_width_mismatch:vector_missing:vectors_seen=0:ready_events_seen=0",
+                final.EvaluationFailureSummary,
+                StringComparison.Ordinal);
         }
         finally
         {
@@ -1298,8 +1385,11 @@ public sealed class BasicsExecutionSessionTests
         public bool OnlyEmitOutputVectorOnChange { get; init; }
         public int ReadySignalDelayTicks { get; init; } = 1;
         public float PreReadyOutputValue { get; init; }
+        public bool SuppressOutputVectors { get; init; }
+        public bool SuppressReadyOutputEvents { get; init; }
         public bool RequirePlacementWaitForVisibility { get; init; }
         public bool ReuseSingleChildArtifactOnReproduce { get; init; }
+        public OutputVectorSource InitialOutputVectorSource { get; init; } = OutputVectorSource.Potential;
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
         public int AwaitSpawnPlacementCallCount { get; private set; }
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
@@ -1328,7 +1418,8 @@ public sealed class BasicsExecutionSessionTests
                 {
                     BrainId = brainId.ToProtoUuid(),
                     InputWidth = BasicsIoGeometry.InputWidth,
-                    OutputWidth = BasicsIoGeometry.OutputWidth
+                    OutputWidth = BasicsIoGeometry.OutputWidth,
+                    OutputVectorSource = InitialOutputVectorSource
                 }
                 : new BrainInfo
                 {
@@ -1491,11 +1582,12 @@ public sealed class BasicsExecutionSessionTests
                 var tick = ++_ticks[brainId];
                 var ready = offset == readyDelayTicks ? 1f : 0f;
                 var value = offset == readyDelayTicks ? finalOutput : PreReadyOutputValue;
-                if (!OnlyEmitOutputVectorOnChange
-                    || !_lastVectorOutputByBrain.TryGetValue(brainId, out var previousOutput)
-                    || previousOutput.Value != value
-                    || previousOutput.Ready != ready
-                    || ready >= 0.5f)
+                if (!SuppressOutputVectors
+                    && (!OnlyEmitOutputVectorOnChange
+                        || !_lastVectorOutputByBrain.TryGetValue(brainId, out var previousOutput)
+                        || previousOutput.Value != value
+                        || previousOutput.Ready != ready
+                        || ready >= 0.5f))
                 {
                     _outputs[brainId].Enqueue(new BasicsRuntimeOutputVector(brainId, tick, new[] { value, ready }));
                 }
@@ -1506,7 +1598,7 @@ public sealed class BasicsExecutionSessionTests
                     _outputEvents[brainId].Enqueue(new BasicsRuntimeOutputEvent(brainId, 0, tick, value));
                 }
 
-                if (ready >= 0.5f)
+                if (ready >= 0.5f && !SuppressReadyOutputEvents)
                 {
                     _outputEvents[brainId].Enqueue(new BasicsRuntimeOutputEvent(brainId, 1, tick, ready));
                 }
