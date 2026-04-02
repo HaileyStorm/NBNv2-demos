@@ -1,11 +1,12 @@
 using Nbn.Demos.Basics.Environment;
+using Nbn.Shared.Format;
 
 namespace Nbn.Demos.Basics.Environment.Tests;
 
 public sealed class BasicsContractTests
 {
     [Fact]
-    public void DefaultSeedTemplate_IsTemplateAnchored_AndTwoByOne()
+    public void DefaultSeedTemplate_IsTemplateAnchored_AndTwoByTwo()
     {
         var template = BasicsSeedTemplateContract.CreateDefault();
 
@@ -185,5 +186,23 @@ public sealed class BasicsContractTests
 
         Assert.False(validation.IsValid);
         Assert.Contains(validation.Errors, error => error.Contains("Ready window ticks", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void InitialBrainSeedValidation_RejectsLegacyGeometryOutsideUiImportPath()
+    {
+        var legacyBytes = DemoNbnBuilder.BuildSampleNbn();
+        var legacyAnalysis = BasicsDefinitionAnalyzer.Analyze(legacyBytes);
+        var seed = new BasicsInitialBrainSeed(
+            DisplayName: "legacy-demo",
+            DefinitionBytes: legacyBytes,
+            DuplicateForReproduction: false,
+            Complexity: legacyAnalysis.Complexity);
+
+        var validation = seed.Validate();
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, error => error.Contains("geometry", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(validation.Errors, error => error.Contains("expected_2x2", StringComparison.Ordinal));
     }
 }

@@ -8,6 +8,8 @@ namespace Nbn.Demos.Basics.Harness;
 
 internal sealed record HarnessFileConfig
 {
+    private const string LegacyTwoByOneTemplateDescription = "Seed all initial brains from one shared 2->1 template, allowing only bounded minor divergence so reproduction and bootstrap speciation remain coherent.";
+
     public string RunLabel { get; init; } = "basics-live";
     public string OutputDirectory { get; init; } = "artifacts/live-trials";
     public HarnessRuntimeConfig Runtime { get; init; } = new();
@@ -24,29 +26,30 @@ internal sealed record HarnessFileConfig
             throw new InvalidOperationException($"Task plugin '{Environment.TaskId}' is not implemented.");
         }
 
+        var normalizedEnvironment = NormalizeEnvironment(Environment);
         var selectedTask = plugin.Contract;
         var seedTemplate = new BasicsSeedTemplateContract
         {
-            TemplateId = Environment.Template.TemplateId,
-            Description = Environment.Template.Description,
+            TemplateId = normalizedEnvironment.Template.TemplateId,
+            Description = normalizedEnvironment.Template.Description,
             InitialVariationBand = new BasicsSeedVariationBand
             {
-                MaxInternalNeuronDelta = Environment.Template.VariationBand.MaxInternalNeuronDelta,
-                MaxAxonDelta = Environment.Template.VariationBand.MaxAxonDelta,
-                MaxStrengthCodeDelta = Environment.Template.VariationBand.MaxStrengthCodeDelta,
-                MaxParameterCodeDelta = Environment.Template.VariationBand.MaxParameterCodeDelta,
-                AllowFunctionMutation = Environment.Template.VariationBand.AllowFunctionMutation,
-                AllowAxonReroute = Environment.Template.VariationBand.AllowAxonReroute,
-                AllowRegionSetChange = Environment.Template.VariationBand.AllowRegionSetChange
+                MaxInternalNeuronDelta = normalizedEnvironment.Template.VariationBand.MaxInternalNeuronDelta,
+                MaxAxonDelta = normalizedEnvironment.Template.VariationBand.MaxAxonDelta,
+                MaxStrengthCodeDelta = normalizedEnvironment.Template.VariationBand.MaxStrengthCodeDelta,
+                MaxParameterCodeDelta = normalizedEnvironment.Template.VariationBand.MaxParameterCodeDelta,
+                AllowFunctionMutation = normalizedEnvironment.Template.VariationBand.AllowFunctionMutation,
+                AllowAxonReroute = normalizedEnvironment.Template.VariationBand.AllowAxonReroute,
+                AllowRegionSetChange = normalizedEnvironment.Template.VariationBand.AllowRegionSetChange
             },
             InitialSeedShapeConstraints = new BasicsSeedShapeConstraints
             {
-                MinActiveInternalRegionCount = Environment.Template.SeedShape.MinActiveInternalRegionCount,
-                MaxActiveInternalRegionCount = Environment.Template.SeedShape.MaxActiveInternalRegionCount,
-                MinInternalNeuronCount = Environment.Template.SeedShape.MinInternalNeuronCount,
-                MaxInternalNeuronCount = Environment.Template.SeedShape.MaxInternalNeuronCount,
-                MinAxonCount = Environment.Template.SeedShape.MinAxonCount,
-                MaxAxonCount = Environment.Template.SeedShape.MaxAxonCount
+                MinActiveInternalRegionCount = normalizedEnvironment.Template.SeedShape.MinActiveInternalRegionCount,
+                MaxActiveInternalRegionCount = normalizedEnvironment.Template.SeedShape.MaxActiveInternalRegionCount,
+                MinInternalNeuronCount = normalizedEnvironment.Template.SeedShape.MinInternalNeuronCount,
+                MaxInternalNeuronCount = normalizedEnvironment.Template.SeedShape.MaxInternalNeuronCount,
+                MinAxonCount = normalizedEnvironment.Template.SeedShape.MinAxonCount,
+                MaxAxonCount = normalizedEnvironment.Template.SeedShape.MaxAxonCount
             }
         };
 
@@ -96,19 +99,19 @@ internal sealed record HarnessFileConfig
             },
             Environment = new BasicsEnvironmentOptions
             {
-                ClientName = Environment.ClientName,
+                ClientName = normalizedEnvironment.ClientName,
                 SelectedTask = selectedTask,
                 SeedTemplate = seedTemplate,
-                OutputObservationMode = ParseOutputObservationMode(Environment.OutputObservationMode),
+                OutputObservationMode = ParseOutputObservationMode(normalizedEnvironment.OutputObservationMode),
                 OutputSamplingPolicy = new BasicsOutputSamplingPolicy
                 {
-                    MaxReadyWindowTicks = Environment.MaxReadyWindowTicks
+                    MaxReadyWindowTicks = normalizedEnvironment.MaxReadyWindowTicks
                 },
                 SizingOverrides = new BasicsSizingOverrides
                 {
-                    InitialPopulationCount = Environment.Sizing.InitialPopulationCount,
-                    ReproductionRunCount = Environment.Sizing.ReproductionRunCount,
-                    MaxConcurrentBrains = Environment.Sizing.MaxConcurrentBrains
+                    InitialPopulationCount = normalizedEnvironment.Sizing.InitialPopulationCount,
+                    ReproductionRunCount = normalizedEnvironment.Sizing.ReproductionRunCount,
+                    MaxConcurrentBrains = normalizedEnvironment.Sizing.MaxConcurrentBrains
                 },
                 Reproduction = reproduction,
                 Scheduling = scheduling
@@ -130,6 +133,29 @@ internal sealed record HarnessFileConfig
         };
 
         return (options, plugin);
+    }
+
+    private static HarnessEnvironmentConfig NormalizeEnvironment(HarnessEnvironmentConfig environment)
+        => environment with
+        {
+            Template = environment.Template with
+            {
+                Description = ResolveTemplateDescription(environment.Template.Description)
+            }
+        };
+
+    private static string ResolveTemplateDescription(string? description)
+    {
+        var currentDescription = BasicsSeedTemplateContract.CreateDefault().Description;
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return currentDescription;
+        }
+
+        var trimmed = description.Trim();
+        return string.Equals(trimmed, LegacyTwoByOneTemplateDescription, StringComparison.Ordinal)
+            ? currentDescription
+            : trimmed;
     }
 
     private static BasicsOutputObservationMode ParseOutputObservationMode(string? value)

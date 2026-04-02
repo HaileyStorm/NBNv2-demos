@@ -310,6 +310,21 @@ public sealed record BasicsInitialBrainSeed(
         {
             errors.Add("Initial brain DefinitionBytes must not be empty.");
         }
+        else
+        {
+            try
+            {
+                var analysis = BasicsDefinitionAnalyzer.Analyze(DefinitionBytes);
+                if (!analysis.Geometry.IsValid)
+                {
+                    errors.Add($"Initial brain geometry must match Basics {BasicsIoGeometry.InputWidth}->{BasicsIoGeometry.OutputWidth} ({analysis.Geometry.FailureReason}).");
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Initial brain DefinitionBytes must be a valid .nbn definition ({ex.GetBaseException().Message}).");
+            }
+        }
 
         return BasicsContractValidationResult.FromErrors(errors);
     }

@@ -94,6 +94,7 @@ dotnet run --project src/Basics.Harness/Basics.Harness.csproj -- --config ./arti
 ```
 
 The harness writes a JSON report under `artifacts/live-trials/`, replays the shared `BasicsExecutionSession` against real IO, captures per-generation snapshots, and can apply simple follow-up tuning between trials while staying on the IO-only demo contract.
+`artifacts/` is local scratch, not canonical repo state, so old JSON configs/reports should be regenerated after contract changes instead of treated as authoritative baselines.
 
 Run a one-command local smoke validation with a temporary in-process runtime stack:
 
