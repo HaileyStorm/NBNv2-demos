@@ -15,6 +15,16 @@ using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Demos.Basics.Ui.ViewModels;
 
+public sealed record ChartAxisTickItem(
+    double X,
+    double LabelLeft,
+    string LabelText);
+
+public sealed record ChartAxisValueTickItem(
+    double Y,
+    double LabelTop,
+    string LabelText);
+
 public sealed class MainWindowViewModel : ViewModelBase
 {
     private static readonly HashSet<string> NonEditableProperties = new(StringComparer.Ordinal)
@@ -40,6 +50,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(BestAccuracyChartPoints),
         nameof(FitnessChartPoints),
         nameof(BestFitnessChartPoints),
+        nameof(AccuracyGenerationTicks),
+        nameof(FitnessGenerationTicks),
         nameof(ShowAccuracyStartGenerationTick),
         nameof(ShowAccuracyMidGenerationTick),
         nameof(ShowAccuracyEndGenerationTick),
@@ -84,8 +96,11 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly List<float> _bestFitnessHistory = new();
     // Keep these in sync with the fixed plot host inside MainWindow.axaml.
     private const float ChartPlotWidth = 299f;
-    private const float ChartPlotHeight = 114f;
+    private const float ChartPlotHeight = 254f;
     private const float ChartStrokeInset = 1f;
+    private const int MaxGenerationTickLabelCount = 14;
+    private const double XAxisTickLabelWidth = 18d;
+    private const double YAxisTickLabelHeight = 12d;
 
     private string _ioAddress = $"{NetworkAddressDefaults.ResolveDefaultAdvertisedHost()}:12050";
     private string _ioGatewayName = "io-gateway";
@@ -877,11 +892,19 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public IReadOnlyList<Point> AccuracyChartPoints => BuildChartPoints(_accuracyHistory);
 
-    public IReadOnlyList<Point> BestAccuracyChartPoints => BuildChartPoints(_bestAccuracyHistory);
+    public IReadOnlyList<Point> BestAccuracyChartPoints => BuildChartPoints(BuildBestSoFarHistory(_bestAccuracyHistory));
 
     public IReadOnlyList<Point> FitnessChartPoints => BuildChartPoints(_fitnessHistory);
 
-    public IReadOnlyList<Point> BestFitnessChartPoints => BuildChartPoints(_bestFitnessHistory);
+    public IReadOnlyList<Point> BestFitnessChartPoints => BuildChartPoints(BuildBestSoFarHistory(_bestFitnessHistory));
+
+    public IReadOnlyList<ChartAxisTickItem> AccuracyGenerationTicks
+        => BuildGenerationTicks(_accuracyHistory, _bestAccuracyHistory);
+
+    public IReadOnlyList<ChartAxisTickItem> FitnessGenerationTicks
+        => BuildGenerationTicks(_fitnessHistory, _bestFitnessHistory);
+
+    public IReadOnlyList<ChartAxisValueTickItem> NormalizedValueAxisTicks { get; } = BuildNormalizedValueAxisTicks();
 
     public bool ShowAccuracyStartGenerationTick => ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory) > 0;
 
@@ -2669,6 +2692,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(BestAccuracyChartPoints));
         OnPropertyChanged(nameof(FitnessChartPoints));
         OnPropertyChanged(nameof(BestFitnessChartPoints));
+        OnPropertyChanged(nameof(AccuracyGenerationTicks));
+        OnPropertyChanged(nameof(FitnessGenerationTicks));
         OnPropertyChanged(nameof(ShowAccuracyStartGenerationTick));
         OnPropertyChanged(nameof(ShowAccuracyMidGenerationTick));
         OnPropertyChanged(nameof(ShowAccuracyEndGenerationTick));
@@ -2705,6 +2730,101 @@ public sealed class MainWindowViewModel : ViewModelBase
             var y = (ChartPlotHeight - ChartStrokeInset) - (Math.Clamp(value, 0f, 1f) * plotHeight);
             return new Point(x, y);
         }).ToArray();
+    }
+
+    private static IReadOnlyList<float> BuildBestSoFarHistory(IReadOnlyList<float> history)
+    {
+        if (history.Count == 0)
+        {
+            return Array.Empty<float>();
+        }
+
+        var bestSoFar = new float[history.Count];
+        var runningBest = float.MinValue;
+        for (var index = 0; index < history.Count; index++)
+        {
+            runningBest = Math.Max(runningBest, history[index]);
+            bestSoFar[index] = runningBest;
+        }
+
+        return bestSoFar;
+    }
+
+    private static IReadOnlyList<ChartAxisTickItem> BuildGenerationTicks(
+        IReadOnlyList<float> firstHistory,
+        IReadOnlyList<float> secondHistory)
+    {
+        var generationCount = ResolveChartGenerationCount(firstHistory, secondHistory);
+        if (generationCount == 0)
+        {
+            return Array.Empty<ChartAxisTickItem>();
+        }
+
+        var tickCount = Math.Min(MaxGenerationTickLabelCount, generationCount);
+        var tickIndices = BuildTickIndices(generationCount, tickCount);
+        var ticks = new ChartAxisTickItem[tickIndices.Count];
+        var plotWidth = ChartPlotWidth - (ChartStrokeInset * 2f);
+        var labelHalfWidth = XAxisTickLabelWidth / 2d;
+        var maxLabelLeft = Math.Max(0d, ChartPlotWidth - XAxisTickLabelWidth);
+
+        for (var index = 0; index < tickIndices.Count; index++)
+        {
+            var generationIndex = tickIndices[index];
+            var x = generationCount == 1
+                ? ChartStrokeInset
+                : ChartStrokeInset + ((generationIndex * plotWidth) / (generationCount - 1d));
+            var labelLeft = Math.Clamp(x - labelHalfWidth, 0d, maxLabelLeft);
+            ticks[index] = new ChartAxisTickItem(
+                X: x,
+                LabelLeft: labelLeft,
+                LabelText: FormatGenerationTickLabel(generationIndex + 1));
+        }
+
+        return ticks;
+    }
+
+    private static IReadOnlyList<ChartAxisValueTickItem> BuildNormalizedValueAxisTicks()
+    {
+        var values = new[] { 1.0f, 0.8f, 0.6f, 0.4f, 0.2f, 0.0f };
+        var plotHeight = ChartPlotHeight - (ChartStrokeInset * 2f);
+        var maxLabelTop = Math.Max(0d, ChartPlotHeight - YAxisTickLabelHeight);
+
+        return values.Select(value =>
+        {
+            var y = (ChartPlotHeight - ChartStrokeInset) - (value * plotHeight);
+            var labelTop = Math.Clamp(y - (YAxisTickLabelHeight / 2d), 0d, maxLabelTop);
+            return new ChartAxisValueTickItem(
+                Y: y,
+                LabelTop: labelTop,
+                LabelText: value.ToString("0.0", CultureInfo.InvariantCulture));
+        }).ToArray();
+    }
+
+    private static IReadOnlyList<int> BuildTickIndices(int generationCount, int tickCount)
+    {
+        if (tickCount >= generationCount)
+        {
+            return Enumerable.Range(0, generationCount).ToArray();
+        }
+
+        var indices = new List<int>(tickCount);
+        for (var slot = 0; slot < tickCount; slot++)
+        {
+            var index = (int)Math.Round(
+                (slot * (generationCount - 1d)) / Math.Max(1d, tickCount - 1d),
+                MidpointRounding.AwayFromZero);
+            if (indices.Count == 0 || indices[^1] != index)
+            {
+                indices.Add(index);
+            }
+        }
+
+        if (indices[^1] != generationCount - 1)
+        {
+            indices[^1] = generationCount - 1;
+        }
+
+        return indices;
     }
 
     private static int ResolveChartGenerationCount(IReadOnlyList<float> firstHistory, IReadOnlyList<float> secondHistory)
