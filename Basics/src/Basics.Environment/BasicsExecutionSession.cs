@@ -15,7 +15,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 {
     private static readonly TimeSpan VectorObservationTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EventedObservationTimeout = VectorObservationTimeout;
-    private static readonly TimeSpan DefaultSpawnPlacementTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan DefaultSpawnPlacementTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan RetryableSpawnFailureBackoff = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.Zero;
@@ -1245,6 +1246,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 if (result.Member.ActiveBrainId != Guid.Empty)
                 {
                     await TeardownBrainAsync(result.Member.ActiveBrainId, CancellationToken.None).ConfigureAwait(false);
+                }
+
+                if (ResolveFailureCategory(result.Member.LastEvaluation) is "spawn_failed" or "spawn_not_placed")
+                {
+                    await Task.Delay(RetryableSpawnFailureBackoff, cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -3244,17 +3250,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         bestAccuracySoFar = Math.Max(bestAccuracySoFar, generationMetrics.BestAccuracy);
         bestFitnessSoFar = Math.Max(bestFitnessSoFar, generationMetrics.BestFitness);
-        if (generationMetrics.BestCandidate is null)
+        if (generationMetrics.TrackedBestCandidate is null)
         {
             return;
         }
 
-        if (!IsViableBestCandidate(generationMetrics.BestCandidate))
+        if (!IsViableBestCandidate(generationMetrics.TrackedBestCandidate))
         {
             return;
         }
 
-        bestCandidateSoFar = SelectBestCandidateSummary(bestCandidateSoFar, generationMetrics.BestCandidate);
+        bestCandidateSoFar = SelectBestCandidateSummary(bestCandidateSoFar, generationMetrics.TrackedBestCandidate);
     }
 
     private static bool DidGenerationImprove(
@@ -3293,16 +3299,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return viabilityComparison;
         }
 
-        var fitnessComparison = candidate.Fitness.CompareTo(baseline.Fitness);
-        if (fitnessComparison != 0)
-        {
-            return fitnessComparison;
-        }
-
         var accuracyComparison = candidate.Accuracy.CompareTo(baseline.Accuracy);
         if (accuracyComparison != 0)
         {
             return accuracyComparison;
+        }
+
+        var fitnessComparison = candidate.Fitness.CompareTo(baseline.Fitness);
+        if (fitnessComparison != 0)
+        {
+            return fitnessComparison;
         }
 
         var internalNeuronComparison = CompareAscendingPreference(
@@ -3393,7 +3399,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var metrics = BuildGenerationMetrics(population, stopCriteria, includeWinnerRuntimeState, generation);
         var resolvedBestAccuracy = Math.Max(metrics.BestAccuracy, Math.Max(overallBestAccuracy, accuracyHistory.DefaultIfEmpty(0f).Max()));
         var resolvedBestFitness = Math.Max(metrics.BestFitness, Math.Max(overallBestFitness, fitnessHistory.DefaultIfEmpty(0f).Max()));
-        var resolvedBestCandidate = SelectBestCandidateSummary(metrics.BestCandidate, overallBestCandidate);
+        var resolvedBestCandidate = SelectBestCandidateSummary(metrics.TrackedBestCandidate, overallBestCandidate);
         return new BasicsExecutionSnapshot(
             state,
             statusText,
@@ -3443,6 +3449,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 SpeciesCount: 0,
                 CapacityUtilization: 0f,
                 BestCandidate: null,
+                TrackedBestCandidate: null,
                 EvaluationFailureCount: 0,
                 EvaluationFailureSummary: string.Empty);
         }
@@ -3466,6 +3473,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 && member.EvaluationGeneration.Value < currentGeneration.Value)
             : 0;
         var winningCandidate = SelectWinningCandidate(candidates, stopCriteria);
+        var trackedBestCandidate = SelectTrackedBestCandidate(candidates);
         var speciesCount = population.Select(member => NormalizeSpeciesId(member.SpeciesId)).Distinct(StringComparer.OrdinalIgnoreCase).Count();
         var failureDiagnostics = population
             .SelectMany(member => member.LastEvaluation?.Diagnostics ?? Array.Empty<string>())
@@ -3499,19 +3507,25 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             MeanFitness: candidates.Average(candidate => candidate.Evaluation.Fitness),
             SpeciesCount: speciesCount,
             CapacityUtilization: 0f,
-            BestCandidate: new BasicsExecutionBestCandidateSummary(
-                winningCandidate.Member.Definition.Clone(),
-                includeWinnerRuntimeState ? winningCandidate.Member.SnapshotArtifact?.Clone() : null,
-                includeWinnerRuntimeState && winningCandidate.Member.ActiveBrainId != Guid.Empty ? winningCandidate.Member.ActiveBrainId : null,
-                NormalizeSpeciesId(winningCandidate.Member.SpeciesId),
-                winningCandidate.Evaluation.Accuracy,
-                winningCandidate.Evaluation.Fitness,
-                winningCandidate.Member.Complexity,
-                new Dictionary<string, float>(winningCandidate.Evaluation.ScoreBreakdown, StringComparer.Ordinal),
-                winningCandidate.Evaluation.Diagnostics.ToArray()),
+            BestCandidate: BuildBestCandidateSummary(winningCandidate, includeWinnerRuntimeState),
+            TrackedBestCandidate: BuildBestCandidateSummary(trackedBestCandidate, includeWinnerRuntimeState),
             EvaluationFailureCount: failureCount,
             EvaluationFailureSummary: failureSummary);
     }
+
+    private static BasicsExecutionBestCandidateSummary BuildBestCandidateSummary(
+        CandidateSelection candidate,
+        bool includeWinnerRuntimeState)
+        => new(
+            candidate.Member.Definition.Clone(),
+            includeWinnerRuntimeState ? candidate.Member.SnapshotArtifact?.Clone() : null,
+            includeWinnerRuntimeState && candidate.Member.ActiveBrainId != Guid.Empty ? candidate.Member.ActiveBrainId : null,
+            NormalizeSpeciesId(candidate.Member.SpeciesId),
+            candidate.Evaluation.Accuracy,
+            candidate.Evaluation.Fitness,
+            candidate.Member.Complexity,
+            new Dictionary<string, float>(candidate.Evaluation.ScoreBreakdown, StringComparer.Ordinal),
+            candidate.Evaluation.Diagnostics.ToArray());
 
     private CandidateSelection SelectWinningCandidate(
         IReadOnlyList<CandidateSelection> candidates,
@@ -3541,6 +3555,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             .ThenBy(candidate => candidate.TieBreakRank)
             .First();
     }
+
+    private static CandidateSelection SelectTrackedBestCandidate(IReadOnlyList<CandidateSelection> candidates)
+        => candidates
+            .OrderByDescending(candidate => candidate.Evaluation.Diagnostics.Count == 0)
+            .ThenByDescending(candidate => candidate.Evaluation.Accuracy)
+            .ThenByDescending(candidate => candidate.Evaluation.Fitness)
+            .ThenBy(candidate => candidate.Member.Complexity?.InternalNeuronCount ?? int.MaxValue)
+            .ThenBy(candidate => candidate.Member.Complexity?.AxonCount ?? int.MaxValue)
+            .ThenBy(candidate => candidate.Member.Complexity?.ActiveInternalRegionCount ?? int.MaxValue)
+            .ThenBy(candidate => candidate.TieBreakRank)
+            .First();
 
     private static int ComputeTieBreakRank(string artifactSha)
     {
@@ -3652,6 +3677,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int SpeciesCount,
         float CapacityUtilization,
         BasicsExecutionBestCandidateSummary? BestCandidate,
+        BasicsExecutionBestCandidateSummary? TrackedBestCandidate,
         int EvaluationFailureCount,
         string EvaluationFailureSummary);
 

@@ -684,6 +684,75 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task SelectBestCandidateSummary_PrefersHigherFitness_WhenAccuracyTies()
+    {
+        await using var runtimeClient = new FakeBasicsRuntimeClient();
+        var method = typeof(BasicsExecutionSession).GetMethod("SelectBestCandidateSummary", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var baseline = CreateBestCandidateSummary(runtimeClient, "and", accuracy: 0.75f, fitness: 0.40f);
+        var challenger = CreateBestCandidateSummary(runtimeClient, "or", accuracy: 0.75f, fitness: 0.55f);
+
+        var selected = Assert.IsType<BasicsExecutionBestCandidateSummary>(
+            method!.Invoke(null, new object?[] { baseline, challenger }));
+
+        Assert.Equal(challenger.ArtifactSha256, selected.ArtifactSha256);
+    }
+
+    [Fact]
+    public async Task SelectBestCandidateSummary_PrefersHigherAccuracy_OverHigherFitness()
+    {
+        await using var runtimeClient = new FakeBasicsRuntimeClient();
+        var method = typeof(BasicsExecutionSession).GetMethod("SelectBestCandidateSummary", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var baseline = CreateBestCandidateSummary(runtimeClient, "and", accuracy: 0.75f, fitness: 0.40f);
+        var challenger = CreateBestCandidateSummary(runtimeClient, "or", accuracy: 0.5f, fitness: 0.80f);
+
+        var selected = Assert.IsType<BasicsExecutionBestCandidateSummary>(
+            method!.Invoke(null, new object?[] { baseline, challenger }));
+
+        Assert.Equal(baseline.ArtifactSha256, selected.ArtifactSha256);
+    }
+
+    [Fact]
+    public async Task UpdateBestSoFar_TracksAccuracyFirstCandidate_IndependentlyOfRetentionWinner()
+    {
+        await using var runtimeClient = new FakeBasicsRuntimeClient();
+        var generationMetricsType = typeof(BasicsExecutionSession).GetNestedType("GenerationMetrics", BindingFlags.NonPublic);
+        var updateMethod = typeof(BasicsExecutionSession).GetMethod("UpdateBestSoFar", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(generationMetricsType);
+        Assert.NotNull(updateMethod);
+
+        var winningCandidate = CreateBestCandidateSummary(runtimeClient, "or", accuracy: 0.5f, fitness: 0.80f);
+        var trackedBestCandidate = CreateBestCandidateSummary(runtimeClient, "and", accuracy: 0.75f, fitness: 0.40f);
+        var generationMetrics = Activator.CreateInstance(
+            generationMetricsType!,
+            0.75f,
+            0.75f,
+            0.80f,
+            0.80f,
+            1,
+            0,
+            0.60d,
+            1,
+            0f,
+            winningCandidate,
+            trackedBestCandidate,
+            0,
+            string.Empty);
+        Assert.NotNull(generationMetrics);
+
+        object?[] arguments = [generationMetrics, 0f, 0f, null];
+        updateMethod!.Invoke(null, arguments);
+
+        Assert.Equal(0.75f, Assert.IsType<float>(arguments[1]));
+        Assert.Equal(0.80f, Assert.IsType<float>(arguments[2]));
+        var selected = Assert.IsType<BasicsExecutionBestCandidateSummary>(arguments[3]);
+        Assert.Equal(trackedBestCandidate.ArtifactSha256, selected.ArtifactSha256);
+    }
+
+    [Fact]
     public async Task ExecutionSession_PublishesRunningSnapshotWithExportableBestCandidate()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -1579,6 +1648,25 @@ public sealed class BasicsExecutionSessionTests
             publishingOptions ?? new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" },
             minimumSpawnRequestInterval ?? TimeSpan.FromMilliseconds(1),
             spawnPlacementTimeout);
+
+    private static BasicsExecutionBestCandidateSummary CreateBestCandidateSummary(
+        FakeBasicsRuntimeClient runtimeClient,
+        string behavior,
+        float accuracy,
+        float fitness)
+        => new(
+            runtimeClient.CreateDefinitionArtifact(behavior),
+            SnapshotArtifact: null,
+            ActiveBrainId: null,
+            SpeciesId: "species.default",
+            Accuracy: accuracy,
+            Fitness: fitness,
+            Complexity: new BasicsDefinitionComplexitySummary(1, 1, 3),
+            ScoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+            {
+                ["task_accuracy"] = accuracy
+            },
+            Diagnostics: Array.Empty<string>());
 
     private sealed class FakeBasicsRuntimeClient : IBasicsRuntimeClient
     {

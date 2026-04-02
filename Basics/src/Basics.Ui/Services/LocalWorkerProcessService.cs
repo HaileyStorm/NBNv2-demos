@@ -54,6 +54,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
     private readonly string _workerProjectPath;
     private readonly string _workerAssemblyPath;
     private readonly string _workerLogRoot;
+    private readonly EventHandler _processExitHandler;
     private int _nextWorkerOrdinal = 1;
     private bool _workerRuntimeBuilt;
     private bool _disposed;
@@ -65,6 +66,8 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         _workerAssemblyPath = Path.GetFullPath(Path.Combine(_workspaceRoot, "..", "NBNv2", "src", "Nbn.Runtime.WorkerNode", "bin", "Release", "net8.0", "Nbn.Runtime.WorkerNode.dll"));
         _workerLogRoot = Path.Combine(Path.GetTempPath(), "nbn-basics-ui-workers");
         Directory.CreateDirectory(_workerLogRoot);
+        _processExitHandler = (_, _) => StopLaunchedWorkersOnProcessExit();
+        AppDomain.CurrentDomain.ProcessExit += _processExitHandler;
     }
 
     public int LaunchedWorkerCount
@@ -199,6 +202,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         finally
         {
             _disposed = true;
+            AppDomain.CurrentDomain.ProcessExit -= _processExitHandler;
             _lifecycleGate.Dispose();
         }
     }
@@ -405,6 +409,41 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         finally
         {
             DisposeManagedWorkerProcess(process);
+        }
+    }
+
+    private void StopLaunchedWorkersOnProcessExit()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        List<ManagedWorkerProcess> snapshot;
+        lock (_processes)
+        {
+            snapshot = _processes.ToList();
+            _processes.Clear();
+        }
+
+        foreach (var process in snapshot)
+        {
+            try
+            {
+                if (!process.Process.HasExited)
+                {
+                    process.Process.Kill(entireProcessTree: true);
+                    process.Process.WaitForExit((int)WorkerShutdownTimeout.TotalMilliseconds);
+                }
+            }
+            catch
+            {
+                // Best-effort process cleanup during app exit only.
+            }
+            finally
+            {
+                DisposeManagedWorkerProcess(process);
+            }
         }
     }
 
