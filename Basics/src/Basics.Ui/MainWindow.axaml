@@ -725,12 +725,12 @@
                             <Border BorderBrush="#D9D0C2"
                                     BorderThickness="1"
                                     CornerRadius="10"
-                                    Padding="8"
+                                    Padding="6"
                                     Background="#FBF8F1"
                                     Height="180">
-                                <Grid ColumnDefinitions="Auto,308"
+                                <Grid ColumnDefinitions="Auto,318"
                                       RowDefinitions="140,Auto"
-                                      ColumnSpacing="8"
+                                      ColumnSpacing="2"
                                       RowSpacing="6"
                                       HorizontalAlignment="Center"
                                       VerticalAlignment="Center">
@@ -747,13 +747,13 @@
                                     </LayoutTransformControl>
                                     <Grid Grid.Row="0"
                                           Grid.Column="1"
-                                          Width="308"
+                                          Width="318"
                                           Height="140"
-                                          ColumnDefinitions="24,283,1"
+                                          ColumnDefinitions="19,299"
                                           RowDefinitions="8,114,18">
                                         <Grid Grid.Row="1"
                                               Grid.Column="0"
-                                              Margin="0,0,4,0"
+                                              Margin="0,0,1,0"
                                               RowDefinitions="1*,1*,1*">
                                             <TextBlock Text="1.0"
                                                        FontSize="10"
@@ -866,13 +866,16 @@
                                                        IsVisible="{Binding ShowAccuracyEndGenerationTick}" />
                                         </Grid>
                                     </Grid>
-                                    <TextBlock Grid.Row="1"
-                                               Grid.Column="1"
-                                               Text="Generation"
-                                               FontSize="12"
-                                               Foreground="#6C7A89"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center" />
+                                    <Grid Grid.Row="1"
+                                          Grid.Column="1"
+                                          ColumnDefinitions="19,299">
+                                        <TextBlock Grid.Column="1"
+                                                   Text="Generation"
+                                                   FontSize="12"
+                                                   Foreground="#6C7A89"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
                                 </Grid>
                             </Border>
                             <TextBlock Text="{Binding MetricsStatus}"
@@ -888,12 +891,12 @@
                             <Border BorderBrush="#D9D0C2"
                                     BorderThickness="1"
                                     CornerRadius="10"
-                                    Padding="8"
+                                    Padding="6"
                                     Background="#FBF8F1"
                                     Height="180">
-                                <Grid ColumnDefinitions="Auto,308"
+                                <Grid ColumnDefinitions="Auto,318"
                                       RowDefinitions="140,Auto"
-                                      ColumnSpacing="8"
+                                      ColumnSpacing="2"
                                       RowSpacing="6"
                                       HorizontalAlignment="Center"
                                       VerticalAlignment="Center">
@@ -910,13 +913,13 @@
                                     </LayoutTransformControl>
                                     <Grid Grid.Row="0"
                                           Grid.Column="1"
-                                          Width="308"
+                                          Width="318"
                                           Height="140"
-                                          ColumnDefinitions="24,283,1"
+                                          ColumnDefinitions="19,299"
                                           RowDefinitions="8,114,18">
                                         <Grid Grid.Row="1"
                                               Grid.Column="0"
-                                              Margin="0,0,4,0"
+                                              Margin="0,0,1,0"
                                               RowDefinitions="1*,1*,1*">
                                             <TextBlock Text="1.0"
                                                        FontSize="10"
@@ -1029,13 +1032,16 @@
                                                        IsVisible="{Binding ShowFitnessEndGenerationTick}" />
                                         </Grid>
                                     </Grid>
-                                    <TextBlock Grid.Row="1"
-                                               Grid.Column="1"
-                                               Text="Generation"
-                                               FontSize="12"
-                                               Foreground="#6C7A89"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center" />
+                                    <Grid Grid.Row="1"
+                                          Grid.Column="1"
+                                          ColumnDefinitions="19,299">
+                                        <TextBlock Grid.Column="1"
+                                                   Text="Generation"
+                                                   FontSize="12"
+                                                   Foreground="#6C7A89"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
                                 </Grid>
                             </Border>
                             <TextBlock Text="{Binding MetricsSecondaryStatus}"

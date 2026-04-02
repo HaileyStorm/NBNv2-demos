@@ -83,7 +83,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly List<float> _fitnessHistory = new();
     private readonly List<float> _bestFitnessHistory = new();
     // Keep these in sync with the fixed plot host inside MainWindow.axaml.
-    private const float ChartPlotWidth = 283f;
+    private const float ChartPlotWidth = 299f;
     private const float ChartPlotHeight = 114f;
     private const float ChartStrokeInset = 1f;
 
