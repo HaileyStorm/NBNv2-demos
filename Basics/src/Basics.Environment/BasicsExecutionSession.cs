@@ -15,7 +15,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 {
     private static readonly TimeSpan VectorObservationTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EventedObservationTimeout = VectorObservationTimeout;
-    private static readonly TimeSpan SpawnPlacementTimeout = TimeSpan.FromSeconds(120);
+    private static readonly TimeSpan DefaultSpawnPlacementTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.Zero;
@@ -31,17 +31,20 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private readonly ConcurrentDictionary<Guid, byte> _trackedBrains = new();
     private readonly ConcurrentDictionary<string, BasicsDefinitionComplexitySummary?> _definitionComplexityCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly TimeSpan _minimumSpawnRequestInterval;
+    private readonly TimeSpan _spawnPlacementTimeout;
 
     private readonly record struct ObservationAttemptResult(BasicsTaskObservation? Observation, string? FailureDetail);
 
     public BasicsExecutionSession(
         IBasicsRuntimeClient runtimeClient,
         BasicsTemplatePublishingOptions publishingOptions,
-        TimeSpan? minimumSpawnRequestInterval = null)
+        TimeSpan? minimumSpawnRequestInterval = null,
+        TimeSpan? spawnPlacementTimeout = null)
     {
         _runtimeClient = runtimeClient ?? throw new ArgumentNullException(nameof(runtimeClient));
         _publishingOptions = publishingOptions ?? throw new ArgumentNullException(nameof(publishingOptions));
         _minimumSpawnRequestInterval = minimumSpawnRequestInterval ?? DefaultMinimumSpawnRequestInterval;
+        _spawnPlacementTimeout = spawnPlacementTimeout ?? DefaultSpawnPlacementTimeout;
     }
 
     public async Task<BasicsExecutionSnapshot> RunAsync(
@@ -2248,7 +2251,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         var awaited = await _runtimeClient.AwaitSpawnPlacementAsync(
                 brainId,
-                SpawnPlacementTimeout,
+                _spawnPlacementTimeout,
                 cancellationToken)
             .ConfigureAwait(false);
         return awaited?.Ack;

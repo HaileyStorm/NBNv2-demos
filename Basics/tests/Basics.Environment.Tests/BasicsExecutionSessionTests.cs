@@ -993,6 +993,46 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_RetriesPlacementVisibilityTimeouts_UsingBoundedWait()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "or",
+            RequirePlacementWaitForVisibility = true,
+            AwaitPlacementDelay = TimeSpan.FromMilliseconds(100)
+        };
+        var session = CreateSession(runtimeClient, spawnPlacementTimeout: TimeSpan.FromMilliseconds(40));
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1
+                    },
+                    new OrTaskPlugin()),
+                new OrTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.NotEqual(BasicsExecutionState.Succeeded, final.State);
+            Assert.True(runtimeClient.SpawnRequestCount >= 3, $"Expected retried placement timeouts, observed {runtimeClient.SpawnRequestCount} spawn request(s).");
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Running
+                            && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("attempt 2/3", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_KeepsAtLeastTwoBrains_WhenReproductionProducesNoChildren()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -1468,11 +1508,13 @@ public sealed class BasicsExecutionSessionTests
     private static BasicsExecutionSession CreateSession(
         FakeBasicsRuntimeClient runtimeClient,
         BasicsTemplatePublishingOptions? publishingOptions = null,
-        TimeSpan? minimumSpawnRequestInterval = null)
+        TimeSpan? minimumSpawnRequestInterval = null,
+        TimeSpan? spawnPlacementTimeout = null)
         => new(
             runtimeClient,
             publishingOptions ?? new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" },
-            minimumSpawnRequestInterval ?? TimeSpan.FromMilliseconds(1));
+            minimumSpawnRequestInterval ?? TimeSpan.FromMilliseconds(1),
+            spawnPlacementTimeout);
 
     private sealed class FakeBasicsRuntimeClient : IBasicsRuntimeClient
     {
@@ -1630,6 +1672,24 @@ public sealed class BasicsExecutionSessionTests
             {
                 if (AwaitPlacementDelay > TimeSpan.Zero)
                 {
+                    if (timeout > TimeSpan.Zero && AwaitPlacementDelay > timeout)
+                    {
+                        await Task.Delay(timeout, cancellationToken);
+                        return new AwaitSpawnPlacementViaIOAck
+                        {
+                            Ack = new SpawnBrainAck
+                            {
+                                BrainId = brainId.ToProtoUuid(),
+                                AcceptedForPlacement = true,
+                                PlacementReady = false,
+                                FailureReasonCode = "spawn_request_canceled",
+                                FailureMessage = "placement visibility timed out"
+                            },
+                            FailureReasonCode = "spawn_request_canceled",
+                            FailureMessage = "placement visibility timed out"
+                        };
+                    }
+
                     await Task.Delay(AwaitPlacementDelay, cancellationToken);
                 }
 
