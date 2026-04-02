@@ -479,6 +479,55 @@ public sealed class BasicsExecutionSessionTests
                 "output_timeout_or_width_mismatch:vector_missing:vectors_seen=0:ready_events_seen=0",
                 final.EvaluationFailureSummary,
                 StringComparison.Ordinal);
+            Assert.True(runtimeClient.SpawnRequestCount > 2, $"Expected vector-missing failures to retry, observed {runtimeClient.SpawnRequestCount} spawn request(s).");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_EventedOutput_DoesNotRetryReadyWindowExhaustedBrains()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            ReadySignalDelayTicks = 16,
+            PreReadyOutputValue = 0f
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.EventedOutput,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1,
+                        TargetAccuracy = 1.1f,
+                        TargetFitness = 1.1f
+                    }) with
+                {
+                    OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                    {
+                        MaxReadyWindowTicks = 2
+                    }
+                },
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Contains("ready_window_exhausted", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.Equal(2, runtimeClient.SpawnRequestCount);
+            Assert.DoesNotContain(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Running
+                            && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("attempt 2/3", StringComparison.Ordinal));
         }
         finally
         {

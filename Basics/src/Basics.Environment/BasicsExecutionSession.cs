@@ -1544,10 +1544,25 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return false;
         }
 
-        return ResolveFailureCategory(evaluation) is "spawn_failed"
-            or "spawn_not_placed"
-            or "output_timeout_or_width_mismatch"
-            or "evaluation_failed";
+        var failureCategory = ResolveFailureCategory(evaluation);
+        return failureCategory is "spawn_failed" or "spawn_not_placed" or "evaluation_failed"
+               || IsRetryableOutputTimeout(evaluation);
+    }
+
+    private static bool IsRetryableOutputTimeout(BasicsTaskEvaluationResult evaluation)
+    {
+        if (!string.Equals(ResolveFailureCategory(evaluation), "output_timeout_or_width_mismatch", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var diagnostic = evaluation.Diagnostics.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        if (string.IsNullOrWhiteSpace(diagnostic))
+        {
+            return false;
+        }
+
+        return !diagnostic.Contains("ready_window_exhausted", StringComparison.Ordinal);
     }
 
     private static bool IsFatalSpawnFailure(BasicsTaskEvaluationResult? evaluation)
