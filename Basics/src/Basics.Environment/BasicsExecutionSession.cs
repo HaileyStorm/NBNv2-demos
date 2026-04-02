@@ -983,6 +983,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var chunkCount = (int)Math.Ceiling(population.Count / (double)maxConcurrent);
         var setupConcurrency = ResolveSetupConcurrency(plan.Capacity.EligibleWorkerCount, maxConcurrent);
         using var setupGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
+        using var spawnRequestGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
         var spawnPacer = new SpawnRequestPacer(
             Math.Max(1, plan.Capacity.EligibleWorkerCount),
             _minimumSpawnRequestInterval);
@@ -1071,6 +1072,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         generation,
                         taskPlugin,
                         member,
+                        spawnRequestGate,
                         outputObservationMode,
                         outputSamplingPolicy,
                         setupGate,
@@ -1173,6 +1175,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int generation,
         IBasicsTaskPlugin taskPlugin,
         PopulationMember member,
+        SemaphoreSlim spawnRequestGate,
         BasicsOutputObservationMode outputObservationMode,
         BasicsOutputSamplingPolicy outputSamplingPolicy,
         SemaphoreSlim setupGate,
@@ -1205,6 +1208,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         generation,
                         taskPlugin,
                         member,
+                        spawnRequestGate,
                         outputObservationMode,
                         outputSamplingPolicy,
                         setupGate,
@@ -1259,6 +1263,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int generation,
         IBasicsTaskPlugin taskPlugin,
         PopulationMember member,
+        SemaphoreSlim spawnRequestGate,
         BasicsOutputObservationMode outputObservationMode,
         BasicsOutputSamplingPolicy outputSamplingPolicy,
         SemaphoreSlim setupGate,
@@ -1271,6 +1276,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         CancellationToken cancellationToken)
     {
         Guid brainId = Guid.Empty;
+        var spawnGateHeld = false;
         var setupSlotHeld = false;
         var subscribedVectorOutputs = false;
         var subscribedSingleOutputs = false;
@@ -1284,34 +1290,56 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         {
             var queueStopwatch = Stopwatch.StartNew();
             await spawnPacer.WaitAsync(cancellationToken).ConfigureAwait(false);
-            await setupGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await spawnRequestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             queueWait = queueStopwatch.Elapsed;
-            setupSlotHeld = true;
+            spawnGateHeld = true;
 
             onAttemptProgress?.Invoke(CreateInFlightBrainProgress(
                 member,
                 batchBrainOrdinal,
-                batchBrainCount,
-                attempt,
-                InFlightBrainPhase.RequestingSpawn));
-            var spawnStopwatch = Stopwatch.StartNew();
-            var spawnAck = await SpawnPlacedBrainAsync(
-                    new SpawnBrain
-                    {
-                        BrainDef = member.Definition.Clone(),
-                        InputWidth = taskPlugin.Contract.InputWidth,
-                        OutputWidth = taskPlugin.Contract.OutputWidth,
-                        StartPaused = true
-                    },
-                    cancellationToken,
-                    phase => onAttemptProgress?.Invoke(CreateInFlightBrainProgress(
-                        member,
-                        batchBrainOrdinal,
                         batchBrainCount,
                         attempt,
-                        phase)))
-                .ConfigureAwait(false);
-            spawnRequest = spawnStopwatch.Elapsed;
+                        InFlightBrainPhase.RequestingSpawn));
+            var spawnStopwatch = Stopwatch.StartNew();
+            SpawnBrainAck? spawnAck;
+            try
+            {
+                spawnAck = await RequestBrainSpawnAsync(
+                        new SpawnBrain
+                        {
+                            BrainDef = member.Definition.Clone(),
+                            InputWidth = taskPlugin.Contract.InputWidth,
+                            OutputWidth = taskPlugin.Contract.OutputWidth,
+                            StartPaused = true
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                spawnRequest = spawnStopwatch.Elapsed;
+                if (spawnGateHeld)
+                {
+                    spawnRequestGate.Release();
+                    spawnGateHeld = false;
+                }
+            }
+
+            if (spawnAck is not null
+                && spawnAck.BrainId.TryToGuid(out brainId)
+                && brainId != Guid.Empty
+                && string.IsNullOrWhiteSpace(spawnAck.FailureReasonCode)
+                && !spawnAck.PlacementReady)
+            {
+                onAttemptProgress?.Invoke(CreateInFlightBrainProgress(
+                    member,
+                    batchBrainOrdinal,
+                    batchBrainCount,
+                    attempt,
+                    InFlightBrainPhase.WaitingForPlacement));
+                spawnAck = await AwaitBrainPlacementAsync(brainId, cancellationToken).ConfigureAwait(false) ?? spawnAck;
+            }
+
             if (spawnAck is null
                 || !spawnAck.BrainId.TryToGuid(out brainId)
                 || brainId == Guid.Empty
@@ -1337,6 +1365,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             _trackedBrains.TryAdd(brainId, 0);
 
             var setupStopwatch = Stopwatch.StartNew();
+            onAttemptProgress?.Invoke(CreateInFlightBrainProgress(
+                member,
+                batchBrainOrdinal,
+                batchBrainCount,
+                attempt,
+                InFlightBrainPhase.WaitingForSetupSlot));
+            await setupGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            setupSlotHeld = true;
+
             onAttemptProgress?.Invoke(CreateInFlightBrainProgress(
                 member,
                 batchBrainOrdinal,
@@ -1466,6 +1503,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
         finally
         {
+            if (spawnGateHeld)
+            {
+                spawnRequestGate.Release();
+            }
+
             if (setupSlotHeld)
             {
                 setupGate.Release();
@@ -1513,7 +1555,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
            && ResolveFailureCategory(evaluation) is "spawn_failed" or "spawn_not_placed";
 
     private static bool ShouldForceProgressPublish(InFlightBrainPhase phase)
-        => phase is InFlightBrainPhase.RequestingSpawn or InFlightBrainPhase.WaitingForPlacement;
+        => phase is InFlightBrainPhase.RequestingSpawn
+            or InFlightBrainPhase.WaitingForPlacement
+            or InFlightBrainPhase.WaitingForSetupSlot;
 
     private static int ResolveSetupConcurrency(int eligibleWorkerCount, int maxConcurrent)
     {
@@ -1664,9 +1708,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static string DescribeInFlightBrainPhase(InFlightBrainPhase phase)
         => phase switch
         {
-            InFlightBrainPhase.WaitingForSpawnSlot => "queued for a spawn slot",
+            InFlightBrainPhase.WaitingForSpawnSlot => "waiting for local spawn gate",
             InFlightBrainPhase.RequestingSpawn => "requesting spawn placement",
             InFlightBrainPhase.WaitingForPlacement => "waiting for placement visibility",
+            InFlightBrainPhase.WaitingForSetupSlot => "waiting for runtime setup slot",
             InFlightBrainPhase.ConfiguringRuntime => "configuring runtime",
             InFlightBrainPhase.EvaluatingSamples => "evaluating samples",
             _ => "working"
@@ -2115,8 +2160,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         CancellationToken cancellationToken,
         Action<InFlightBrainPhase>? onProgress = null)
     {
-        var spawn = await _runtimeClient.SpawnBrainAsync(request, cancellationToken).ConfigureAwait(false);
-        var ack = spawn?.Ack;
+        var ack = await RequestBrainSpawnAsync(request, cancellationToken).ConfigureAwait(false);
         if (ack is null)
         {
             return null;
@@ -2133,12 +2177,27 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         onProgress?.Invoke(InFlightBrainPhase.WaitingForPlacement);
+        return await AwaitBrainPlacementAsync(brainId, cancellationToken).ConfigureAwait(false) ?? ack;
+    }
+
+    private async Task<SpawnBrainAck?> RequestBrainSpawnAsync(
+        SpawnBrain request,
+        CancellationToken cancellationToken)
+    {
+        var spawn = await _runtimeClient.SpawnBrainAsync(request, cancellationToken).ConfigureAwait(false);
+        return spawn?.Ack;
+    }
+
+    private async Task<SpawnBrainAck?> AwaitBrainPlacementAsync(
+        Guid brainId,
+        CancellationToken cancellationToken)
+    {
         var awaited = await _runtimeClient.AwaitSpawnPlacementAsync(
                 brainId,
                 SpawnPlacementTimeout,
                 cancellationToken)
             .ConfigureAwait(false);
-        return awaited?.Ack ?? ack;
+        return awaited?.Ack;
     }
 
     private async Task<List<PopulationMember>> TeardownPopulationBrainsAsync(
@@ -3544,8 +3603,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         WaitingForSpawnSlot = 0,
         RequestingSpawn = 1,
         WaitingForPlacement = 2,
-        ConfiguringRuntime = 3,
-        EvaluatingSamples = 4
+        WaitingForSetupSlot = 3,
+        ConfiguringRuntime = 4,
+        EvaluatingSamples = 5
     }
 
     private readonly record struct InFlightBrainProgress(

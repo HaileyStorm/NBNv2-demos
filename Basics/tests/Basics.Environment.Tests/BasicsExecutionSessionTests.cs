@@ -864,6 +864,56 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_DoesNotSerializePlacementWaits_BehindSetupConcurrency()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "or",
+            RequirePlacementWaitForVisibility = true,
+            AwaitPlacementDelay = TimeSpan.FromMilliseconds(50)
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var plan = CreatePlan(
+                BasicsOutputObservationMode.VectorPotential,
+                new BasicsExecutionStopCriteria
+                {
+                    MaximumGenerations = 1
+                },
+                new OrTaskPlugin()) with
+            {
+                Capacity = new BasicsCapacityRecommendation(
+                    Source: BasicsCapacitySource.RuntimePlacementInventory,
+                    EligibleWorkerCount: 1,
+                    RecommendedInitialPopulationCount: 4,
+                    RecommendedReproductionRunCount: 1,
+                    RecommendedMaxConcurrentBrains: 4,
+                    CapacityScore: 1f,
+                    EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                    Summary: "test")
+            };
+
+            var final = await session.RunAsync(
+                plan,
+                new OrTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.True(runtimeClient.AwaitSpawnPlacementCallCount >= 4);
+            Assert.True(
+                runtimeClient.MaxObservedConcurrentPlacementWaits >= 2,
+                $"Expected overlapping placement waits, observed {runtimeClient.MaxObservedConcurrentPlacementWaits}.");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_KeepsAtLeastTwoBrains_WhenReproductionProducesNoChildren()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -1388,9 +1438,11 @@ public sealed class BasicsExecutionSessionTests
         public bool SuppressOutputVectors { get; init; }
         public bool SuppressReadyOutputEvents { get; init; }
         public bool RequirePlacementWaitForVisibility { get; init; }
+        public TimeSpan AwaitPlacementDelay { get; init; }
         public bool ReuseSingleChildArtifactOnReproduce { get; init; }
         public OutputVectorSource InitialOutputVectorSource { get; init; } = OutputVectorSource.Potential;
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
+        public int MaxObservedConcurrentPlacementWaits => _maxObservedConcurrentPlacementWaits;
         public int AwaitSpawnPlacementCallCount { get; private set; }
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
         public List<(Guid BrainId, bool Enabled)> SetCostEnergyEnabledRequests { get; } = new();
@@ -1403,6 +1455,8 @@ public sealed class BasicsExecutionSessionTests
         public ConcurrentQueue<DateTimeOffset> SpawnRequestStartedAtUtc { get; } = new();
         private int _activeSpawnRequests;
         private int _maxObservedConcurrentSpawnRequests;
+        private int _activePlacementWaits;
+        private int _maxObservedConcurrentPlacementWaits;
         private readonly Dictionary<Guid, (float Value, float Ready)> _lastVectorOutputByBrain = new();
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
@@ -1484,31 +1538,45 @@ public sealed class BasicsExecutionSessionTests
             }
         }
 
-        public Task<AwaitSpawnPlacementViaIOAck?> AwaitSpawnPlacementAsync(
+        public async Task<AwaitSpawnPlacementViaIOAck?> AwaitSpawnPlacementAsync(
             Guid brainId,
             TimeSpan timeout,
             CancellationToken cancellationToken = default)
         {
             AwaitSpawnPlacementCallCount++;
-            if (_pendingBrainDefinitions.Remove(brainId, out var definition))
+            var active = Interlocked.Increment(ref _activePlacementWaits);
+            UpdateMaxObservedConcurrentPlacementWaits(active);
+            try
             {
-                ActivateBrain(brainId, definition);
-            }
-
-            var placed = _brainDefinitions.ContainsKey(brainId);
-            return Task.FromResult<AwaitSpawnPlacementViaIOAck?>(new AwaitSpawnPlacementViaIOAck
-            {
-                Ack = new SpawnBrainAck
+                if (AwaitPlacementDelay > TimeSpan.Zero)
                 {
-                    BrainId = brainId.ToProtoUuid(),
-                    AcceptedForPlacement = placed,
-                    PlacementReady = placed,
+                    await Task.Delay(AwaitPlacementDelay, cancellationToken);
+                }
+
+                if (_pendingBrainDefinitions.Remove(brainId, out var definition))
+                {
+                    ActivateBrain(brainId, definition);
+                }
+
+                var placed = _brainDefinitions.ContainsKey(brainId);
+                return new AwaitSpawnPlacementViaIOAck
+                {
+                    Ack = new SpawnBrainAck
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        AcceptedForPlacement = placed,
+                        PlacementReady = placed,
+                        FailureReasonCode = placed ? string.Empty : "spawn_unknown_brain",
+                        FailureMessage = placed ? string.Empty : "Pending spawn was not found."
+                    },
                     FailureReasonCode = placed ? string.Empty : "spawn_unknown_brain",
                     FailureMessage = placed ? string.Empty : "Pending spawn was not found."
-                },
-                FailureReasonCode = placed ? string.Empty : "spawn_unknown_brain",
-                FailureMessage = placed ? string.Empty : "Pending spawn was not found."
-            });
+                };
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activePlacementWaits);
+            }
         }
 
         public Task<BrainDefinitionReady?> ExportBrainDefinitionAsync(
@@ -1974,6 +2042,23 @@ public sealed class BasicsExecutionSessionTests
                 }
 
                 if (Interlocked.CompareExchange(ref _maxObservedConcurrentSpawnRequests, active, current) == current)
+                {
+                    return;
+                }
+            }
+        }
+
+        private void UpdateMaxObservedConcurrentPlacementWaits(int active)
+        {
+            while (true)
+            {
+                var current = MaxObservedConcurrentPlacementWaits;
+                if (active <= current)
+                {
+                    return;
+                }
+
+                if (Interlocked.CompareExchange(ref _maxObservedConcurrentPlacementWaits, active, current) == current)
                 {
                     return;
                 }

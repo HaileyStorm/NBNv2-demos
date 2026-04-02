@@ -93,10 +93,10 @@ public sealed class BasicsLiveTrialHarnessTests
         var decision = Assert.Single(report.Trials).TuningDecision;
         Assert.NotNull(decision);
         Assert.True(decision!.Applied);
-        Assert.Contains("output_mode=continuous_potential", decision.Changes);
+        Assert.DoesNotContain("output_mode=continuous_potential", decision.Changes);
         Assert.Contains("initial_population=192", decision.Changes);
         Assert.Contains("max_concurrent=96", decision.Changes);
-        Assert.Equal(BasicsOutputObservationMode.VectorPotential, report.FinalConfiguration.OutputObservationMode);
+        Assert.Equal(BasicsOutputObservationMode.EventedOutput, report.FinalConfiguration.OutputObservationMode);
         Assert.Equal(192, report.FinalConfiguration.Sizing.InitialPopulationCount);
         Assert.Equal(96, report.FinalConfiguration.Sizing.MaxConcurrentBrains);
     }

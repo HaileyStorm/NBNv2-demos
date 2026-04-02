@@ -752,15 +752,7 @@ public sealed class BasicsLiveTrialHarness
 
             reason = preservedEventedOutput
                 ? "Observed EventedOutput readiness pressure or timeout; widening the ready window and reducing pressure before leaving evented mode."
-                : "Observed live-runtime failures or timeouts; reducing pressure and preferring dense vector output.";
-
-            if (!preservedEventedOutput
-                && tuning.PreferVectorPotentialOnFailures
-                && current.OutputObservationMode == BasicsOutputObservationMode.EventedOutput)
-            {
-                next = next with { OutputObservationMode = BasicsOutputObservationMode.VectorPotential };
-                changes.Add("output_mode=continuous_potential");
-            }
+                : "Observed live-runtime failures or timeouts; reducing pressure while preserving the selected output mode.";
 
             if (tuning.ReduceSizingOnFailures)
             {
