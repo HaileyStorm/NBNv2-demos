@@ -154,6 +154,7 @@ public sealed record BasicsLiveTrialConfigurationSnapshot(
     string TemplateId,
     string TemplateDescription,
     BasicsOutputObservationMode OutputObservationMode,
+    int MaxReadyWindowTicks,
     BasicsLiveTrialVariationBandSnapshot VariationBand,
     BasicsLiveTrialSeedShapeSnapshot SeedShape,
     BasicsLiveTrialSizingSnapshot Sizing,
@@ -590,6 +591,7 @@ public sealed class BasicsLiveTrialHarness
             TemplateId: options.SeedTemplate.TemplateId,
             TemplateDescription: options.SeedTemplate.Description,
             OutputObservationMode: options.OutputObservationMode,
+            MaxReadyWindowTicks: options.OutputSamplingPolicy.MaxReadyWindowTicks,
             VariationBand: new BasicsLiveTrialVariationBandSnapshot(
                 options.SeedTemplate.InitialVariationBand.MaxInternalNeuronDelta,
                 options.SeedTemplate.InitialVariationBand.MaxAxonDelta,
@@ -647,6 +649,10 @@ public sealed class BasicsLiveTrialHarness
         {
             ClientName = snapshot.ClientName,
             OutputObservationMode = snapshot.OutputObservationMode,
+            OutputSamplingPolicy = current.OutputSamplingPolicy with
+            {
+                MaxReadyWindowTicks = snapshot.MaxReadyWindowTicks
+            },
             SeedTemplate = current.SeedTemplate with
             {
                 TemplateId = snapshot.TemplateId,

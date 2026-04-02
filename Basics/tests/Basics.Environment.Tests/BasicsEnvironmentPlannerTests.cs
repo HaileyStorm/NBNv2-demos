@@ -90,21 +90,21 @@ public sealed class BasicsEnvironmentPlannerTests
     }
 
     [Fact]
-    public async Task ValidateBrainGeometryAsync_RejectsNonTwoByOneBrains()
+    public async Task ValidateBrainGeometryAsync_RejectsLegacyTwoByOneBrains()
     {
         var runtimeClient = new FakeBasicsRuntimeClient(
             brainInfo: new BrainInfo
             {
                 BrainId = Guid.NewGuid().ToProtoUuid(),
                 InputWidth = 2,
-                OutputWidth = 2
+                OutputWidth = 1
             });
         var planner = new BasicsEnvironmentPlanner(runtimeClient);
 
         var validation = await planner.ValidateBrainGeometryAsync(Guid.NewGuid());
 
         Assert.False(validation.IsValid);
-        Assert.Contains("expected_2x1_got_2x2", validation.FailureReason, StringComparison.Ordinal);
+        Assert.Contains("expected_2x2_got_2x1", validation.FailureReason, StringComparison.Ordinal);
     }
 
     private sealed class FakeBasicsRuntimeClient : IBasicsRuntimeClient
@@ -181,6 +181,7 @@ public sealed class BasicsEnvironmentPlannerTests
             Guid brainId,
             ulong afterTickExclusive,
             TimeSpan timeout,
+            uint? outputIndex = null,
             CancellationToken cancellationToken = default)
             => Task.FromResult<BasicsRuntimeOutputEvent?>(null);
 

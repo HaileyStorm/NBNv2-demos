@@ -2,6 +2,7 @@ namespace Nbn.Demos.Basics.Environment;
 
 public sealed record BasicsTaskExecutionProfile(
     BasicsOutputObservationMode OutputObservationMode,
+    BasicsOutputSamplingPolicy OutputSamplingPolicy,
     BasicsDiversityPreset DiversityPreset,
     BasicsSeedVariationBand VariationBand,
     BasicsSeedShapeConstraints SeedShape,
@@ -14,6 +15,7 @@ public static class BasicsTaskExecutionProfiles
 {
     private static readonly BasicsTaskExecutionProfile DefaultProfile = new(
         OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
+        OutputSamplingPolicy: new BasicsOutputSamplingPolicy(),
         DiversityPreset: BasicsDiversityPreset.Medium,
         VariationBand: new BasicsSeedVariationBand
         {
@@ -51,6 +53,10 @@ public static class BasicsTaskExecutionProfiles
 
     private static readonly BasicsTaskExecutionProfile ConservativeBooleanProfile = new(
         OutputObservationMode: BasicsOutputObservationMode.EventedOutput,
+        OutputSamplingPolicy: new BasicsOutputSamplingPolicy
+        {
+            MaxReadyWindowTicks = 4
+        },
         DiversityPreset: BasicsDiversityPreset.Low,
         VariationBand: new BasicsSeedVariationBand
         {
@@ -94,6 +100,10 @@ public static class BasicsTaskExecutionProfiles
     private static readonly BasicsTaskExecutionProfile RicherExplorationProfile = DefaultProfile with
     {
         OutputObservationMode = BasicsOutputObservationMode.VectorPotential,
+        OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+        {
+            MaxReadyWindowTicks = 4
+        },
         DiversityPreset = BasicsDiversityPreset.High,
         VariationBand = new BasicsSeedVariationBand
         {
@@ -128,6 +138,10 @@ public static class BasicsTaskExecutionProfiles
     private static readonly BasicsTaskExecutionProfile MultiplicationProfile = RicherExplorationProfile with
     {
         OutputObservationMode = BasicsOutputObservationMode.EventedOutput,
+        OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+        {
+            MaxReadyWindowTicks = 8
+        },
         VariationBand = RicherExplorationProfile.VariationBand with
         {
             MaxAxonDelta = 14

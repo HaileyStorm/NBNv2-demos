@@ -513,7 +513,12 @@ public sealed class BasicsLiveTrialHarnessTests
         public Task<BasicsRuntimeOutputVector?> WaitForOutputVectorAsync(Guid brainId, ulong afterTickExclusive, TimeSpan timeout, CancellationToken cancellationToken = default)
             => Task.FromResult<BasicsRuntimeOutputVector?>(null);
 
-        public Task<BasicsRuntimeOutputEvent?> WaitForOutputEventAsync(Guid brainId, ulong afterTickExclusive, TimeSpan timeout, CancellationToken cancellationToken = default)
+        public Task<BasicsRuntimeOutputEvent?> WaitForOutputEventAsync(
+            Guid brainId,
+            ulong afterTickExclusive,
+            TimeSpan timeout,
+            uint? outputIndex = null,
+            CancellationToken cancellationToken = default)
             => Task.FromResult<BasicsRuntimeOutputEvent?>(null);
 
         public Task<IoCommandAck?> PauseBrainAsync(

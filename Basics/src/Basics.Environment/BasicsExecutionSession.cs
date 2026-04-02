@@ -15,12 +15,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 {
     private static readonly TimeSpan VectorObservationTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EventedObservationTimeout = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan EvaluationRetryDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan SpawnPlacementTimeout = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.Zero;
-    private const int MaxObservationAttempts = 3;
+    private const uint ValueOutputIndex = 0;
+    private const uint ReadyOutputIndex = 1;
     private const int MaxMemberEvaluationAttempts = 3;
     private const int MinimumPopulationSize = 2;
 
@@ -206,6 +206,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         generation,
                         population,
                         plan.OutputObservationMode,
+                        plan.OutputSamplingPolicy,
                         speciationEpochId,
                         effectiveTemplateDefinition,
                         seedShape,
@@ -957,6 +958,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int generation,
         IReadOnlyList<PopulationMember> population,
         BasicsOutputObservationMode outputObservationMode,
+        BasicsOutputSamplingPolicy outputSamplingPolicy,
         ulong? speciationEpochId,
         ArtifactRef? effectiveTemplateDefinition,
         BasicsResolvedSeedShape? seedShape,
@@ -1068,6 +1070,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         taskPlugin,
                         member,
                         outputObservationMode,
+                        outputSamplingPolicy,
                         setupGate,
                         spawnPacer,
                         batchBrainOrdinal: memberIndex + 1,
@@ -1169,6 +1172,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IBasicsTaskPlugin taskPlugin,
         PopulationMember member,
         BasicsOutputObservationMode outputObservationMode,
+        BasicsOutputSamplingPolicy outputSamplingPolicy,
         SemaphoreSlim setupGate,
         SpawnRequestPacer spawnPacer,
         int batchBrainOrdinal,
@@ -1200,6 +1204,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         taskPlugin,
                         member,
                         outputObservationMode,
+                        outputSamplingPolicy,
                         setupGate,
                         spawnPacer,
                         attempt,
@@ -1232,8 +1237,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 {
                     await TeardownBrainAsync(result.Member.ActiveBrainId, CancellationToken.None).ConfigureAwait(false);
                 }
-
-                await Task.Delay(EvaluationRetryDelay, cancellationToken).ConfigureAwait(false);
             }
 
             return CreateMemberEvaluationResult(
@@ -1255,6 +1258,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IBasicsTaskPlugin taskPlugin,
         PopulationMember member,
         BasicsOutputObservationMode outputObservationMode,
+        BasicsOutputSamplingPolicy outputSamplingPolicy,
         SemaphoreSlim setupGate,
         SpawnRequestPacer spawnPacer,
         int attempt,
@@ -1266,7 +1270,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         Guid brainId = Guid.Empty;
         var setupSlotHeld = false;
-        var subscribed = false;
+        var subscribedVectorOutputs = false;
+        var subscribedSingleOutputs = false;
         var totalStopwatch = Stopwatch.StartNew();
         var queueWait = TimeSpan.Zero;
         var spawnRequest = TimeSpan.Zero;
@@ -1353,17 +1358,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             await ConfigureBrainEvaluationRuntimeStateAsync(brainId, cancellationToken).ConfigureAwait(false);
             await ConfigureBrainOutputObservationModeAsync(brainId, outputObservationMode, brainInfo, cancellationToken).ConfigureAwait(false);
 
-            if (outputObservationMode.UsesVectorSubscription())
-            {
-                await _runtimeClient.SubscribeOutputsVectorAsync(brainId, cancellationToken).ConfigureAwait(false);
-                _runtimeClient.ResetOutputBuffer(brainId);
-            }
-            else
+            await _runtimeClient.SubscribeOutputsVectorAsync(brainId, cancellationToken).ConfigureAwait(false);
+            _runtimeClient.ResetOutputBuffer(brainId);
+            subscribedVectorOutputs = true;
+
+            if (outputObservationMode == BasicsOutputObservationMode.EventedOutput)
             {
                 await _runtimeClient.SubscribeOutputsAsync(brainId, cancellationToken).ConfigureAwait(false);
                 _runtimeClient.ResetOutputEventBuffer(brainId);
+                subscribedSingleOutputs = true;
             }
-            subscribed = true;
             setup = setupStopwatch.Elapsed;
 
             setupGate.Release();
@@ -1383,32 +1387,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 batchBrainCount,
                 attempt,
                 InFlightBrainPhase.EvaluatingSamples));
-            if (outputObservationMode.UsesVectorSubscription())
-            {
-                var primeVector = ResolvePrimeInputVector(samples);
-                await _runtimeClient.SendInputVectorAsync(brainId, primeVector, cancellationToken).ConfigureAwait(false);
-                var baseline = await _runtimeClient.WaitForOutputVectorAsync(
-                        brainId,
-                        afterTickExclusive: 0,
-                        timeout: VectorObservationTimeout,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-                if (baseline is not null)
-                {
-                    lastTick = baseline.TickId;
-                }
-            }
 
             foreach (var sample in samples)
             {
-                var separatorVector = ResolveSeparatorInputVector(sample, samples);
                 var sampleObservation = await ObserveSampleAsync(
                         brainId,
                         sample,
                         lastTick,
                         outputObservationMode,
-                        taskPlugin.Contract.OutputWidth,
-                        separatorVector,
+                        outputSamplingPolicy,
                         cancellationToken)
                     .ConfigureAwait(false);
                 if (sampleObservation is null)
@@ -1479,17 +1466,18 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 setupGate.Release();
             }
 
-            if (brainId != Guid.Empty && subscribed)
+            if (brainId != Guid.Empty)
             {
                 try
                 {
-                    if (outputObservationMode.UsesVectorSubscription())
-                    {
-                        await _runtimeClient.UnsubscribeOutputsVectorAsync(brainId, CancellationToken.None).ConfigureAwait(false);
-                    }
-                    else
+                    if (subscribedSingleOutputs)
                     {
                         await _runtimeClient.UnsubscribeOutputsAsync(brainId, CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    if (subscribedVectorOutputs)
+                    {
+                        await _runtimeClient.UnsubscribeOutputsVectorAsync(brainId, CancellationToken.None).ConfigureAwait(false);
                     }
                 }
                 catch
@@ -1776,72 +1764,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             ? $"{seconds:0.0}s"
             : $"{seconds:0.00}s";
 
-    private static IReadOnlyList<float> ResolvePrimeInputVector(IReadOnlyList<BasicsTaskSample> samples)
-    {
-        if (samples.Count == 0)
-        {
-            return new[] { 0f, 0f };
-        }
-
-        var first = samples[0];
-        foreach (var candidate in samples)
-        {
-            if (candidate.ExpectedOutput != first.ExpectedOutput
-                && (candidate.InputA != first.InputA || candidate.InputB != first.InputB))
-            {
-                return new[] { candidate.InputA, candidate.InputB };
-            }
-        }
-
-        foreach (var candidate in samples)
-        {
-            if (candidate.InputA != first.InputA || candidate.InputB != first.InputB)
-            {
-                return new[] { candidate.InputA, candidate.InputB };
-            }
-        }
-
-        return new[]
-        {
-            first.InputA >= 0.5f ? 0f : 1f,
-            first.InputB >= 0.5f ? 0f : 1f
-        };
-    }
-
-    private static IReadOnlyList<float>? ResolveSeparatorInputVector(
-        BasicsTaskSample sample,
-        IReadOnlyList<BasicsTaskSample> samples)
-    {
-        foreach (var candidate in samples)
-        {
-            if (candidate.ExpectedOutput != sample.ExpectedOutput
-                && (candidate.InputA != sample.InputA || candidate.InputB != sample.InputB))
-            {
-                return new[] { candidate.InputA, candidate.InputB };
-            }
-        }
-
-        foreach (var candidate in samples)
-        {
-            if (candidate.InputA != sample.InputA || candidate.InputB != sample.InputB)
-            {
-                return new[] { candidate.InputA, candidate.InputB };
-            }
-        }
-
-        return null;
-    }
-
     private async Task<BasicsTaskObservation?> ObserveSampleAsync(
         Guid brainId,
         BasicsTaskSample sample,
         ulong lastTick,
         BasicsOutputObservationMode outputObservationMode,
-        uint expectedOutputWidth,
-        IReadOnlyList<float>? separatorVector,
+        BasicsOutputSamplingPolicy outputSamplingPolicy,
         CancellationToken cancellationToken)
     {
-        var tickCursor = lastTick;
         var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
                 brainId,
                 resetBuffer: true,
@@ -1850,68 +1780,161 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             .ConfigureAwait(false);
         ValidateIoCommandAck(resetAck, brainId, "reset_brain_runtime_state");
 
-        for (var attempt = 1; attempt <= MaxObservationAttempts; attempt++)
-        {
-            await _runtimeClient.SendInputVectorAsync(
+        _runtimeClient.ResetOutputBuffer(brainId);
+        _runtimeClient.ResetOutputEventBuffer(brainId);
+
+        await _runtimeClient.SendInputVectorAsync(
+                brainId,
+                new[] { sample.InputA, sample.InputB },
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return outputObservationMode == BasicsOutputObservationMode.EventedOutput
+            ? await WaitForReadyEventObservationAsync(
                     brainId,
-                    new[] { sample.InputA, sample.InputB },
+                    lastTick,
+                    outputSamplingPolicy,
+                    cancellationToken)
+                .ConfigureAwait(false)
+            : await WaitForReadyVectorObservationAsync(
+                    brainId,
+                    lastTick,
+                    outputObservationMode,
+                    outputSamplingPolicy,
                     cancellationToken)
                 .ConfigureAwait(false);
+    }
 
-            if (outputObservationMode.UsesVectorSubscription())
+    private async Task<BasicsTaskObservation?> WaitForReadyVectorObservationAsync(
+        Guid brainId,
+        ulong afterTickExclusive,
+        BasicsOutputObservationMode outputObservationMode,
+        BasicsOutputSamplingPolicy outputSamplingPolicy,
+        CancellationToken cancellationToken)
+    {
+        var tickCursor = afterTickExclusive;
+        for (var observedTicks = 0; observedTicks < outputSamplingPolicy.MaxReadyWindowTicks; observedTicks++)
+        {
+            var output = await _runtimeClient.WaitForOutputVectorAsync(
+                    brainId,
+                    tickCursor,
+                    ResolveObservationTimeout(outputObservationMode),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!IsValidObservationVector(output))
             {
-                var output = await _runtimeClient.WaitForOutputVectorAsync(
-                        brainId,
-                        tickCursor,
-                        ResolveObservationTimeout(outputObservationMode),
-                        cancellationToken)
-                    .ConfigureAwait(false);
-                if (output is not null && output.Values.Count >= expectedOutputWidth)
-                {
-                    return new BasicsTaskObservation(output.TickId, output.Values[0]);
-                }
-            }
-            else
-            {
-                var output = await _runtimeClient.WaitForOutputEventAsync(
-                        brainId,
-                        tickCursor,
-                        ResolveObservationTimeout(outputObservationMode),
-                        cancellationToken)
-                    .ConfigureAwait(false);
-                if (output is not null)
-                {
-                    return new BasicsTaskObservation(Math.Max(tickCursor + 1, output.TickId), output.Value);
-                }
-
-                return new BasicsTaskObservation(tickCursor + 1, 0f);
+                return null;
             }
 
-            if (attempt < MaxObservationAttempts)
+            tickCursor = output!.TickId;
+            if (output.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
             {
-                if (outputObservationMode.UsesVectorSubscription()
-                    && separatorVector is not null
-                    && separatorVector.Count >= BasicsIoGeometry.InputWidth)
-                {
-                    await _runtimeClient.SendInputVectorAsync(brainId, separatorVector, cancellationToken).ConfigureAwait(false);
-                    var separatorOutput = await _runtimeClient.WaitForOutputVectorAsync(
-                            brainId,
-                            tickCursor,
-                            ResolveObservationTimeout(outputObservationMode),
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                    if (separatorOutput is not null)
-                    {
-                        tickCursor = separatorOutput.TickId;
-                    }
-                }
-
-                await Task.Delay(EvaluationRetryDelay, cancellationToken).ConfigureAwait(false);
+                return CreateObservation(output);
             }
         }
 
         return null;
     }
+
+    private async Task<BasicsTaskObservation?> WaitForReadyEventObservationAsync(
+        Guid brainId,
+        ulong afterTickExclusive,
+        BasicsOutputSamplingPolicy outputSamplingPolicy,
+        CancellationToken cancellationToken)
+    {
+        var vectorCursor = afterTickExclusive;
+        var readyEventCursor = afterTickExclusive;
+        var observedTicks = 0;
+        var vectorsByTick = new Dictionary<ulong, BasicsRuntimeOutputVector>();
+        var readyTicks = new HashSet<ulong>();
+        using var observationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var observationToken = observationCts.Token;
+        var timeout = ResolveObservationTimeout(BasicsOutputObservationMode.EventedOutput);
+        var nextVectorTask = _runtimeClient.WaitForOutputVectorAsync(brainId, vectorCursor, timeout, observationToken);
+        var nextReadyEventTask = _runtimeClient.WaitForOutputEventAsync(
+            brainId,
+            readyEventCursor,
+            timeout,
+            ReadyOutputIndex,
+            observationToken);
+
+        try
+        {
+            while (observedTicks < outputSamplingPolicy.MaxReadyWindowTicks)
+            {
+                if (nextReadyEventTask.IsCompleted)
+                {
+                    var readyEvent = await nextReadyEventTask.ConfigureAwait(false);
+                    if (readyEvent is not null)
+                    {
+                        readyEventCursor = Math.Max(readyEventCursor, readyEvent.TickId);
+                        if (vectorsByTick.TryGetValue(readyEvent.TickId, out var readyVector))
+                        {
+                            return CreateObservation(readyVector);
+                        }
+
+                        readyTicks.Add(readyEvent.TickId);
+                    }
+
+                    nextReadyEventTask = _runtimeClient.WaitForOutputEventAsync(
+                        brainId,
+                        readyEventCursor,
+                        timeout,
+                        ReadyOutputIndex,
+                        observationToken);
+
+                    if (!nextVectorTask.IsCompleted)
+                    {
+                        continue;
+                    }
+                }
+
+                if (!nextVectorTask.IsCompleted)
+                {
+                    var completedTask = await Task.WhenAny(nextVectorTask, nextReadyEventTask).ConfigureAwait(false);
+                    if (completedTask == nextReadyEventTask)
+                    {
+                        continue;
+                    }
+                }
+
+                var output = await nextVectorTask.ConfigureAwait(false);
+                if (!IsValidObservationVector(output))
+                {
+                    return null;
+                }
+
+                vectorsByTick[output!.TickId] = output;
+                vectorCursor = output.TickId;
+                observedTicks++;
+                if (readyTicks.Contains(output.TickId))
+                {
+                    return CreateObservation(output);
+                }
+
+                if (observedTicks < outputSamplingPolicy.MaxReadyWindowTicks)
+                {
+                    nextVectorTask = _runtimeClient.WaitForOutputVectorAsync(
+                        brainId,
+                        vectorCursor,
+                        timeout,
+                        observationToken);
+                }
+            }
+
+            return null;
+        }
+        finally
+        {
+            observationCts.Cancel();
+        }
+    }
+
+    private static bool IsValidObservationVector(BasicsRuntimeOutputVector? output)
+        => output is not null && output.Values.Count >= (int)BasicsIoGeometry.OutputWidth;
+
+    private static BasicsTaskObservation CreateObservation(BasicsRuntimeOutputVector output)
+        => new(output.TickId, output.Values[(int)ValueOutputIndex]);
 
     private static TimeSpan ResolveObservationTimeout(BasicsOutputObservationMode mode)
         => mode == BasicsOutputObservationMode.EventedOutput

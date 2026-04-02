@@ -74,6 +74,7 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
         Guid brainId,
         ulong afterTickExclusive,
         TimeSpan timeout,
+        uint? outputIndex = null,
         CancellationToken cancellationToken = default);
 
     Task<BrainTerminated?> WaitForBrainTerminatedAsync(
@@ -587,6 +588,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         Guid brainId,
         ulong afterTickExclusive,
         TimeSpan timeout,
+        uint? outputIndex = null,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -610,7 +612,8 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             while (true)
             {
                 var output = await channel.Reader.ReadAsync(effectiveToken).ConfigureAwait(false);
-                if (output.TickId > afterTickExclusive)
+                if (output.TickId > afterTickExclusive
+                    && (!outputIndex.HasValue || output.OutputIndex == outputIndex.Value))
                 {
                     return output;
                 }

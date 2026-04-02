@@ -100,6 +100,10 @@ internal sealed record HarnessFileConfig
                 SelectedTask = selectedTask,
                 SeedTemplate = seedTemplate,
                 OutputObservationMode = ParseOutputObservationMode(Environment.OutputObservationMode),
+                OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                {
+                    MaxReadyWindowTicks = Environment.MaxReadyWindowTicks
+                },
                 SizingOverrides = new BasicsSizingOverrides
                 {
                     InitialPopulationCount = Environment.Sizing.InitialPopulationCount,
@@ -175,6 +179,7 @@ internal sealed record HarnessEnvironmentConfig
     public string ClientName { get; init; } = "nbn.basics.harness";
     public string TaskId { get; init; } = "and";
     public string OutputObservationMode { get; init; } = "continuous-potential";
+    public int MaxReadyWindowTicks { get; init; } = 4;
     public string StrengthSource { get; init; } = "base-only";
     public HarnessTemplateConfig Template { get; init; } = new();
     public HarnessSizingConfig Sizing { get; init; } = new();
@@ -185,7 +190,7 @@ internal sealed record HarnessTemplateConfig
 {
     public string TemplateId { get; init; } = "basics-template-a";
     public string Description { get; init; } =
-        "Seed all initial brains from one shared 2->1 template, allowing only bounded minor divergence so reproduction and bootstrap speciation remain coherent.";
+        "Seed all initial brains from one shared 2->2 template, allowing only bounded minor divergence so reproduction and bootstrap speciation remain coherent.";
     public HarnessVariationBandConfig VariationBand { get; init; } = new();
     public HarnessSeedShapeConfig SeedShape { get; init; } = new();
 }

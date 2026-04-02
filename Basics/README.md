@@ -1,6 +1,6 @@
 # Basics
 
-`Basics` is the first real External World demo in this repo. It defines the shared environment contract that later task plugins and the future UI will build on for the first `2 -> 1` NBN curriculum.
+`Basics` is the first real External World demo in this repo. It defines the shared environment contract that later task plugins and the future UI will build on for the first `2 -> 2` NBN curriculum.
 
 ## Current Scope
 
@@ -16,7 +16,9 @@
 
 ## Design Direction
 
-- Brain geometry is fixed at `2` inputs and `1` output.
+- Brain geometry is fixed at `2` inputs and `2` outputs.
+- `output[0]` carries the task value and `output[1]` carries the shared ready bit.
+- Per-sample scoring only accepts the first tick whose ready bit is asserted inside the configured ready-window; if no ready tick arrives in time, the sample fails evaluation.
 - Seed populations are organized around a template family so reproduction/speciation starts from coherent parents instead of arbitrary unrelated brains.
 - Reproduction defaults keep `protect_io_region_neuron_counts=true`.
 - Parent selection and child-run allocation are part of the shared environment contract:
@@ -28,18 +30,20 @@
 
 ## Implemented Task Contracts
 
-All implemented Basics tasks use the same `2 -> 1` geometry, require tick-aligned evaluation, validate finite sample and observation values, and reject any dataset that drifts from the plugin's canonical deterministic set before awarding fitness.
+All implemented Basics tasks use the same `2 -> 2` geometry, require tick-aligned evaluation, validate finite sample and observation values, and reject any dataset that drifts from the plugin's canonical deterministic set before awarding fitness.
 
 ### Boolean truth-table tasks
 
 - `AND`, `OR`, and `XOR` use canonical boolean inputs `a,b in {0,1}` and normalized boolean output `y in {0,1}`.
 - Each plugin evaluates the full deterministic four-row truth table in fixed order: `00`, `01`, `10`, `11`.
+- The task value is still read from `output[0]`; `output[1]` is only the readiness signal.
 - Boolean scoring exposes shared keys `task_accuracy`, `mean_absolute_error`, `mean_squared_error`, `target_proximity_fitness`, and `dataset_coverage`, plus boolean-specific keys `classification_accuracy`, `negative_mean_output`, `positive_mean_gap`, and `truth_table_coverage`.
 
 ### GT (`a > b`)
 
 - `GT` uses bounded scalar inputs `a,b in {0.0, 0.5, 1.0}` and normalized boolean output `y in {0,1}` where `1` means `a > b` and equality scores `0`.
 - The deterministic comparison dataset is the full `3 x 3` grid over those bounded scalar inputs, including ties.
+- The task value is still read from `output[0]`; `output[1]` is only the readiness signal.
 - Scoring uses the same shared boolean breakdown contract as the truth-table tasks, with `comparison_set_coverage` as the task-specific coverage alias.
 
 ### Multiplication
@@ -48,6 +52,7 @@ All implemented Basics tasks use the same `2 -> 1` geometry, require tick-aligne
 - The deterministic evaluation set is the full `5 x 5` grid over that domain.
 - The expected output is the normalized product `a * b`. Because the input domain is already bounded to `[0,1]`, no extra remapping is applied.
 - Accuracy is tolerance-based for this task: a sample counts as correct when the observed output is within `+/-0.05` of the canonical product target.
+- The task value is still read from `output[0]`; `output[1]` is only the readiness signal.
 - Shared breakdown keys remain `task_accuracy`, `mean_absolute_error`, `mean_squared_error`, `target_proximity_fitness`, and `dataset_coverage`; task-specific regression keys are `tolerance_accuracy`, `zero_product_mean_output`, `unit_product_gap`, `midrange_mean_absolute_error`, and `evaluation_set_coverage`.
 
 ## Project Layout

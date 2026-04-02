@@ -25,7 +25,7 @@
                                    FontSize="28"
                                    FontWeight="SemiBold"
                                    Foreground="#F7F2E7" />
-                        <TextBlock Text="Shared configuration and metrics UI for the template-seeded 2→1 Basics environment."
+                        <TextBlock Text="Shared configuration and metrics UI for the template-seeded 2→2 Basics environment."
                                    Foreground="#D5C9B5"
                                    TextWrapping="Wrap" />
                     </StackPanel>
@@ -199,7 +199,7 @@
                                    FontWeight="SemiBold"
                                    Foreground="#182436" />
                         <Grid ColumnDefinitions="Auto,*"
-                              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Task" VerticalAlignment="Center" />
@@ -230,17 +230,21 @@
                                 </ComboBox.ItemTemplate>
                             </ComboBox>
 
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Template ID" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TemplateId}" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Ready window ticks" VerticalAlignment="Center"
+                                       ToolTip.Tip="Maximum number of post-input ticks to wait for the shared ready bit before a sample is treated as not ready." />
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxReadyWindowTicksText}" />
 
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Description" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="3" Grid.Column="1"
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Template ID" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding TemplateId}" />
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Description" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="4" Grid.Column="1"
                                      Text="{Binding TemplateDescription}"
                                      AcceptsReturn="True"
                                      Height="72"
                                      TextWrapping="Wrap" />
 
-                            <Grid Grid.Row="4"
+                            <Grid Grid.Row="5"
                                   Grid.ColumnSpan="2"
                                   ColumnDefinitions="Auto,Auto,Auto,Auto"
                                   ColumnSpacing="16">

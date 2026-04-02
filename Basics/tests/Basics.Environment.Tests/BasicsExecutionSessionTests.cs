@@ -108,9 +108,10 @@ public sealed class BasicsExecutionSessionTests
                         RecommendedReproductionRunCount: 1,
                         RecommendedMaxConcurrentBrains: 1,
                         CapacityScore: 1f,
-                        EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
-                        Summary: "test"),
+                    EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                    Summary: "test"),
                     OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
+                    OutputSamplingPolicy: new BasicsOutputSamplingPolicy(),
                     DiversityPreset: BasicsDiversityPreset.Medium,
                     AdaptiveDiversity: new BasicsAdaptiveDiversityOptions(),
                     Reproduction: BasicsReproductionPolicy.CreateDefault(),
@@ -335,7 +336,10 @@ public sealed class BasicsExecutionSessionTests
     [Fact]
     public async Task ExecutionSession_UsesEventedOutputMode_WhenConfigured()
     {
-        var runtimeClient = new FakeBasicsRuntimeClient();
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and"
+        };
         var session = CreateSession(runtimeClient);
 
         try
@@ -348,11 +352,80 @@ public sealed class BasicsExecutionSessionTests
 
             Assert.Equal(BasicsExecutionState.Succeeded, final.State);
             Assert.True(runtimeClient.SingleSubscriptionCount > 0);
-            Assert.Equal(0, runtimeClient.VectorSubscriptionCount);
+            Assert.True(runtimeClient.VectorSubscriptionCount > 0);
             Assert.Empty(runtimeClient.SetOutputVectorSourceRequests);
             Assert.NotEmpty(runtimeClient.EventWaitTimeouts);
             Assert.All(runtimeClient.EventWaitTimeouts, timeout => Assert.Equal(TimeSpan.FromSeconds(1), timeout));
-            Assert.Empty(runtimeClient.VectorWaitTimeouts);
+            Assert.NotEmpty(runtimeClient.VectorWaitTimeouts);
+            Assert.All(runtimeClient.VectorWaitTimeouts, timeout => Assert.Equal(TimeSpan.FromSeconds(1), timeout));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_EventedOutput_WaitsForReadySignalBeforeScoring()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            ReadySignalDelayTicks = 2,
+            PreReadyOutputValue = 0f
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.EventedOutput) with
+                {
+                    OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                    {
+                        MaxReadyWindowTicks = 2
+                    }
+                },
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.Equal(1f, final.BestAccuracy);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_FailsWhenReadySignalMissesConfiguredWindow()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            ReadySignalDelayTicks = 3,
+            PreReadyOutputValue = 0f
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential) with
+                {
+                    OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                    {
+                        MaxReadyWindowTicks = 2
+                    }
+                },
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Contains("output_timeout_or_width_mismatch", final.EvaluationFailureSummary, StringComparison.Ordinal);
         }
         finally
         {
@@ -899,6 +972,7 @@ public sealed class BasicsExecutionSessionTests
                         EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
                         Summary: "test"),
                     OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
+                    OutputSamplingPolicy: new BasicsOutputSamplingPolicy(),
                     DiversityPreset: BasicsDiversityPreset.Medium,
                     AdaptiveDiversity: new BasicsAdaptiveDiversityOptions(),
                     Reproduction: BasicsReproductionPolicy.CreateDefault(),
@@ -943,6 +1017,7 @@ public sealed class BasicsExecutionSessionTests
                         EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
                         Summary: "test"),
                     OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
+                    OutputSamplingPolicy: new BasicsOutputSamplingPolicy(),
                     DiversityPreset: BasicsDiversityPreset.Medium,
                     AdaptiveDiversity: new BasicsAdaptiveDiversityOptions(),
                     Reproduction: BasicsReproductionPolicy.CreateDefault(),
@@ -998,6 +1073,7 @@ public sealed class BasicsExecutionSessionTests
                         EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
                         Summary: "test"),
                     OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
+                    OutputSamplingPolicy: new BasicsOutputSamplingPolicy(),
                     DiversityPreset: BasicsDiversityPreset.Medium,
                     AdaptiveDiversity: new BasicsAdaptiveDiversityOptions(),
                     Reproduction: BasicsReproductionPolicy.CreateDefault(),
@@ -1163,6 +1239,7 @@ public sealed class BasicsExecutionSessionTests
                     EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
                     Summary: "test"),
                 OutputObservationMode: outputObservationMode,
+                OutputSamplingPolicy: new BasicsOutputSamplingPolicy(),
                 DiversityPreset: BasicsDiversityPreset.Medium,
                 AdaptiveDiversity: new BasicsAdaptiveDiversityOptions(),
                 Reproduction: BasicsReproductionPolicy.CreateDefault(),
@@ -1219,6 +1296,8 @@ public sealed class BasicsExecutionSessionTests
         public TimeSpan ReproduceDelay { get; init; }
         public string DefaultBehavior { get; init; } = "zero";
         public bool OnlyEmitOutputVectorOnChange { get; init; }
+        public int ReadySignalDelayTicks { get; init; } = 1;
+        public float PreReadyOutputValue { get; init; }
         public bool RequirePlacementWaitForVisibility { get; init; }
         public bool ReuseSingleChildArtifactOnReproduce { get; init; }
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
@@ -1234,7 +1313,7 @@ public sealed class BasicsExecutionSessionTests
         public ConcurrentQueue<DateTimeOffset> SpawnRequestStartedAtUtc { get; } = new();
         private int _activeSpawnRequests;
         private int _maxObservedConcurrentSpawnRequests;
-        private readonly Dictionary<Guid, float> _lastVectorOutputByBrain = new();
+        private readonly Dictionary<Guid, (float Value, float Ready)> _lastVectorOutputByBrain = new();
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
             => Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = clientName, ServerTimeMs = 1 });
@@ -1403,21 +1482,34 @@ public sealed class BasicsExecutionSessionTests
         public Task SendInputVectorAsync(Guid brainId, IReadOnlyList<float> values, CancellationToken cancellationToken = default)
         {
             var artifact = _brainDefinitions[brainId];
-            var tick = ++_ticks[brainId];
             var behavior = ResolveBehavior(artifact);
-            var output = ComputeOutput(behavior, values);
+            var finalOutput = ComputeOutput(behavior, values);
+            var readyDelayTicks = Math.Max(1, ReadySignalDelayTicks);
 
-            if (!OnlyEmitOutputVectorOnChange
-                || !_lastVectorOutputByBrain.TryGetValue(brainId, out var previousOutput)
-                || previousOutput != output)
+            for (var offset = 1; offset <= readyDelayTicks; offset++)
             {
-                _outputs[brainId].Enqueue(new BasicsRuntimeOutputVector(brainId, tick, new[] { output }));
-            }
+                var tick = ++_ticks[brainId];
+                var ready = offset == readyDelayTicks ? 1f : 0f;
+                var value = offset == readyDelayTicks ? finalOutput : PreReadyOutputValue;
+                if (!OnlyEmitOutputVectorOnChange
+                    || !_lastVectorOutputByBrain.TryGetValue(brainId, out var previousOutput)
+                    || previousOutput.Value != value
+                    || previousOutput.Ready != ready
+                    || ready >= 0.5f)
+                {
+                    _outputs[brainId].Enqueue(new BasicsRuntimeOutputVector(brainId, tick, new[] { value, ready }));
+                }
 
-            _lastVectorOutputByBrain[brainId] = output;
-            if (output >= 0.5f)
-            {
-                _outputEvents[brainId].Enqueue(new BasicsRuntimeOutputEvent(brainId, 0, tick, output));
+                _lastVectorOutputByBrain[brainId] = (value, ready);
+                if (value >= 0.5f)
+                {
+                    _outputEvents[brainId].Enqueue(new BasicsRuntimeOutputEvent(brainId, 0, tick, value));
+                }
+
+                if (ready >= 0.5f)
+                {
+                    _outputEvents[brainId].Enqueue(new BasicsRuntimeOutputEvent(brainId, 1, tick, ready));
+                }
             }
 
             return Task.CompletedTask;
@@ -1465,6 +1557,7 @@ public sealed class BasicsExecutionSessionTests
             Guid brainId,
             ulong afterTickExclusive,
             TimeSpan timeout,
+            uint? outputIndex = null,
             CancellationToken cancellationToken = default)
         {
             EventWaitTimeouts.Add(timeout);
@@ -1473,14 +1566,15 @@ public sealed class BasicsExecutionSessionTests
                 while (queue.Count > 0)
                 {
                     var output = queue.Dequeue();
-                    if (output.TickId > afterTickExclusive)
+                    if (output.TickId > afterTickExclusive
+                        && (!outputIndex.HasValue || output.OutputIndex == outputIndex.Value))
                     {
                         return Task.FromResult<BasicsRuntimeOutputEvent?>(output);
                     }
                 }
             }
 
-            return Task.FromResult<BasicsRuntimeOutputEvent?>(null);
+            return DelayNullOutputEventAsync(timeout, cancellationToken);
         }
 
         public Task<IoCommandAck?> PauseBrainAsync(
@@ -1812,6 +1906,18 @@ public sealed class BasicsExecutionSessionTests
                 "multiplication" => Math.Clamp(a * b, 0f, 1f),
                 _ => 0f
             };
+        }
+
+        private static async Task<BasicsRuntimeOutputEvent?> DelayNullOutputEventAsync(
+            TimeSpan timeout,
+            CancellationToken cancellationToken)
+        {
+            if (timeout > TimeSpan.Zero)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(1), cancellationToken);
+            }
+
+            return null;
         }
     }
 }

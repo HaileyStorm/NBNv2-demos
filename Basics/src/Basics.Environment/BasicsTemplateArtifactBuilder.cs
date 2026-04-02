@@ -31,6 +31,18 @@ public static class BasicsTemplateArtifactBuilder
         var internalRegionNeuronCounts = DistributeInternalNeurons(
             shape.ActiveInternalRegionCount,
             shape.InternalNeuronCount);
+        var minimumViableAxons = ResolveMinimumViableAxonCount(internalRegionNeuronCounts);
+        if (template.InitialSeedShapeConstraints.MaxAxonCount is int maxAxons && maxAxons < minimumViableAxons)
+        {
+            throw new InvalidOperationException(
+                $"Seed-shape max axons {maxAxons} is below the minimum viable topology requirement {minimumViableAxons}.");
+        }
+
+        if (shape.AxonCount < minimumViableAxons)
+        {
+            shape = shape with { AxonCount = minimumViableAxons };
+        }
+
         var regionIds = Enumerable.Range(1, shape.ActiveInternalRegionCount).Select(static id => (byte)id).ToArray();
 
         var axonsByRegion = new Dictionary<byte, List<List<AxonRecord>>>();
@@ -194,9 +206,11 @@ public static class BasicsTemplateArtifactBuilder
         {
             for (var inputNeuronId = 0; inputNeuronId < inputBuckets.Count; inputNeuronId++)
             {
-                inputBuckets[inputNeuronId].Add(new AxonRecord(MaxStrengthCode, 0, (byte)NbnConstants.OutputRegionId));
+                var targetNeuronId = inputNeuronId % Math.Max(1, (int)BasicsIoGeometry.OutputWidth);
+                inputBuckets[inputNeuronId].Add(new AxonRecord(MaxStrengthCode, targetNeuronId, (byte)NbnConstants.OutputRegionId));
             }
 
+            EnsureOutputCoverage(inputBuckets, (byte)NbnConstants.OutputRegionId, (int)BasicsIoGeometry.OutputWidth);
             return;
         }
 
@@ -224,6 +238,11 @@ public static class BasicsTemplateArtifactBuilder
             {
                 var targetNeuronId = neuronId % Math.Max(1, targetNeuronCount);
                 sourceBuckets[neuronId].Add(new AxonRecord(MaxStrengthCode, targetNeuronId, targetRegionId));
+            }
+
+            if (targetIsOutput)
+            {
+                EnsureOutputCoverage(sourceBuckets, targetRegionId, targetNeuronCount);
             }
         }
     }
@@ -280,7 +299,7 @@ public static class BasicsTemplateArtifactBuilder
         if (currentAxonCount < targetAxonCount)
         {
             throw new InvalidOperationException(
-                $"Seed-shape requested {targetAxonCount} axons but the 2->1 template can only realize {currentAxonCount} unique forward edges.");
+                $"Seed-shape requested {targetAxonCount} axons but the 2->2 template can only realize {currentAxonCount} unique forward edges.");
         }
     }
 
@@ -304,11 +323,66 @@ public static class BasicsTemplateArtifactBuilder
                 }
             }
 
-            candidates.Add((
-                sourceRegionId,
-                neuronId,
-                new AxonRecord(MaxStrengthCode, 0, (byte)NbnConstants.OutputRegionId)));
+            for (var targetNeuronId = 0; targetNeuronId < BasicsIoGeometry.OutputWidth; targetNeuronId++)
+            {
+                candidates.Add((
+                    sourceRegionId,
+                    neuronId,
+                    new AxonRecord(MaxStrengthCode, targetNeuronId, (byte)NbnConstants.OutputRegionId)));
+            }
         }
+    }
+
+    private static void EnsureOutputCoverage(
+        IReadOnlyList<List<AxonRecord>> sourceBuckets,
+        byte targetRegionId,
+        int targetNeuronCount)
+    {
+        if (sourceBuckets.Count == 0 || targetNeuronCount <= 0)
+        {
+            return;
+        }
+
+        var coveredTargets = new HashSet<int>();
+        foreach (var bucket in sourceBuckets)
+        {
+            foreach (var axon in bucket)
+            {
+                if (axon.TargetRegionId == targetRegionId)
+                {
+                    coveredTargets.Add(axon.TargetNeuronId);
+                }
+            }
+        }
+
+        for (var targetNeuronId = 0; targetNeuronId < targetNeuronCount; targetNeuronId++)
+        {
+            if (coveredTargets.Contains(targetNeuronId))
+            {
+                continue;
+            }
+
+            var sourceNeuronId = targetNeuronId % sourceBuckets.Count;
+            if (!sourceBuckets[sourceNeuronId].Any(existing =>
+                    existing.TargetRegionId == targetRegionId
+                    && existing.TargetNeuronId == targetNeuronId))
+            {
+                sourceBuckets[sourceNeuronId].Add(new AxonRecord(MaxStrengthCode, targetNeuronId, targetRegionId));
+            }
+        }
+    }
+
+    private static int ResolveMinimumViableAxonCount(IReadOnlyList<int> internalRegionNeuronCounts)
+    {
+        if (internalRegionNeuronCounts.Count == 0)
+        {
+            return Math.Max((int)BasicsIoGeometry.InputWidth, (int)BasicsIoGeometry.OutputWidth);
+        }
+
+        var lastInternalCount = internalRegionNeuronCounts[^1];
+        return (int)BasicsIoGeometry.InputWidth
+               + internalRegionNeuronCounts.Sum()
+               + Math.Max(0, (int)BasicsIoGeometry.OutputWidth - lastInternalCount);
     }
 
     private static ulong AddRegionSection(

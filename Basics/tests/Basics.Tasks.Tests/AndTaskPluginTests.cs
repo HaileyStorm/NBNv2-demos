@@ -87,7 +87,7 @@ public sealed class AndTaskPluginTests
     public void Evaluate_Fails_WhenContextGeometryIsWrong()
     {
         var result = _plugin.Evaluate(
-            new BasicsTaskEvaluationContext(BasicsIoGeometry.InputWidth, 2, TickAligned: true),
+            new BasicsTaskEvaluationContext(BasicsIoGeometry.InputWidth, BasicsIoGeometry.OutputWidth + 1, TickAligned: true),
             _plugin.BuildDeterministicDataset(),
             Array.Empty<BasicsTaskObservation>());
 

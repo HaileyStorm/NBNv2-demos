@@ -102,7 +102,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _capacitySummary = "Fetch capacity through IO to compute population bounds.";
     private string _validationSummary = "Configuration not yet validated.";
     private string _templateId = "basics-template-a";
-    private string _templateDescription = "Seed all initial brains from one shared 2→1 template, allowing only bounded minor divergence.";
+    private string _templateDescription = "Seed all initial brains from one shared 2→2 template, allowing only bounded minor divergence.";
     private string _templateArtifactSha256 = string.Empty;
     private string _templateArtifactMediaType = "application/x-nbn";
     private string _templateArtifactSizeBytesText = string.Empty;
@@ -132,6 +132,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _targetFitnessText = "0.999";
     private bool _requireBothStopTargets = true;
     private string _maximumGenerationsText = string.Empty;
+    private string _maxReadyWindowTicksText = "4";
     private string _booleanLowInputValueText = "0.0";
     private string _booleanHighInputValueText = "1.0";
     private string _gtUniqueInputValuesText = "3";
@@ -597,6 +598,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         set => SetProperty(ref _maximumGenerationsText, value);
     }
 
+    public string MaxReadyWindowTicksText
+    {
+        get => _maxReadyWindowTicksText;
+        set => SetProperty(ref _maxReadyWindowTicksText, value);
+    }
+
     public string BooleanLowInputValueText
     {
         get => _booleanLowInputValueText;
@@ -678,19 +685,19 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             if (ShowBooleanTaskSettings)
             {
-                return "Evaluates the four canonical truth-table combinations using the selected low/high input values.";
+                return "Evaluates the four canonical truth-table combinations using the selected low/high input values. Output[0] is the task value and output[1] is the shared ready bit.";
             }
 
             if (ShowGtTaskSettings)
             {
                 var count = TryParsePositiveInt(GtUniqueInputValuesText, fallbackValue: 3);
-                return $"Evaluates {count * count} ordered comparisons over an evenly spaced {count}x{count} grid in [0,1].";
+                return $"Evaluates {count * count} ordered comparisons over an evenly spaced {count}x{count} grid in [0,1]. Output[0] is the task value and output[1] is the shared ready bit.";
             }
 
             if (ShowMultiplicationTaskSettings)
             {
                 var count = TryParsePositiveInt(MultiplicationUniqueInputValuesText, fallbackValue: 5);
-                return $"Evaluates {count * count} products over an evenly spaced {count}x{count} grid in [0,1], with accuracy counted inside the configured tolerance.";
+                return $"Evaluates {count * count} products over an evenly spaced {count}x{count} grid in [0,1], with accuracy counted inside the configured tolerance. Output[0] is the task value and output[1] is the shared ready bit.";
             }
 
             return "This task does not expose custom evaluation settings yet.";
@@ -1294,6 +1301,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             TargetFitnessText = profile.StopCriteria.TargetFitness.ToString("0.0##", CultureInfo.InvariantCulture);
             RequireBothStopTargets = profile.StopCriteria.RequireBothTargets;
             MaximumGenerationsText = FormatOptionalInt(profile.StopCriteria.MaximumGenerations);
+            MaxReadyWindowTicksText = profile.OutputSamplingPolicy.MaxReadyWindowTicks.ToString(CultureInfo.InvariantCulture);
             BooleanLowInputValueText = taskSettings.BooleanTruthTable.LowInputValue.ToString("0.0##", CultureInfo.InvariantCulture);
             BooleanHighInputValueText = taskSettings.BooleanTruthTable.HighInputValue.ToString("0.0##", CultureInfo.InvariantCulture);
             GtUniqueInputValuesText = taskSettings.Gt.UniqueInputValueCount.ToString(CultureInfo.InvariantCulture);
@@ -1908,6 +1916,10 @@ public sealed class MainWindowViewModel : ViewModelBase
             RequireBothTargets = RequireBothStopTargets,
             MaximumGenerations = ParseOptionalInt(MaximumGenerationsText, "Maximum generations", errors)
         };
+        var outputSamplingPolicy = new BasicsOutputSamplingPolicy
+        {
+            MaxReadyWindowTicks = ParseRequiredInt(MaxReadyWindowTicksText, "Ready window ticks", errors)
+        };
         var taskSettings = new BasicsTaskSettings
         {
             BooleanTruthTable = new BasicsBinaryTruthTableTaskSettings
@@ -1943,6 +1955,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             SeedTemplate = seedTemplate,
             SizingOverrides = overrides,
             OutputObservationMode = SelectedOutputObservationMode?.Mode ?? BasicsOutputObservationMode.VectorPotential,
+            OutputSamplingPolicy = outputSamplingPolicy,
             DiversityPreset = diversityPreset,
             AdaptiveDiversity = new BasicsAdaptiveDiversityOptions(),
             Reproduction = new BasicsReproductionPolicy
@@ -2751,10 +2764,10 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return CreateTaskOption("or", "OR", "Boolean OR over canonical 0/1 inputs and outputs.", "Plugin pending");
         yield return CreateTaskOption("xor", "XOR", "Boolean XOR over canonical 0/1 inputs and outputs.", "Plugin pending");
         yield return CreateTaskOption("gt", "GT", "Boolean greater-than over canonical 0/1 or bounded scalar inputs.", "Plugin pending");
-        yield return CreateTaskOption("multiplication", "Multiplication", "Bounded scalar multiplication over the shared 2->1 Basics geometry.", "Plugin pending");
-        yield return CreateTaskOption("denoise", "Noisy in → clean out", "Denoising task over the shared 2->1 Basics geometry.", "Plugin pending");
-        yield return CreateTaskOption("delay", "Delayed out", "Temporal delayed-output task over the shared 2->1 Basics geometry.", "Plugin pending");
-        yield return CreateTaskOption("one-hot", "One-hot classifier", "Viability still pending for the shared 2->1 Basics geometry.", "Viability pending");
+        yield return CreateTaskOption("multiplication", "Multiplication", "Bounded scalar multiplication over the shared 2->2 Basics geometry.", "Plugin pending");
+        yield return CreateTaskOption("denoise", "Noisy in → clean out", "Denoising task over the shared 2->2 Basics geometry.", "Plugin pending");
+        yield return CreateTaskOption("delay", "Delayed out", "Temporal delayed-output task over the shared 2->2 Basics geometry.", "Plugin pending");
+        yield return CreateTaskOption("one-hot", "One-hot classifier", "Viability still pending for the shared 2->2 Basics geometry.", "Viability pending");
     }
 
     private static TaskOption CreateTaskOption(string taskId, string displayName, string description, string placeholderStatus)
@@ -2786,15 +2799,15 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return new OutputObservationModeOption(
             BasicsOutputObservationMode.VectorPotential,
             "Continuous potential",
-            "Recommended default for automated scoring; full vector every tick from activation/potential, applied per spawned brain.");
+            "Reads the shared [value, ready] vector every tick from activation/potential and scores the first tick whose ready lane is high.");
         yield return new OutputObservationModeOption(
             BasicsOutputObservationMode.EventedOutput,
             "OutputEvent",
-            "Sparse fire-only outputs; zeros are inferred when no event arrives.");
+            "Uses OutputEvent on the ready lane as the scoring gate, with the paired value taken from the same tick's full vector sample.");
         yield return new OutputObservationModeOption(
             BasicsOutputObservationMode.VectorBuffer,
             "Continuous buffer",
-            "Full vector every tick from persistent buffer values, applied per spawned brain.");
+            "Reads the shared [value, ready] vector every tick from persistent buffer values and scores the first tick whose ready lane is high.");
     }
 
     private static IEnumerable<DiversityPresetOption> BuildDiversityPresets()

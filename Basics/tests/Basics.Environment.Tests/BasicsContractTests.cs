@@ -33,7 +33,7 @@ public sealed class BasicsContractTests
         Assert.False(validation.IsValid);
         Assert.Contains(validation.Errors, error => error.Contains("template-anchored", StringComparison.Ordinal));
         Assert.Contains(validation.Errors, error => error.Contains("SingleBootstrapSpecies", StringComparison.Ordinal));
-        Assert.Contains(validation.Errors, error => error.Contains("2->1", StringComparison.Ordinal));
+        Assert.Contains(validation.Errors, error => error.Contains("2->2", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -171,5 +171,19 @@ public sealed class BasicsContractTests
         var validation = settings.ValidateForTask("multiplication");
 
         Assert.True(validation.IsValid);
+    }
+
+    [Fact]
+    public void OutputSamplingPolicy_RejectsReadyWindowsBelowOne()
+    {
+        var policy = new BasicsOutputSamplingPolicy
+        {
+            MaxReadyWindowTicks = 0
+        };
+
+        var validation = policy.Validate();
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, error => error.Contains("Ready window ticks", StringComparison.Ordinal));
     }
 }

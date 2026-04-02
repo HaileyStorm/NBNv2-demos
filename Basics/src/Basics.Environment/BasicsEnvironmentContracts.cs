@@ -9,7 +9,7 @@ namespace Nbn.Demos.Basics.Environment;
 public static class BasicsIoGeometry
 {
     public const uint InputWidth = 2;
-    public const uint OutputWidth = 1;
+    public const uint OutputWidth = 2;
 
     public static BasicsBrainGeometryValidation Validate(BrainInfo? info)
     {
@@ -173,7 +173,7 @@ public sealed record BasicsSeedTemplateContract
         new()
         {
             TemplateId = "basics-template-a",
-            Description = "Seed all initial brains from one shared 2->1 template, allowing only bounded minor divergence so reproduction and bootstrap speciation remain coherent."
+            Description = "Seed all initial brains from one shared 2->2 template, allowing only bounded minor divergence so reproduction and bootstrap speciation remain coherent."
         };
 
     public BasicsContractValidationResult Validate()
@@ -428,6 +428,31 @@ public static class BasicsOutputObservationModeExtensions
             : ProtoControl.OutputVectorSource.Potential;
 }
 
+public sealed record BasicsOutputSamplingPolicy
+{
+    public const int MinimumReadyWindowTicks = 1;
+    public const int MaximumReadyWindowTicks = 64;
+
+    public int MaxReadyWindowTicks { get; init; } = 4;
+    public float VectorReadyThreshold { get; init; } = 0.5f;
+
+    public BasicsContractValidationResult Validate()
+    {
+        var errors = new List<string>();
+        if (MaxReadyWindowTicks < MinimumReadyWindowTicks || MaxReadyWindowTicks > MaximumReadyWindowTicks)
+        {
+            errors.Add($"Ready window ticks must be between {MinimumReadyWindowTicks} and {MaximumReadyWindowTicks}.");
+        }
+
+        if (!float.IsFinite(VectorReadyThreshold) || VectorReadyThreshold < 0f || VectorReadyThreshold > 1f)
+        {
+            errors.Add("Vector ready threshold must be a finite value between 0 and 1.");
+        }
+
+        return BasicsContractValidationResult.FromErrors(errors);
+    }
+}
+
 public sealed record BasicsBinaryTruthTableTaskSettings
 {
     public float LowInputValue { get; init; } = 0f;
@@ -572,6 +597,7 @@ public sealed record BasicsEnvironmentOptions
     public IReadOnlyList<BasicsInitialBrainSeed> InitialBrainSeeds { get; init; } = Array.Empty<BasicsInitialBrainSeed>();
     public BasicsMetricsContract Metrics { get; init; } = BasicsMetricsContract.Default;
     public BasicsOutputObservationMode OutputObservationMode { get; init; } = BasicsOutputObservationMode.VectorPotential;
+    public BasicsOutputSamplingPolicy OutputSamplingPolicy { get; init; } = new();
     public BasicsDiversityPreset DiversityPreset { get; init; } = BasicsDiversityPreset.Medium;
     public BasicsAdaptiveDiversityOptions AdaptiveDiversity { get; init; } = new();
     public BasicsReproductionPolicy Reproduction { get; init; } = BasicsReproductionPolicy.CreateDefault();
@@ -594,12 +620,13 @@ public sealed record BasicsEnvironmentOptions
 
         if (SelectedTask.InputWidth != BasicsIoGeometry.InputWidth || SelectedTask.OutputWidth != BasicsIoGeometry.OutputWidth)
         {
-            errors.Add("SelectedTask must remain bound to the Basics 2->1 geometry.");
+            errors.Add("SelectedTask must remain bound to the Basics 2->2 geometry.");
         }
 
         AddValidationErrors(SeedTemplate.Validate(), errors);
         AddValidationErrors(SizingOverrides.Validate(), errors);
         AddValidationErrors(Reproduction.Validate(), errors);
+        AddValidationErrors(OutputSamplingPolicy.Validate(), errors);
         AddValidationErrors(AdaptiveDiversity.Validate(), errors);
         AddValidationErrors(Scheduling.Validate(), errors);
         AddValidationErrors(StopCriteria.Validate(), errors);
@@ -633,6 +660,7 @@ public sealed record BasicsEnvironmentPlan(
     IReadOnlyList<BasicsInitialBrainSeed> InitialBrainSeeds,
     BasicsCapacityRecommendation Capacity,
     BasicsOutputObservationMode OutputObservationMode,
+    BasicsOutputSamplingPolicy OutputSamplingPolicy,
     BasicsDiversityPreset DiversityPreset,
     BasicsAdaptiveDiversityOptions AdaptiveDiversity,
     BasicsReproductionPolicy Reproduction,
