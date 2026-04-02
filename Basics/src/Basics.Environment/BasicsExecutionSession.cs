@@ -1548,8 +1548,27 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         var failureCategory = ResolveFailureCategory(evaluation);
-        return failureCategory is "spawn_failed" or "spawn_not_placed" or "evaluation_failed"
+        return (failureCategory is "spawn_failed" or "spawn_not_placed"
+                && IsRetryableSpawnFailure(evaluation, attempt))
+               || failureCategory is "evaluation_failed"
                || IsRetryableOutputTimeout(evaluation);
+    }
+
+    private static bool IsRetryableSpawnFailure(BasicsTaskEvaluationResult evaluation, int attempt)
+    {
+        var diagnostic = evaluation.Diagnostics.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        if (string.IsNullOrWhiteSpace(diagnostic))
+        {
+            return false;
+        }
+
+        if (diagnostic.Contains("spawn_request_canceled", StringComparison.Ordinal)
+            || diagnostic.Contains("spawn_brain_info_timeout", StringComparison.Ordinal))
+        {
+            return attempt < 2;
+        }
+
+        return true;
     }
 
     private static bool IsRetryableOutputTimeout(BasicsTaskEvaluationResult evaluation)

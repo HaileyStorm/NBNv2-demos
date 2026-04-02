@@ -1006,25 +1006,89 @@ public sealed class BasicsExecutionSessionTests
         try
         {
             var snapshots = new List<BasicsExecutionSnapshot>();
-            var final = await session.RunAsync(
-                CreatePlan(
+            var plan = CreatePlan(
                     BasicsOutputObservationMode.VectorPotential,
                     new BasicsExecutionStopCriteria
                     {
                         MaximumGenerations = 1
                     },
-                    new OrTaskPlugin()),
+                    new OrTaskPlugin()) with
+            {
+                Capacity = new BasicsCapacityRecommendation(
+                    Source: BasicsCapacitySource.RuntimePlacementInventory,
+                    EligibleWorkerCount: 1,
+                    RecommendedInitialPopulationCount: 1,
+                    RecommendedReproductionRunCount: 1,
+                    RecommendedMaxConcurrentBrains: 1,
+                    CapacityScore: 1f,
+                    EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                    Summary: "test")
+            };
+            var final = await session.RunAsync(
+                plan,
                 new OrTaskPlugin(),
                 snapshots.Add,
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
             Assert.NotEqual(BasicsExecutionState.Succeeded, final.State);
-            Assert.True(runtimeClient.SpawnRequestCount >= 3, $"Expected retried placement timeouts, observed {runtimeClient.SpawnRequestCount} spawn request(s).");
+            Assert.Equal(2, runtimeClient.SpawnRequestCount);
             Assert.Contains(
                 snapshots,
                 snapshot => snapshot.State == BasicsExecutionState.Running
                             && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal)
                             && snapshot.DetailText.Contains("attempt 2/3", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_LimitsPlacementTimeoutRetries_ToOneRetry()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "or",
+            RequirePlacementWaitForVisibility = true,
+            AwaitPlacementDelay = TimeSpan.FromMilliseconds(100)
+        };
+        var session = CreateSession(runtimeClient, spawnPlacementTimeout: TimeSpan.FromMilliseconds(40));
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var plan = CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1
+                    },
+                    new OrTaskPlugin()) with
+            {
+                Capacity = new BasicsCapacityRecommendation(
+                    Source: BasicsCapacitySource.RuntimePlacementInventory,
+                    EligibleWorkerCount: 1,
+                    RecommendedInitialPopulationCount: 1,
+                    RecommendedReproductionRunCount: 1,
+                    RecommendedMaxConcurrentBrains: 1,
+                    CapacityScore: 1f,
+                    EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                    Summary: "test")
+            };
+            var final = await session.RunAsync(
+                plan,
+                new OrTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.NotEqual(BasicsExecutionState.Succeeded, final.State);
+            Assert.Equal(2, runtimeClient.SpawnRequestCount);
+            Assert.DoesNotContain(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Running
+                            && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("attempt 3/3", StringComparison.Ordinal));
         }
         finally
         {
