@@ -476,7 +476,7 @@ public sealed class BasicsExecutionSessionTests
 
             Assert.Equal(BasicsExecutionState.Failed, final.State);
             Assert.Contains(
-                "output_timeout_or_width_mismatch:vector_missing:vectors_seen=0:ready_events_seen=0",
+                "output_timeout_or_width_mismatch:vector_missing",
                 final.EvaluationFailureSummary,
                 StringComparison.Ordinal);
             Assert.True(runtimeClient.SpawnRequestCount > 2, $"Expected vector-missing failures to retry, observed {runtimeClient.SpawnRequestCount} spawn request(s).");
@@ -522,6 +522,7 @@ public sealed class BasicsExecutionSessionTests
 
             Assert.Equal(BasicsExecutionState.Failed, final.State);
             Assert.Contains("ready_window_exhausted", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.Contains("ready_timeout", final.LatestBatchTiming?.FailureSummary, StringComparison.Ordinal);
             Assert.Equal(2, runtimeClient.SpawnRequestCount);
             Assert.DoesNotContain(
                 snapshots,
@@ -562,6 +563,35 @@ public sealed class BasicsExecutionSessionTests
 
             Assert.Equal(BasicsExecutionState.Failed, final.State);
             Assert.Contains("output_timeout_or_width_mismatch", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.Contains("ready_timeout", final.LatestBatchTiming?.FailureSummary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_ReportsOutputWidthMismatchSeparately()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            OutputVectorWidthOverride = 1
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Contains("width_mismatch", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.Contains("output_width_mismatch", final.LatestBatchTiming?.FailureSummary, StringComparison.Ordinal);
         }
         finally
         {
@@ -1488,6 +1518,7 @@ public sealed class BasicsExecutionSessionTests
         public bool SuppressReadyOutputEvents { get; init; }
         public bool RequirePlacementWaitForVisibility { get; init; }
         public TimeSpan AwaitPlacementDelay { get; init; }
+        public int? OutputVectorWidthOverride { get; init; }
         public bool ReuseSingleChildArtifactOnReproduce { get; init; }
         public OutputVectorSource InitialOutputVectorSource { get; init; } = OutputVectorSource.Potential;
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
@@ -1699,6 +1730,11 @@ public sealed class BasicsExecutionSessionTests
                 var tick = ++_ticks[brainId];
                 var ready = offset == readyDelayTicks ? 1f : 0f;
                 var value = offset == readyDelayTicks ? finalOutput : PreReadyOutputValue;
+                var vector = new[] { value, ready };
+                if (OutputVectorWidthOverride is int outputVectorWidth)
+                {
+                    vector = vector.Take(Math.Max(0, Math.Min(outputVectorWidth, vector.Length))).ToArray();
+                }
                 if (!SuppressOutputVectors
                     && (!OnlyEmitOutputVectorOnChange
                         || !_lastVectorOutputByBrain.TryGetValue(brainId, out var previousOutput)
@@ -1706,7 +1742,7 @@ public sealed class BasicsExecutionSessionTests
                         || previousOutput.Ready != ready
                         || ready >= 0.5f))
                 {
-                    _outputs[brainId].Enqueue(new BasicsRuntimeOutputVector(brainId, tick, new[] { value, ready }));
+                    _outputs[brainId].Enqueue(new BasicsRuntimeOutputVector(brainId, tick, vector));
                 }
 
                 _lastVectorOutputByBrain[brainId] = (value, ready);

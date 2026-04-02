@@ -1551,13 +1551,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
     private static bool IsRetryableOutputTimeout(BasicsTaskEvaluationResult evaluation)
     {
-        if (!string.Equals(ResolveFailureCategory(evaluation), "output_timeout_or_width_mismatch", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
         var diagnostic = evaluation.Diagnostics.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-        if (string.IsNullOrWhiteSpace(diagnostic))
+        if (string.IsNullOrWhiteSpace(diagnostic)
+            || !diagnostic.StartsWith("output_timeout_or_width_mismatch:", StringComparison.Ordinal))
         {
             return false;
         }
@@ -1817,6 +1813,21 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         var diagnostic = evaluation.Diagnostics[0];
+        if (diagnostic.StartsWith("output_timeout_or_width_mismatch:", StringComparison.Ordinal))
+        {
+            if (diagnostic.Contains("ready_window_exhausted", StringComparison.Ordinal))
+            {
+                return "ready_timeout";
+            }
+
+            if (diagnostic.Contains("width_mismatch", StringComparison.Ordinal))
+            {
+                return "output_width_mismatch";
+            }
+
+            return "output_timeout";
+        }
+
         var delimiter = diagnostic.IndexOf(':');
         return delimiter <= 0 ? diagnostic : diagnostic[..delimiter];
     }
@@ -1887,11 +1898,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     ResolveObservationTimeout(outputObservationMode),
                     cancellationToken)
                 .ConfigureAwait(false);
-            if (!IsValidObservationVector(output))
+            var failureDetail = ClassifyObservationVectorFailure(output, vectorsSeen, lastTick: tickCursor);
+            if (failureDetail is not null)
             {
                 return new ObservationAttemptResult(
                     null,
-                    $"vector_missing:vectors_seen={vectorsSeen}:last_tick={tickCursor}");
+                    failureDetail);
             }
 
             tickCursor = output!.TickId;
@@ -1972,11 +1984,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 }
 
                 var output = await nextVectorTask.ConfigureAwait(false);
-                if (!IsValidObservationVector(output))
+                var failureDetail = ClassifyObservationVectorFailure(
+                    output,
+                    vectorsByTick.Count,
+                    readyEventsSeen,
+                    vectorCursor,
+                    readyEventCursor);
+                if (failureDetail is not null)
                 {
                     return new ObservationAttemptResult(
                         null,
-                        $"vector_missing:vectors_seen={vectorsByTick.Count}:ready_events_seen={readyEventsSeen}:last_vector_tick={vectorCursor}:last_ready_tick={readyEventCursor}");
+                        failureDetail);
                 }
 
                 vectorsByTick[output!.TickId] = output;
@@ -2012,8 +2030,29 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
     }
 
-    private static bool IsValidObservationVector(BasicsRuntimeOutputVector? output)
-        => output is not null && output.Values.Count >= (int)BasicsIoGeometry.OutputWidth;
+    private static string? ClassifyObservationVectorFailure(
+        BasicsRuntimeOutputVector? output,
+        int vectorsSeen,
+        int readyEventsSeen = 0,
+        ulong lastTick = 0,
+        ulong lastReadyTick = 0)
+    {
+        if (output is null)
+        {
+            return readyEventsSeen > 0
+                ? $"vector_missing:vectors_seen={vectorsSeen}:ready_events_seen={readyEventsSeen}:last_vector_tick={lastTick}:last_ready_tick={lastReadyTick}"
+                : $"vector_missing:vectors_seen={vectorsSeen}:last_tick={lastTick}";
+        }
+
+        if (output.Values.Count < (int)BasicsIoGeometry.OutputWidth)
+        {
+            return readyEventsSeen > 0
+                ? $"width_mismatch:observed_width={output.Values.Count}:expected_width={(int)BasicsIoGeometry.OutputWidth}:vectors_seen={vectorsSeen}:ready_events_seen={readyEventsSeen}:last_vector_tick={output.TickId}:last_ready_tick={lastReadyTick}"
+                : $"width_mismatch:observed_width={output.Values.Count}:expected_width={(int)BasicsIoGeometry.OutputWidth}:vectors_seen={vectorsSeen}:last_tick={output.TickId}";
+        }
+
+        return null;
+    }
 
     private static BasicsTaskObservation CreateObservation(BasicsRuntimeOutputVector output)
         => new(output.TickId, output.Values[(int)ValueOutputIndex]);
