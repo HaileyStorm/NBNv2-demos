@@ -96,7 +96,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly List<float> _bestFitnessHistory = new();
     // Keep these in sync with the fixed plot host inside MainWindow.axaml.
     private const float ChartPlotWidth = 299f;
-    private const float ChartPlotHeight = 254f;
+    private const float ChartPlotHeight = 414f;
     private const float ChartStrokeInset = 1f;
     private const int MaxGenerationTickLabelCount = 14;
     private const double XAxisTickLabelWidth = 18d;

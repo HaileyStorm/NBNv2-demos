@@ -694,9 +694,9 @@
                                     CornerRadius="10"
                                     Padding="6"
                                     Background="#FBF8F1"
-                                    Height="320">
+                                    Height="480">
                                 <Grid ColumnDefinitions="Auto,*"
-                                      RowDefinitions="280,Auto"
+                                      RowDefinitions="440,Auto"
                                       ColumnSpacing="6"
                                       RowSpacing="6"
                                       HorizontalAlignment="Stretch"
@@ -714,14 +714,14 @@
                                     </LayoutTransformControl>
                                     <Grid Grid.Row="0"
                                           Grid.Column="1"
-                                          Height="280"
+                                          Height="440"
                                           HorizontalAlignment="Stretch"
                                           ColumnDefinitions="24,*"
-                                          RowDefinitions="8,254,18">
+                                          RowDefinitions="8,414,18">
                                         <ItemsControl Grid.Row="1"
                                                       Grid.Column="0"
                                                       Width="24"
-                                                      Height="254"
+                                                      Height="414"
                                                       Margin="0,0,4,0"
                                                       ItemsSource="{Binding NormalizedValueAxisTicks}">
                                             <ItemsControl.ItemsPanel>
@@ -747,10 +747,10 @@
                                                      StretchDirection="Both"
                                                      IsVisible="{Binding HasAccuracyChartData}">
                                                 <Grid Width="299"
-                                                      Height="254"
+                                                      Height="414"
                                                       ClipToBounds="True">
                                                     <Canvas Width="299"
-                                                            Height="254">
+                                                            Height="414">
                                                         <Polyline Points="{Binding AccuracyChartPoints}"
                                                                   Stroke="#0E7490"
                                                                   StrokeThickness="2" />
@@ -766,7 +766,7 @@
                                                             Background="#D9D0C2"
                                                             VerticalAlignment="Bottom" />
                                                     <ItemsControl Width="6"
-                                                                  Height="254"
+                                                                  Height="414"
                                                                   IsHitTestVisible="False"
                                                                   ItemsSource="{Binding NormalizedValueAxisTicks}">
                                                         <ItemsControl.ItemsPanel>
@@ -866,9 +866,9 @@
                                     CornerRadius="10"
                                     Padding="6"
                                     Background="#FBF8F1"
-                                    Height="320">
+                                    Height="480">
                                 <Grid ColumnDefinitions="Auto,*"
-                                      RowDefinitions="280,Auto"
+                                      RowDefinitions="440,Auto"
                                       ColumnSpacing="6"
                                       RowSpacing="6"
                                       HorizontalAlignment="Stretch"
@@ -886,14 +886,14 @@
                                     </LayoutTransformControl>
                                     <Grid Grid.Row="0"
                                           Grid.Column="1"
-                                          Height="280"
+                                          Height="440"
                                           HorizontalAlignment="Stretch"
                                           ColumnDefinitions="24,*"
-                                          RowDefinitions="8,254,18">
+                                          RowDefinitions="8,414,18">
                                         <ItemsControl Grid.Row="1"
                                                       Grid.Column="0"
                                                       Width="24"
-                                                      Height="254"
+                                                      Height="414"
                                                       Margin="0,0,4,0"
                                                       ItemsSource="{Binding NormalizedValueAxisTicks}">
                                             <ItemsControl.ItemsPanel>
@@ -919,10 +919,10 @@
                                                      StretchDirection="Both"
                                                      IsVisible="{Binding HasFitnessChartData}">
                                                 <Grid Width="299"
-                                                      Height="254"
+                                                      Height="414"
                                                       ClipToBounds="True">
                                                     <Canvas Width="299"
-                                                            Height="254">
+                                                            Height="414">
                                                         <Polyline Points="{Binding FitnessChartPoints}"
                                                                   Stroke="#A16207"
                                                                   StrokeThickness="2" />
@@ -938,7 +938,7 @@
                                                             Background="#D9D0C2"
                                                             VerticalAlignment="Bottom" />
                                                     <ItemsControl Width="6"
-                                                                  Height="254"
+                                                                  Height="414"
                                                                   IsHitTestVisible="False"
                                                                   ItemsSource="{Binding NormalizedValueAxisTicks}">
                                                         <ItemsControl.ItemsPanel>
