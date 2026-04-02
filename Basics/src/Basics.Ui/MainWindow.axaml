@@ -724,18 +724,46 @@
                                     Padding="8"
                                     Background="#FBF8F1"
                                     Height="180">
-                                <Grid>
-                                    <Canvas IsVisible="{Binding HasAccuracyChartData}">
-                                        <Polyline Points="{Binding AccuracyChartPoints}"
-                                                  Stroke="#0E7490"
-                                                  StrokeThickness="2" />
-                                        <Polyline Points="{Binding BestAccuracyChartPoints}"
-                                                  Stroke="#1D4ED8"
-                                                  StrokeThickness="2"
-                                                  StrokeDashArray="5,3" />
-                                    </Canvas>
-                                    <TextBlock IsVisible="{Binding ShowAccuracyEmptyState}"
-                                               Text="No runtime accuracy samples yet."
+                                <Grid ColumnDefinitions="Auto,308"
+                                      RowDefinitions="140,Auto"
+                                      ColumnSpacing="8"
+                                      RowSpacing="6"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center">
+                                    <LayoutTransformControl Grid.Row="0"
+                                                            Grid.Column="0"
+                                                            HorizontalAlignment="Center"
+                                                            VerticalAlignment="Center">
+                                        <LayoutTransformControl.LayoutTransform>
+                                            <RotateTransform Angle="-90" />
+                                        </LayoutTransformControl.LayoutTransform>
+                                        <TextBlock Text="Accuracy"
+                                                   FontSize="12"
+                                                   Foreground="#6C7A89" />
+                                    </LayoutTransformControl>
+                                    <Grid Grid.Row="0"
+                                          Grid.Column="1"
+                                          Width="308"
+                                          Height="140">
+                                        <Canvas IsVisible="{Binding HasAccuracyChartData}">
+                                            <Polyline Points="{Binding AccuracyChartPoints}"
+                                                      Stroke="#0E7490"
+                                                      StrokeThickness="2" />
+                                            <Polyline Points="{Binding BestAccuracyChartPoints}"
+                                                      Stroke="#1D4ED8"
+                                                      StrokeThickness="2"
+                                                      StrokeDashArray="5,3" />
+                                        </Canvas>
+                                        <TextBlock IsVisible="{Binding ShowAccuracyEmptyState}"
+                                                   Text="No runtime accuracy samples yet."
+                                                   Foreground="#6C7A89"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                    <TextBlock Grid.Row="1"
+                                               Grid.Column="1"
+                                               Text="Generation"
+                                               FontSize="12"
                                                Foreground="#6C7A89"
                                                HorizontalAlignment="Center"
                                                VerticalAlignment="Center" />
@@ -757,18 +785,46 @@
                                     Padding="8"
                                     Background="#FBF8F1"
                                     Height="180">
-                                <Grid>
-                                    <Canvas IsVisible="{Binding HasFitnessChartData}">
-                                        <Polyline Points="{Binding FitnessChartPoints}"
-                                                  Stroke="#A16207"
-                                                  StrokeThickness="2" />
-                                        <Polyline Points="{Binding BestFitnessChartPoints}"
-                                                  Stroke="#92400E"
-                                                  StrokeThickness="2"
-                                                  StrokeDashArray="5,3" />
-                                    </Canvas>
-                                    <TextBlock IsVisible="{Binding ShowFitnessEmptyState}"
-                                               Text="No runtime fitness samples yet."
+                                <Grid ColumnDefinitions="Auto,308"
+                                      RowDefinitions="140,Auto"
+                                      ColumnSpacing="8"
+                                      RowSpacing="6"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center">
+                                    <LayoutTransformControl Grid.Row="0"
+                                                            Grid.Column="0"
+                                                            HorizontalAlignment="Center"
+                                                            VerticalAlignment="Center">
+                                        <LayoutTransformControl.LayoutTransform>
+                                            <RotateTransform Angle="-90" />
+                                        </LayoutTransformControl.LayoutTransform>
+                                        <TextBlock Text="Fitness"
+                                                   FontSize="12"
+                                                   Foreground="#6C7A89" />
+                                    </LayoutTransformControl>
+                                    <Grid Grid.Row="0"
+                                          Grid.Column="1"
+                                          Width="308"
+                                          Height="140">
+                                        <Canvas IsVisible="{Binding HasFitnessChartData}">
+                                            <Polyline Points="{Binding FitnessChartPoints}"
+                                                      Stroke="#A16207"
+                                                      StrokeThickness="2" />
+                                            <Polyline Points="{Binding BestFitnessChartPoints}"
+                                                      Stroke="#92400E"
+                                                      StrokeThickness="2"
+                                                      StrokeDashArray="5,3" />
+                                        </Canvas>
+                                        <TextBlock IsVisible="{Binding ShowFitnessEmptyState}"
+                                                   Text="No runtime fitness samples yet."
+                                                   Foreground="#6C7A89"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                    <TextBlock Grid.Row="1"
+                                               Grid.Column="1"
+                                               Text="Generation"
+                                               FontSize="12"
                                                Foreground="#6C7A89"
                                                HorizontalAlignment="Center"
                                                VerticalAlignment="Center" />

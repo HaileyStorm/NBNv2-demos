@@ -2609,19 +2609,22 @@ public sealed class MainWindowViewModel : ViewModelBase
             return Array.Empty<Point>();
         }
 
-        const float width = 320f;
+        const float width = 308f;
         const float height = 140f;
+        const float strokeInset = 1f;
+        var plotWidth = width - (strokeInset * 2f);
+        var plotHeight = height - (strokeInset * 2f);
         if (history.Count == 1)
         {
-            var y = height - (Math.Clamp(history[0], 0f, 1f) * height);
-            return new[] { new Point(0d, y) };
+            var y = (height - strokeInset) - (Math.Clamp(history[0], 0f, 1f) * plotHeight);
+            return new[] { new Point(strokeInset, y) };
         }
 
-        var stepX = width / (history.Count - 1f);
+        var stepX = plotWidth / (history.Count - 1f);
         return history.Select((value, index) =>
         {
-            var x = index * stepX;
-            var y = height - (Math.Clamp(value, 0f, 1f) * height);
+            var x = strokeInset + (index * stepX);
+            var y = (height - strokeInset) - (Math.Clamp(value, 0f, 1f) * plotHeight);
             return new Point(x, y);
         }).ToArray();
     }
