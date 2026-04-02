@@ -881,6 +881,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         seedingConfig.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
 
         var children = new List<PopulationMember>(targetChildCount);
+        var seenDefinitionShas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var duplicateDefinitionCount = 0;
         var attempts = 0;
         var maxAttempts = Math.Max(targetChildCount * 4, 8);
         while (children.Count < targetChildCount && attempts < maxAttempts)
@@ -910,6 +912,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     break;
                 }
 
+                if (!seenDefinitionShas.Add(childDefinition.ToSha256Hex()))
+                {
+                    duplicateDefinitionCount++;
+                    continue;
+                }
+
                 var childComplexity = await ResolveDefinitionComplexityAsync(childDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
                 if (!await IsAcceptableInitialSeedAsync(childDefinition, childComplexity, plan.SeedTemplate.InitialSeedShapeConstraints, cancellationToken).ConfigureAwait(false))
                 {
@@ -935,7 +943,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
             onProgress?.Invoke(
                 "Generating seed variations...",
-                $"Bootstrap template {templateIndex}/{templateCount}: accepted {children.Count}/{targetChildCount} varied child seed(s) after attempt {attempts}/{maxAttempts}.");
+                duplicateDefinitionCount > 0
+                    ? $"Bootstrap template {templateIndex}/{templateCount}: accepted {children.Count}/{targetChildCount} varied child seed(s) after attempt {attempts}/{maxAttempts}; skipped {duplicateDefinitionCount} duplicate definition(s)."
+                    : $"Bootstrap template {templateIndex}/{templateCount}: accepted {children.Count}/{targetChildCount} varied child seed(s) after attempt {attempts}/{maxAttempts}.");
         }
 
         return children;
@@ -989,10 +999,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             var membersToEvaluate = batch.Where(static member => !CanReuseEvaluation(member)).ToArray();
             var completedBatchTimings = batchTimings.Count == 0 ? null : batchTimings[^1];
             var completedBrains = reusedBatchMembers.Length;
-            var completedSamples = 0;
+            var completedSamplesByBrain = new ConcurrentDictionary<int, int>();
             var totalSamples = membersToEvaluate.Length * sampleCountPerBrain;
             var progressPublishStopwatch = Stopwatch.StartNew();
             var inFlightBrainProgress = new ConcurrentDictionary<int, InFlightBrainProgress>();
+
+            int ResolveCompletedSamples()
+                => completedSamplesByBrain.Values.Sum();
 
             void PublishBatchProgress(bool force = false)
             {
@@ -1018,7 +1031,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         setupConcurrency,
                         retainedBrainCount: reusedBatchMembers.Length,
                         completedBrains,
-                        completedSamples,
+                        ResolveCompletedSamples(),
                         totalSamples,
                         activeBrainCount: Math.Max(0, batch.Length - completedBrains),
                         previousBatch: completedBatchTimings,
@@ -1069,9 +1082,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             inFlightBrainProgress.TryRemove(memberIndex + 1, out _);
                             PublishBatchProgress(force: true);
                         },
-                        () =>
+                        (brainOrdinal, completedSampleCount) =>
                         {
-                            Interlocked.Increment(ref completedSamples);
+                            completedSamplesByBrain.AddOrUpdate(
+                                brainOrdinal,
+                                completedSampleCount,
+                                (_, current) => Math.Max(current, completedSampleCount));
                             PublishBatchProgress();
                         },
                         batchCts.Token))
@@ -1159,7 +1175,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int batchBrainCount,
         Action<InFlightBrainProgress>? onAttemptProgress,
         Action? onEvaluationFinished,
-        Action? onSampleCompleted,
+        Action<int, int>? onSampleProgress,
         CancellationToken cancellationToken)
     {
         var queueWaitTotal = TimeSpan.Zero;
@@ -1190,7 +1206,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         batchBrainOrdinal,
                         batchBrainCount,
                         onAttemptProgress,
-                        onSampleCompleted,
+                        onSampleProgress,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -1245,7 +1261,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int batchBrainOrdinal,
         int batchBrainCount,
         Action<InFlightBrainProgress>? onAttemptProgress,
-        Action? onSampleCompleted,
+        Action<int, int>? onSampleProgress,
         CancellationToken cancellationToken)
     {
         Guid brainId = Guid.Empty;
@@ -1408,7 +1424,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 }
 
                 observations.Add(sampleObservation.Value);
-                onSampleCompleted?.Invoke();
+                onSampleProgress?.Invoke(batchBrainOrdinal, observations.Count);
                 lastTick = sampleObservation.Value.TickId;
             }
             observation = observationStopwatch.Elapsed;
@@ -2222,6 +2238,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             SnapshotArtifact = null,
             CountsTowardOffspringMetrics = false
         }).ToList();
+        var seenDefinitionShas = new HashSet<string>(
+            nextGeneration.Select(static member => member.Definition.ToSha256Hex()),
+            StringComparer.OrdinalIgnoreCase);
+        var duplicateChildDefinitionCount = 0;
         var parentPool = BuildParentPool(effectiveScheduling.ParentSelection, population);
         if (parentPool.Count == 0)
         {
@@ -2282,6 +2302,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     break;
                 }
 
+                if (!seenDefinitionShas.Add(childDefinition.ToSha256Hex()))
+                {
+                    duplicateChildDefinitionCount++;
+                    continue;
+                }
+
                 var membership = await CommitArtifactMembershipAsync(
                         childDefinition,
                         new[] { parentA.Definition, parentB.Definition },
@@ -2301,6 +2327,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             }
         }
 
+        if (duplicateChildDefinitionCount > 0)
+        {
+            onBreedProgress?.Invoke(
+                $"Skipped {duplicateChildDefinitionCount} duplicate child definition(s) while assembling the next generation.",
+                nextGeneration.Count);
+        }
+
         return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation, minimumPopulation);
     }
 
@@ -2311,14 +2344,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int minimumPopulation)
     {
         var effectiveMinimumPopulation = Math.Min(Math.Max(1, minimumPopulation), Math.Min(targetPopulation, ranked.Count));
-        if (nextGeneration.Count >= effectiveMinimumPopulation)
+        var desiredPopulation = Math.Max(effectiveMinimumPopulation, Math.Min(targetPopulation, ranked.Count + nextGeneration.Count));
+        if (nextGeneration.Count >= desiredPopulation)
         {
             return nextGeneration;
         }
 
         foreach (var member in ranked)
         {
-            if (nextGeneration.Count >= effectiveMinimumPopulation)
+            if (nextGeneration.Count >= desiredPopulation)
             {
                 break;
             }
@@ -2550,19 +2584,20 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static IReadOnlyList<ArtifactRef> ExtractChildDefinitions(Repro.ReproduceResult? result)
     {
         var definitions = new List<ArtifactRef>();
+        var seenDefinitionShas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (result is null)
         {
             return definitions;
         }
 
-        if (HasArtifactRef(result.ChildDef))
+        if (HasArtifactRef(result.ChildDef) && seenDefinitionShas.Add(result.ChildDef.ToSha256Hex()))
         {
             definitions.Add(result.ChildDef.Clone());
         }
 
         foreach (var run in result.Runs)
         {
-            if (HasArtifactRef(run.ChildDef))
+            if (HasArtifactRef(run.ChildDef) && seenDefinitionShas.Add(run.ChildDef.ToSha256Hex()))
             {
                 definitions.Add(run.ChildDef.Clone());
             }

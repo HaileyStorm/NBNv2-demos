@@ -971,6 +971,65 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_SkipsDuplicateOffspringDefinitions_DuringBreeding()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            ReuseSingleChildArtifactOnReproduce = true
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var final = await session.RunAsync(
+                new BasicsEnvironmentPlan(
+                    SelectedTask: new AndTaskPlugin().Contract,
+                    SeedTemplate: BasicsSeedTemplateContract.CreateDefault(),
+                    SizingOverrides: new BasicsSizingOverrides(),
+                    InitialBrainSeeds: Array.Empty<BasicsInitialBrainSeed>(),
+                    Capacity: new BasicsCapacityRecommendation(
+                        Source: BasicsCapacitySource.RuntimePlacementInventory,
+                        EligibleWorkerCount: 1,
+                        RecommendedInitialPopulationCount: 4,
+                        RecommendedReproductionRunCount: 4,
+                        RecommendedMaxConcurrentBrains: 1,
+                        CapacityScore: 1f,
+                        EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                        Summary: "test"),
+                    OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
+                    DiversityPreset: BasicsDiversityPreset.Medium,
+                    AdaptiveDiversity: new BasicsAdaptiveDiversityOptions(),
+                    Reproduction: BasicsReproductionPolicy.CreateDefault(),
+                    Scheduling: BasicsReproductionSchedulingPolicy.Default,
+                    Metrics: BasicsMetricsContract.Default,
+                    StopCriteria: new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 2,
+                        TargetAccuracy = 1.1f,
+                        TargetFitness = 1.1f
+                    },
+                    PlannedAtUtc: DateTimeOffset.UtcNow),
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.True(runtimeClient.ReproduceCallCount > 1, $"Expected duplicate offspring to force additional breeding attempts, observed {runtimeClient.ReproduceCallCount} reproduce call(s).");
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Running
+                            && snapshot.StatusText.Contains("Breeding generation 2...", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("Skipped", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("duplicate child definition", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_RetriesTransientSpawnFailures()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -1133,6 +1192,7 @@ public sealed class BasicsExecutionSessionTests
         private readonly Dictionary<string, string> _behaviorByArtifactSha = new(StringComparer.OrdinalIgnoreCase);
         private readonly string _artifactRoot = Path.Combine(Path.GetTempPath(), "nbn-basics-tests", Guid.NewGuid().ToString("N"));
         private readonly LocalArtifactStore _artifactStore;
+        private ArtifactRef? _reusedReproduceChildArtifact;
         private int _childIndex;
         private bool _epochStarted;
 
@@ -1160,6 +1220,7 @@ public sealed class BasicsExecutionSessionTests
         public string DefaultBehavior { get; init; } = "zero";
         public bool OnlyEmitOutputVectorOnChange { get; init; }
         public bool RequirePlacementWaitForVisibility { get; init; }
+        public bool ReuseSingleChildArtifactOnReproduce { get; init; }
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
         public int AwaitSpawnPlacementCallCount { get; private set; }
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
@@ -1581,7 +1642,9 @@ public sealed class BasicsExecutionSessionTests
             for (var runIndex = 0; runIndex < result.RequestedRunCount; runIndex++)
             {
                 var behavior = ReproduceCallCount >= 2 ? "and" : DefaultBehavior;
-                var child = CreateStoredDefinition(_childIndex++, behavior).Artifact;
+                var child = ReuseSingleChildArtifactOnReproduce
+                    ? (_reusedReproduceChildArtifact ??= CreateStoredDefinition(_childIndex++, behavior).Artifact).Clone()
+                    : CreateStoredDefinition(_childIndex++, behavior).Artifact;
                 result.Runs.Add(new Repro.ReproduceRunOutcome
                 {
                     RunIndex = (uint)runIndex,

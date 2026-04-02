@@ -50,6 +50,21 @@ public sealed class MultiplicationTaskPluginTests
     }
 
     [Fact]
+    public void Evaluate_DemotesSilentZeroBaseline()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var result = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset.Select((_, index) => new BasicsTaskObservation((ulong)(index + 1), 0f)).ToArray());
+
+        Assert.Equal(0.36f, result.Accuracy);
+        Assert.True(result.Fitness < 0.4f, $"Expected the silent baseline to be penalized, observed fitness {result.Fitness:0.###}.");
+        Assert.Equal(1f, result.ScoreBreakdown["unit_product_gap"]);
+        Assert.True(result.ScoreBreakdown["midrange_mean_absolute_error"] >= 0.35f);
+    }
+
+    [Fact]
     public void Evaluate_UsesToleranceAccuracy_ForNearMissOutputs()
     {
         var dataset = _plugin.BuildDeterministicDataset();

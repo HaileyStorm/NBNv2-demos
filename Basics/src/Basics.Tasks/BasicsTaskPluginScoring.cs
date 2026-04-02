@@ -129,7 +129,7 @@ internal static class BasicsTaskPluginScoring
         breakdown["zero_product_mean_output"] = zeroCount == 0 ? 0f : zeroOutputSum / zeroCount;
         breakdown["unit_product_gap"] = unitCount == 0 ? 0f : unitGapSum / unitCount;
         breakdown["midrange_mean_absolute_error"] = midrangeCount == 0 ? 0f : midrangeAbsoluteErrorSum / midrangeCount;
-        return CreateSuccess(outcomes, correct, accuracy, breakdown);
+        return CreateBoundedRegressionSuccess(outcomes, correct, accuracy, breakdown);
     }
 
     private static IReadOnlyList<DeterministicScalarOutcome>? TryBuildOutcomes(
@@ -285,10 +285,29 @@ internal static class BasicsTaskPluginScoring
         float accuracy,
         IReadOnlyDictionary<string, float> breakdown)
     {
+        var fitness = ComputeSharedFitness(accuracy, breakdown);
+
+        return new BasicsTaskEvaluationResult(
+            Fitness: fitness,
+            Accuracy: accuracy,
+            SamplesEvaluated: outcomes.Count,
+            SamplesCorrect: correct,
+            ScoreBreakdown: breakdown,
+            Diagnostics: Array.Empty<string>());
+    }
+
+    private static BasicsTaskEvaluationResult CreateBoundedRegressionSuccess(
+        IReadOnlyList<DeterministicScalarOutcome> outcomes,
+        int correct,
+        float accuracy,
+        IReadOnlyDictionary<string, float> breakdown)
+    {
+        var sharedFitness = ComputeSharedFitness(accuracy, breakdown);
+        var unitProductScore = 1f - Math.Clamp(breakdown["unit_product_gap"], 0f, 1f);
+        var midrangeScore = 1f - Math.Clamp(breakdown["midrange_mean_absolute_error"], 0f, 1f);
+        var structuredRegressionScore = (0.55f * unitProductScore) + (0.45f * midrangeScore);
         var fitness = Math.Clamp(
-            (0.50f * breakdown["target_proximity_fitness"])
-            + (0.35f * (1f - breakdown["mean_absolute_error"]))
-            + (0.15f * accuracy),
+            sharedFitness * (0.35f + (0.65f * structuredRegressionScore)),
             0f,
             1f);
 
@@ -300,6 +319,16 @@ internal static class BasicsTaskPluginScoring
             ScoreBreakdown: breakdown,
             Diagnostics: Array.Empty<string>());
     }
+
+    private static float ComputeSharedFitness(
+        float accuracy,
+        IReadOnlyDictionary<string, float> breakdown)
+        => Math.Clamp(
+            (0.50f * breakdown["target_proximity_fitness"])
+            + (0.35f * (1f - breakdown["mean_absolute_error"]))
+            + (0.15f * accuracy),
+            0f,
+            1f);
 
     private static BasicsTaskEvaluationResult CreateFailure(
         IReadOnlyList<string> diagnostics,
