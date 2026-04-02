@@ -21,7 +21,7 @@ public sealed record BasicsRuntimeClientOptions
     public int Port { get; init; } = 12074;
     public string? AdvertiseHost { get; init; }
     public int? AdvertisePort { get; init; }
-    public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(120);
 }
 
 public sealed record BasicsRuntimeOutputVector(Guid BrainId, ulong TickId, IReadOnlyList<float> Values);

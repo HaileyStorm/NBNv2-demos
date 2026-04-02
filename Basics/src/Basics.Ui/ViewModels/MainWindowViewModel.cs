@@ -78,7 +78,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _portText = "12094";
     private string _advertiseHost = NetworkAddressDefaults.ResolveDefaultAdvertisedHost();
     private string _advertisePortText = string.Empty;
-    private string _requestTimeoutSecondsText = "30";
+    private string _requestTimeoutSecondsText = "120";
     private string _optionalSettingsAddress = string.Empty;
     private string _optionalSettingsActorName = "SettingsMonitor";
     private string _connectionStatus = "Disconnected";
