@@ -46,6 +46,10 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(HasFitnessChartData),
         nameof(ShowAccuracyEmptyState),
         nameof(ShowFitnessEmptyState),
+        nameof(AccuracyChartValues),
+        nameof(BestAccuracyChartValues),
+        nameof(FitnessChartValues),
+        nameof(BestFitnessChartValues),
         nameof(AccuracyChartPoints),
         nameof(BestAccuracyChartPoints),
         nameof(FitnessChartPoints),
@@ -889,6 +893,14 @@ public sealed class MainWindowViewModel : ViewModelBase
     public bool ShowAccuracyEmptyState => !HasAccuracyChartData;
 
     public bool ShowFitnessEmptyState => !HasFitnessChartData;
+
+    public IReadOnlyList<float> AccuracyChartValues => _accuracyHistory;
+
+    public IReadOnlyList<float> BestAccuracyChartValues => BuildBestSoFarHistory(_bestAccuracyHistory);
+
+    public IReadOnlyList<float> FitnessChartValues => _fitnessHistory;
+
+    public IReadOnlyList<float> BestFitnessChartValues => BuildBestSoFarHistory(_bestFitnessHistory);
 
     public IReadOnlyList<Point> AccuracyChartPoints => BuildChartPoints(_accuracyHistory);
 
@@ -2112,7 +2124,6 @@ public sealed class MainWindowViewModel : ViewModelBase
         ExecutionStatus = snapshot.StatusText;
         ExecutionDetail = resolvedDetail;
         MetricsStatus = snapshot.StatusText;
-        MetricsSecondaryStatus = resolvedDetail;
         LastPlanSummary = $"Generation {snapshot.Generation} · population {snapshot.PopulationCount} · species {snapshot.SpeciesCount}.";
 
         ReplaceHistory(_accuracyHistory, snapshot.OffspringAccuracyHistory);
@@ -2688,6 +2699,10 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasFitnessChartData));
         OnPropertyChanged(nameof(ShowAccuracyEmptyState));
         OnPropertyChanged(nameof(ShowFitnessEmptyState));
+        OnPropertyChanged(nameof(AccuracyChartValues));
+        OnPropertyChanged(nameof(BestAccuracyChartValues));
+        OnPropertyChanged(nameof(FitnessChartValues));
+        OnPropertyChanged(nameof(BestFitnessChartValues));
         OnPropertyChanged(nameof(AccuracyChartPoints));
         OnPropertyChanged(nameof(BestAccuracyChartPoints));
         OnPropertyChanged(nameof(FitnessChartPoints));

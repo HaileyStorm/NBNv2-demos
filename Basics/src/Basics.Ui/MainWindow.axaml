@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ui="using:Nbn.Demos.Basics.Ui"
         xmlns:vm="using:Nbn.Demos.Basics.Ui.ViewModels"
         mc:Ignorable="d"
         x:Class="Nbn.Demos.Basics.Ui.MainWindow"
@@ -694,15 +695,12 @@
                                     CornerRadius="10"
                                     Padding="6"
                                     Background="#FBF8F1"
-                                    Height="480">
+                                    Height="720">
                                 <Grid ColumnDefinitions="Auto,*"
-                                      RowDefinitions="440,Auto"
-                                      ColumnSpacing="6"
-                                      RowSpacing="6"
+                                      ColumnSpacing="8"
                                       HorizontalAlignment="Stretch"
-                                      VerticalAlignment="Center">
-                                    <LayoutTransformControl Grid.Row="0"
-                                                            Grid.Column="0"
+                                      VerticalAlignment="Stretch">
+                                    <LayoutTransformControl Grid.Column="0"
                                                             HorizontalAlignment="Center"
                                                             VerticalAlignment="Center">
                                         <LayoutTransformControl.LayoutTransform>
@@ -712,143 +710,14 @@
                                                    FontSize="12"
                                                    Foreground="#6C7A89" />
                                     </LayoutTransformControl>
-                                    <Grid Grid.Row="0"
-                                          Grid.Column="1"
-                                          Height="440"
-                                          HorizontalAlignment="Stretch"
-                                          ColumnDefinitions="24,*"
-                                          RowDefinitions="8,414,18">
-                                        <ItemsControl Grid.Row="1"
-                                                      Grid.Column="0"
-                                                      Width="24"
-                                                      Height="414"
-                                                      Margin="0,0,4,0"
-                                                      ItemsSource="{Binding NormalizedValueAxisTicks}">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <Canvas />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate x:DataType="vm:ChartAxisValueTickItem">
-                                                    <TextBlock Canvas.Top="{Binding LabelTop}"
-                                                               Width="24"
-                                                               Text="{Binding LabelText}"
-                                                               FontSize="10"
-                                                               Foreground="#6C7A89"
-                                                               TextAlignment="Right" />
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                        <Grid Grid.Row="1"
-                                              Grid.Column="1"
-                                              ClipToBounds="True">
-                                            <Viewbox Stretch="Fill"
-                                                     StretchDirection="Both"
-                                                     IsVisible="{Binding HasAccuracyChartData}">
-                                                <Grid Width="299"
-                                                      Height="414"
-                                                      ClipToBounds="True">
-                                                    <Canvas Width="299"
-                                                            Height="414">
-                                                        <Polyline Points="{Binding AccuracyChartPoints}"
-                                                                  Stroke="#0E7490"
-                                                                  StrokeThickness="2" />
-                                                        <Polyline Points="{Binding BestAccuracyChartPoints}"
-                                                                  Stroke="#1D4ED8"
-                                                                  StrokeThickness="2"
-                                                                  StrokeDashArray="5,3" />
-                                                    </Canvas>
-                                                    <Border Width="1"
-                                                            Background="#D9D0C2"
-                                                            HorizontalAlignment="Left" />
-                                                    <Border Height="1"
-                                                            Background="#D9D0C2"
-                                                            VerticalAlignment="Bottom" />
-                                                    <ItemsControl Width="6"
-                                                                  Height="414"
-                                                                  IsHitTestVisible="False"
-                                                                  ItemsSource="{Binding NormalizedValueAxisTicks}">
-                                                        <ItemsControl.ItemsPanel>
-                                                            <ItemsPanelTemplate>
-                                                                <Canvas />
-                                                            </ItemsPanelTemplate>
-                                                        </ItemsControl.ItemsPanel>
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate x:DataType="vm:ChartAxisValueTickItem">
-                                                                <Border Canvas.Top="{Binding Y}"
-                                                                        Width="6"
-                                                                        Height="1"
-                                                                        Background="#D9D0C2" />
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                    <ItemsControl Width="299"
-                                                                  Height="6"
-                                                                  VerticalAlignment="Bottom"
-                                                                  ItemsSource="{Binding AccuracyGenerationTicks}">
-                                                        <ItemsControl.ItemsPanel>
-                                                            <ItemsPanelTemplate>
-                                                                <Canvas />
-                                                            </ItemsPanelTemplate>
-                                                        </ItemsControl.ItemsPanel>
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate x:DataType="vm:ChartAxisTickItem">
-                                                                <Border Canvas.Left="{Binding X}"
-                                                                        Canvas.Top="0"
-                                                                        Width="1"
-                                                                        Height="6"
-                                                                        Background="#D9D0C2" />
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                </Grid>
-                                            </Viewbox>
-                                            <TextBlock IsVisible="{Binding ShowAccuracyEmptyState}"
-                                                       Text="No runtime accuracy samples yet."
-                                                       Foreground="#6C7A89"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"
-                                                       TextAlignment="Center" />
-                                        </Grid>
-                                        <Viewbox Grid.Row="2"
-                                                 Grid.Column="1"
-                                                 Margin="0,2,0,0"
-                                                 HorizontalAlignment="Stretch"
-                                                 Stretch="Fill"
-                                                 StretchDirection="Both">
-                                            <ItemsControl Width="299"
-                                                          Height="18"
-                                                          ItemsSource="{Binding AccuracyGenerationTicks}">
-                                                <ItemsControl.ItemsPanel>
-                                                    <ItemsPanelTemplate>
-                                                        <Canvas />
-                                                    </ItemsPanelTemplate>
-                                                </ItemsControl.ItemsPanel>
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate x:DataType="vm:ChartAxisTickItem">
-                                                        <TextBlock Canvas.Left="{Binding LabelLeft}"
-                                                                   Canvas.Top="0"
-                                                                   Width="18"
-                                                                   Text="{Binding LabelText}"
-                                                                   FontSize="9"
-                                                                   Foreground="#6C7A89"
-                                                                   TextAlignment="Center" />
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </Viewbox>
-                                    </Grid>
-                                    <Grid Grid.Row="1"
-                                          Grid.Column="1"
-                                          ColumnDefinitions="24,*">
-                                        <TextBlock Grid.Column="1"
-                                                   Text="Generation"
-                                                   FontSize="12"
-                                                   Foreground="#6C7A89"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center" />
-                                    </Grid>
+                                    <ui:MetricLineChart Grid.Column="1"
+                                                        PrimaryValues="{Binding AccuracyChartValues}"
+                                                        SecondaryValues="{Binding BestAccuracyChartValues}"
+                                                        PrimaryStroke="#0E7490"
+                                                        SecondaryStroke="#1D4ED8"
+                                                        EmptyText="No runtime accuracy samples yet."
+                                                        HorizontalAlignment="Stretch"
+                                                        VerticalAlignment="Stretch" />
                                 </Grid>
                             </Border>
                             <TextBlock Text="{Binding MetricsStatus}"
@@ -866,15 +735,12 @@
                                     CornerRadius="10"
                                     Padding="6"
                                     Background="#FBF8F1"
-                                    Height="480">
+                                    Height="720">
                                 <Grid ColumnDefinitions="Auto,*"
-                                      RowDefinitions="440,Auto"
-                                      ColumnSpacing="6"
-                                      RowSpacing="6"
+                                      ColumnSpacing="8"
                                       HorizontalAlignment="Stretch"
-                                      VerticalAlignment="Center">
-                                    <LayoutTransformControl Grid.Row="0"
-                                                            Grid.Column="0"
+                                      VerticalAlignment="Stretch">
+                                    <LayoutTransformControl Grid.Column="0"
                                                             HorizontalAlignment="Center"
                                                             VerticalAlignment="Center">
                                         <LayoutTransformControl.LayoutTransform>
@@ -884,143 +750,14 @@
                                                    FontSize="12"
                                                    Foreground="#6C7A89" />
                                     </LayoutTransformControl>
-                                    <Grid Grid.Row="0"
-                                          Grid.Column="1"
-                                          Height="440"
-                                          HorizontalAlignment="Stretch"
-                                          ColumnDefinitions="24,*"
-                                          RowDefinitions="8,414,18">
-                                        <ItemsControl Grid.Row="1"
-                                                      Grid.Column="0"
-                                                      Width="24"
-                                                      Height="414"
-                                                      Margin="0,0,4,0"
-                                                      ItemsSource="{Binding NormalizedValueAxisTicks}">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <Canvas />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate x:DataType="vm:ChartAxisValueTickItem">
-                                                    <TextBlock Canvas.Top="{Binding LabelTop}"
-                                                               Width="24"
-                                                               Text="{Binding LabelText}"
-                                                               FontSize="10"
-                                                               Foreground="#6C7A89"
-                                                               TextAlignment="Right" />
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                        <Grid Grid.Row="1"
-                                              Grid.Column="1"
-                                              ClipToBounds="True">
-                                            <Viewbox Stretch="Fill"
-                                                     StretchDirection="Both"
-                                                     IsVisible="{Binding HasFitnessChartData}">
-                                                <Grid Width="299"
-                                                      Height="414"
-                                                      ClipToBounds="True">
-                                                    <Canvas Width="299"
-                                                            Height="414">
-                                                        <Polyline Points="{Binding FitnessChartPoints}"
-                                                                  Stroke="#A16207"
-                                                                  StrokeThickness="2" />
-                                                        <Polyline Points="{Binding BestFitnessChartPoints}"
-                                                                  Stroke="#92400E"
-                                                                  StrokeThickness="2"
-                                                                  StrokeDashArray="5,3" />
-                                                    </Canvas>
-                                                    <Border Width="1"
-                                                            Background="#D9D0C2"
-                                                            HorizontalAlignment="Left" />
-                                                    <Border Height="1"
-                                                            Background="#D9D0C2"
-                                                            VerticalAlignment="Bottom" />
-                                                    <ItemsControl Width="6"
-                                                                  Height="414"
-                                                                  IsHitTestVisible="False"
-                                                                  ItemsSource="{Binding NormalizedValueAxisTicks}">
-                                                        <ItemsControl.ItemsPanel>
-                                                            <ItemsPanelTemplate>
-                                                                <Canvas />
-                                                            </ItemsPanelTemplate>
-                                                        </ItemsControl.ItemsPanel>
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate x:DataType="vm:ChartAxisValueTickItem">
-                                                                <Border Canvas.Top="{Binding Y}"
-                                                                        Width="6"
-                                                                        Height="1"
-                                                                        Background="#D9D0C2" />
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                    <ItemsControl Width="299"
-                                                                  Height="6"
-                                                                  VerticalAlignment="Bottom"
-                                                                  ItemsSource="{Binding FitnessGenerationTicks}">
-                                                        <ItemsControl.ItemsPanel>
-                                                            <ItemsPanelTemplate>
-                                                                <Canvas />
-                                                            </ItemsPanelTemplate>
-                                                        </ItemsControl.ItemsPanel>
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate x:DataType="vm:ChartAxisTickItem">
-                                                                <Border Canvas.Left="{Binding X}"
-                                                                        Canvas.Top="0"
-                                                                        Width="1"
-                                                                        Height="6"
-                                                                        Background="#D9D0C2" />
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                </Grid>
-                                            </Viewbox>
-                                            <TextBlock IsVisible="{Binding ShowFitnessEmptyState}"
-                                                       Text="No runtime fitness samples yet."
-                                                       Foreground="#6C7A89"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"
-                                                       TextAlignment="Center" />
-                                        </Grid>
-                                        <Viewbox Grid.Row="2"
-                                                 Grid.Column="1"
-                                                 Margin="0,2,0,0"
-                                                 HorizontalAlignment="Stretch"
-                                                 Stretch="Fill"
-                                                 StretchDirection="Both">
-                                            <ItemsControl Width="299"
-                                                          Height="18"
-                                                          ItemsSource="{Binding FitnessGenerationTicks}">
-                                                <ItemsControl.ItemsPanel>
-                                                    <ItemsPanelTemplate>
-                                                        <Canvas />
-                                                    </ItemsPanelTemplate>
-                                                </ItemsControl.ItemsPanel>
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate x:DataType="vm:ChartAxisTickItem">
-                                                        <TextBlock Canvas.Left="{Binding LabelLeft}"
-                                                                   Canvas.Top="0"
-                                                                   Width="18"
-                                                                   Text="{Binding LabelText}"
-                                                                   FontSize="9"
-                                                                   Foreground="#6C7A89"
-                                                                   TextAlignment="Center" />
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </Viewbox>
-                                    </Grid>
-                                    <Grid Grid.Row="1"
-                                          Grid.Column="1"
-                                          ColumnDefinitions="24,*">
-                                        <TextBlock Grid.Column="1"
-                                                   Text="Generation"
-                                                   FontSize="12"
-                                                   Foreground="#6C7A89"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center" />
-                                    </Grid>
+                                    <ui:MetricLineChart Grid.Column="1"
+                                                        PrimaryValues="{Binding FitnessChartValues}"
+                                                        SecondaryValues="{Binding BestFitnessChartValues}"
+                                                        PrimaryStroke="#A16207"
+                                                        SecondaryStroke="#92400E"
+                                                        EmptyText="No runtime fitness samples yet."
+                                                        HorizontalAlignment="Stretch"
+                                                        VerticalAlignment="Stretch" />
                                 </Grid>
                             </Border>
                             <TextBlock Text="{Binding MetricsSecondaryStatus}"
