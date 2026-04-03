@@ -1166,6 +1166,57 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_DefaultPlacementWait_UsesRuntimeManagedBudget()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "or",
+            RequirePlacementWaitForVisibility = true,
+            AwaitPlacementDelay = TimeSpan.FromSeconds(6)
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var plan = CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1
+                    },
+                    new OrTaskPlugin()) with
+            {
+                Capacity = new BasicsCapacityRecommendation(
+                    Source: BasicsCapacitySource.RuntimePlacementInventory,
+                    EligibleWorkerCount: 1,
+                    RecommendedInitialPopulationCount: 1,
+                    RecommendedReproductionRunCount: 1,
+                    RecommendedMaxConcurrentBrains: 1,
+                    CapacityScore: 1f,
+                    EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                    Summary: "test")
+            };
+
+            var final = await session.RunAsync(
+                plan,
+                new OrTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.NotEqual(BasicsExecutionState.Failed, final.State);
+            Assert.True(runtimeClient.AwaitSpawnPlacementCallCount > 0);
+            Assert.NotEmpty(runtimeClient.AwaitPlacementTimeouts);
+            Assert.All(
+                runtimeClient.AwaitPlacementTimeouts,
+                timeout => Assert.Equal(TimeSpan.Zero, timeout));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_KeepsAtLeastTwoBrains_WhenReproductionProducesNoChildren()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -1724,6 +1775,7 @@ public sealed class BasicsExecutionSessionTests
         public List<(Guid BrainId, bool Enabled)> SetHomeostasisEnabledRequests { get; } = new();
         public List<(Guid BrainId, bool ResetBuffer, bool ResetAccumulator)> ResetBrainRuntimeStateRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
+        public List<TimeSpan> AwaitPlacementTimeouts { get; } = new();
         public List<TimeSpan> VectorWaitTimeouts { get; } = new();
         public List<TimeSpan> EventWaitTimeouts { get; } = new();
         public ConcurrentQueue<DateTimeOffset> SpawnRequestStartedAtUtc { get; } = new();
@@ -1818,6 +1870,7 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             AwaitSpawnPlacementCallCount++;
+            AwaitPlacementTimeouts.Add(timeout);
             var active = Interlocked.Increment(ref _activePlacementWaits);
             UpdateMaxObservedConcurrentPlacementWaits(active);
             try
