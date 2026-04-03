@@ -111,6 +111,7 @@ internal sealed record HarnessFileConfig
                 SizingOverrides = new BasicsSizingOverrides
                 {
                     InitialPopulationCount = normalizedEnvironment.Sizing.InitialPopulationCount,
+                    MinimumPopulationCount = normalizedEnvironment.Sizing.MinimumPopulationCount,
                     ReproductionRunCount = normalizedEnvironment.Sizing.ReproductionRunCount,
                     MaxConcurrentBrains = normalizedEnvironment.Sizing.MaxConcurrentBrains
                 },
@@ -207,7 +208,7 @@ internal sealed record HarnessEnvironmentConfig
     public string TaskId { get; init; } = "and";
     public string OutputObservationMode { get; init; } = "continuous-potential";
     public int MaxReadyWindowTicks { get; init; } = 4;
-    public int SampleRepeatCount { get; init; } = 1;
+    public int SampleRepeatCount { get; init; } = 2;
     public string StrengthSource { get; init; } = "base-only";
     public HarnessTemplateConfig Template { get; init; } = new();
     public HarnessSizingConfig Sizing { get; init; } = new();
@@ -246,9 +247,10 @@ internal sealed record HarnessSeedShapeConfig
 
 internal sealed record HarnessSizingConfig
 {
-    public int? InitialPopulationCount { get; init; } = 256;
+    public int? InitialPopulationCount { get; init; } = 32;
+    public int? MinimumPopulationCount { get; init; }
     public uint? ReproductionRunCount { get; init; } = 8;
-    public int? MaxConcurrentBrains { get; init; } = 128;
+    public int? MaxConcurrentBrains { get; init; } = 32;
 }
 
 internal sealed record HarnessSchedulingConfig

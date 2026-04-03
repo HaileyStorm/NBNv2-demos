@@ -55,7 +55,8 @@ public static class BasicsTaskExecutionProfiles
         OutputObservationMode: BasicsOutputObservationMode.EventedOutput,
         OutputSamplingPolicy: new BasicsOutputSamplingPolicy
         {
-            MaxReadyWindowTicks = 4
+            MaxReadyWindowTicks = 4,
+            SampleRepeatCount = 2
         },
         DiversityPreset: BasicsDiversityPreset.Low,
         VariationBand: new BasicsSeedVariationBand
@@ -71,9 +72,9 @@ public static class BasicsTaskExecutionProfiles
         SeedShape: new BasicsSeedShapeConstraints(),
         Sizing: new BasicsSizingOverrides
         {
-            InitialPopulationCount = 4,
+            InitialPopulationCount = 32,
             ReproductionRunCount = 1,
-            MaxConcurrentBrains = 2
+            MaxConcurrentBrains = 32
         },
         Scheduling: new BasicsReproductionSchedulingPolicy
         {
@@ -102,7 +103,8 @@ public static class BasicsTaskExecutionProfiles
         OutputObservationMode = BasicsOutputObservationMode.VectorPotential,
         OutputSamplingPolicy = new BasicsOutputSamplingPolicy
         {
-            MaxReadyWindowTicks = 4
+            MaxReadyWindowTicks = 4,
+            SampleRepeatCount = 2
         },
         DiversityPreset = BasicsDiversityPreset.High,
         VariationBand = new BasicsSeedVariationBand
@@ -126,9 +128,9 @@ public static class BasicsTaskExecutionProfiles
         },
         Sizing = new BasicsSizingOverrides
         {
-            InitialPopulationCount = 4,
+            InitialPopulationCount = 32,
             ReproductionRunCount = 4,
-            MaxConcurrentBrains = 64
+            MaxConcurrentBrains = 32
         },
         Scheduling = BasicsDiversityTuning.CreateScheduling(BasicsDiversityPreset.High)
     };
@@ -140,7 +142,8 @@ public static class BasicsTaskExecutionProfiles
         OutputObservationMode = BasicsOutputObservationMode.EventedOutput,
         OutputSamplingPolicy = new BasicsOutputSamplingPolicy
         {
-            MaxReadyWindowTicks = 8
+            MaxReadyWindowTicks = 5,
+            SampleRepeatCount = 2
         },
         VariationBand = RicherExplorationProfile.VariationBand with
         {
@@ -148,11 +151,11 @@ public static class BasicsTaskExecutionProfiles
         },
         Sizing = new BasicsSizingOverrides
         {
-            InitialPopulationCount = 24,
-            MinimumPopulationCount = 12,
+            InitialPopulationCount = 32,
+            MinimumPopulationCount = 32,
             MaximumPopulationCount = 64,
             ReproductionRunCount = 3,
-            MaxConcurrentBrains = 64
+            MaxConcurrentBrains = 32
         }
     };
 

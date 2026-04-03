@@ -463,7 +463,7 @@ public sealed record BasicsOutputSamplingPolicy
     public const int MaximumSampleRepeatCount = 5;
 
     public int MaxReadyWindowTicks { get; init; } = 4;
-    public int SampleRepeatCount { get; init; } = 1;
+    public int SampleRepeatCount { get; init; } = 2;
     public float VectorReadyThreshold { get; init; } = 0.5f;
 
     public BasicsContractValidationResult Validate()

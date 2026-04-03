@@ -15,9 +15,10 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.True(profile.VariationBand.AllowFunctionMutation);
         Assert.Equal(1, profile.SeedShape.MinActiveInternalRegionCount);
         Assert.Equal(6, profile.SeedShape.MaxInternalNeuronCount);
-        Assert.Equal(4, profile.Sizing.InitialPopulationCount);
+        Assert.Equal(32, profile.Sizing.InitialPopulationCount);
         Assert.Equal((uint)4, profile.Sizing.ReproductionRunCount);
-        Assert.Equal(64, profile.Sizing.MaxConcurrentBrains);
+        Assert.Equal(32, profile.Sizing.MaxConcurrentBrains);
+        Assert.Equal(2, profile.OutputSamplingPolicy.SampleRepeatCount);
         Assert.Equal(0.25d, profile.Scheduling.ParentSelection.EliteFraction);
         Assert.Equal(0.53d, profile.Scheduling.ParentSelection.ExplorationFraction);
         Assert.Equal((uint)8, profile.Scheduling.RunAllocation.MaxRunsPerPair);
@@ -33,15 +34,16 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(BasicsOutputObservationMode.EventedOutput, profile.OutputObservationMode);
         Assert.Equal(1, profile.VariationBand.MaxInternalNeuronDelta);
         Assert.False(profile.VariationBand.AllowFunctionMutation);
-        Assert.Equal(4, profile.Sizing.InitialPopulationCount);
+        Assert.Equal(32, profile.Sizing.InitialPopulationCount);
         Assert.Equal((uint)1, profile.Sizing.ReproductionRunCount);
-        Assert.Equal(2, profile.Sizing.MaxConcurrentBrains);
+        Assert.Equal(32, profile.Sizing.MaxConcurrentBrains);
         Assert.Equal(0.35d, profile.Scheduling.ParentSelection.DiversityWeight);
         Assert.Equal((uint)12, profile.Scheduling.RunAllocation.MaxRunsPerPair);
         Assert.NotNull(profile.TaskSettings);
         Assert.Equal(0f, profile.TaskSettings!.BooleanTruthTable.LowInputValue);
         Assert.Equal(1f, profile.TaskSettings.BooleanTruthTable.HighInputValue);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
+        Assert.Equal(2, profile.OutputSamplingPolicy.SampleRepeatCount);
     }
 
     [Fact]
@@ -50,12 +52,13 @@ public sealed class BasicsTaskExecutionProfilesTests
         var profile = BasicsTaskExecutionProfiles.Resolve("gt");
 
         Assert.Equal(BasicsOutputObservationMode.EventedOutput, profile.OutputObservationMode);
-        Assert.Equal(4, profile.Sizing.InitialPopulationCount);
+        Assert.Equal(32, profile.Sizing.InitialPopulationCount);
         Assert.Equal((uint)1, profile.Sizing.ReproductionRunCount);
-        Assert.Equal(2, profile.Sizing.MaxConcurrentBrains);
+        Assert.Equal(32, profile.Sizing.MaxConcurrentBrains);
         Assert.NotNull(profile.TaskSettings);
         Assert.Equal(3, profile.TaskSettings!.Gt.UniqueInputValueCount);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
+        Assert.Equal(2, profile.OutputSamplingPolicy.SampleRepeatCount);
     }
 
     [Fact]
@@ -67,11 +70,11 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(3, profile.VariationBand.MaxInternalNeuronDelta);
         Assert.Equal(14, profile.VariationBand.MaxAxonDelta);
         Assert.True(profile.VariationBand.AllowFunctionMutation);
-        Assert.Equal(24, profile.Sizing.InitialPopulationCount);
-        Assert.Equal(12, profile.Sizing.MinimumPopulationCount);
+        Assert.Equal(32, profile.Sizing.InitialPopulationCount);
+        Assert.Equal(32, profile.Sizing.MinimumPopulationCount);
         Assert.Equal(64, profile.Sizing.MaximumPopulationCount);
         Assert.Equal((uint)3, profile.Sizing.ReproductionRunCount);
-        Assert.Equal(64, profile.Sizing.MaxConcurrentBrains);
+        Assert.Equal(32, profile.Sizing.MaxConcurrentBrains);
         Assert.Equal(0.43d, profile.Scheduling.ParentSelection.DiversityWeight);
         Assert.Equal(0.53d, profile.Scheduling.ParentSelection.ExplorationFraction);
         Assert.Equal((uint)3, profile.Scheduling.RunAllocation.MinRunsPerPair);
@@ -81,7 +84,8 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.NotNull(profile.TaskSettings);
         Assert.Equal(5, profile.TaskSettings!.Multiplication.UniqueInputValueCount);
         Assert.Equal(0.05f, profile.TaskSettings.Multiplication.AccuracyTolerance);
-        Assert.Equal(8, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
+        Assert.Equal(5, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
+        Assert.Equal(2, profile.OutputSamplingPolicy.SampleRepeatCount);
     }
 
     [Fact]

@@ -203,6 +203,14 @@ public sealed class BasicsContractTests
     }
 
     [Fact]
+    public void OutputSamplingPolicy_DefaultsToTwoSampleRepeats()
+    {
+        var policy = new BasicsOutputSamplingPolicy();
+
+        Assert.Equal(2, policy.SampleRepeatCount);
+    }
+
+    [Fact]
     public void InitialBrainSeedValidation_RejectsLegacyGeometryOutsideUiImportPath()
     {
         var legacyBytes = DemoNbnBuilder.BuildSampleNbn();

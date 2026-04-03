@@ -155,7 +155,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _requireBothStopTargets = true;
     private string _maximumGenerationsText = string.Empty;
     private string _maxReadyWindowTicksText = "4";
-    private string _sampleRepeatCountText = "1";
+    private string _sampleRepeatCountText = "2";
     private string _booleanLowInputValueText = "0.0";
     private string _booleanHighInputValueText = "1.0";
     private string _gtUniqueInputValuesText = "3";
