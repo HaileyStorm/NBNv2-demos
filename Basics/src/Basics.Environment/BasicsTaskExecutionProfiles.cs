@@ -56,7 +56,7 @@ public static class BasicsTaskExecutionProfiles
         OutputSamplingPolicy: new BasicsOutputSamplingPolicy
         {
             MaxReadyWindowTicks = 4,
-            SampleRepeatCount = 2
+            SampleRepeatCount = 3
         },
         DiversityPreset: BasicsDiversityPreset.Low,
         VariationBand: new BasicsSeedVariationBand
@@ -104,7 +104,7 @@ public static class BasicsTaskExecutionProfiles
         OutputSamplingPolicy = new BasicsOutputSamplingPolicy
         {
             MaxReadyWindowTicks = 4,
-            SampleRepeatCount = 2
+            SampleRepeatCount = 3
         },
         DiversityPreset = BasicsDiversityPreset.High,
         VariationBand = new BasicsSeedVariationBand
@@ -143,7 +143,7 @@ public static class BasicsTaskExecutionProfiles
         OutputSamplingPolicy = new BasicsOutputSamplingPolicy
         {
             MaxReadyWindowTicks = 5,
-            SampleRepeatCount = 2
+            SampleRepeatCount = 3
         },
         VariationBand = RicherExplorationProfile.VariationBand with
         {

@@ -207,7 +207,7 @@ public sealed class BasicsContractTests
     {
         var policy = new BasicsOutputSamplingPolicy();
 
-        Assert.Equal(2, policy.SampleRepeatCount);
+        Assert.Equal(3, policy.SampleRepeatCount);
     }
 
     [Fact]

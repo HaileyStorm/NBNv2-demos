@@ -18,7 +18,7 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(32, profile.Sizing.InitialPopulationCount);
         Assert.Equal((uint)4, profile.Sizing.ReproductionRunCount);
         Assert.Equal(32, profile.Sizing.MaxConcurrentBrains);
-        Assert.Equal(2, profile.OutputSamplingPolicy.SampleRepeatCount);
+        Assert.Equal(3, profile.OutputSamplingPolicy.SampleRepeatCount);
         Assert.Equal(0.25d, profile.Scheduling.ParentSelection.EliteFraction);
         Assert.Equal(0.53d, profile.Scheduling.ParentSelection.ExplorationFraction);
         Assert.Equal((uint)8, profile.Scheduling.RunAllocation.MaxRunsPerPair);
@@ -43,7 +43,7 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(0f, profile.TaskSettings!.BooleanTruthTable.LowInputValue);
         Assert.Equal(1f, profile.TaskSettings.BooleanTruthTable.HighInputValue);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
-        Assert.Equal(2, profile.OutputSamplingPolicy.SampleRepeatCount);
+        Assert.Equal(3, profile.OutputSamplingPolicy.SampleRepeatCount);
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.NotNull(profile.TaskSettings);
         Assert.Equal(3, profile.TaskSettings!.Gt.UniqueInputValueCount);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
-        Assert.Equal(2, profile.OutputSamplingPolicy.SampleRepeatCount);
+        Assert.Equal(3, profile.OutputSamplingPolicy.SampleRepeatCount);
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(5, profile.TaskSettings!.Multiplication.UniqueInputValueCount);
         Assert.Equal(0.05f, profile.TaskSettings.Multiplication.AccuracyTolerance);
         Assert.Equal(5, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
-        Assert.Equal(2, profile.OutputSamplingPolicy.SampleRepeatCount);
+        Assert.Equal(3, profile.OutputSamplingPolicy.SampleRepeatCount);
     }
 
     [Fact]
