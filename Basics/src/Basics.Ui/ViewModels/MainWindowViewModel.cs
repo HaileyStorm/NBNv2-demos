@@ -3049,9 +3049,6 @@ public sealed class MainWindowViewModel : ViewModelBase
             _ => "medium"
         };
 
-    private static string FormatReadyTickCount(float readyTickCount)
-        => readyTickCount.ToString("0.##", CultureInfo.InvariantCulture);
-
     private static string FormatStopCriteria(BasicsExecutionStopCriteria stopCriteria)
         => stopCriteria.RequireBothTargets
             ? $"both accuracy >= {stopCriteria.TargetAccuracy:0.###} and fitness >= {stopCriteria.TargetFitness:0.###}"
