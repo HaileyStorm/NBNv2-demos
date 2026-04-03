@@ -1100,7 +1100,7 @@ public sealed class BasicsExecutionSessionTests
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
             Assert.NotEqual(BasicsExecutionState.Succeeded, final.State);
-            Assert.Equal(2, runtimeClient.SpawnRequestCount);
+            Assert.Equal(4, runtimeClient.SpawnRequestCount);
             Assert.Contains(
                 snapshots,
                 snapshot => snapshot.State == BasicsExecutionState.Running
@@ -1152,7 +1152,7 @@ public sealed class BasicsExecutionSessionTests
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
             Assert.NotEqual(BasicsExecutionState.Succeeded, final.State);
-            Assert.Equal(2, runtimeClient.SpawnRequestCount);
+            Assert.Equal(4, runtimeClient.SpawnRequestCount);
             Assert.DoesNotContain(
                 snapshots,
                 snapshot => snapshot.State == BasicsExecutionState.Running
@@ -1209,6 +1209,61 @@ public sealed class BasicsExecutionSessionTests
             Assert.All(
                 runtimeClient.AwaitPlacementTimeouts,
                 timeout => Assert.Equal(TimeSpan.Zero, timeout));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_DoesNotAbortBatch_For_IsolatedSpawnInternalErrors()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            PersistentSpawnFailureCount = 3,
+            PersistentSpawnFailureCode = "spawn_internal_error",
+            PersistentSpawnFailureMessage = "artifact-backed shard load failed"
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var plan = CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1,
+                        TargetAccuracy = 1.1f,
+                        TargetFitness = 1.1f
+                    },
+                    new AndTaskPlugin()) with
+            {
+                Capacity = new BasicsCapacityRecommendation(
+                    Source: BasicsCapacitySource.RuntimePlacementInventory,
+                    EligibleWorkerCount: 1,
+                    RecommendedInitialPopulationCount: 2,
+                    RecommendedReproductionRunCount: 1,
+                    RecommendedMaxConcurrentBrains: 2,
+                    CapacityScore: 1f,
+                    EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                    Summary: "test")
+            };
+
+            var final = await session.RunAsync(
+                plan,
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.NotEqual(BasicsExecutionState.Failed, final.State);
+            Assert.True(runtimeClient.SpawnRequestCount > 3);
+            Assert.DoesNotContain(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Failed
+                            && snapshot.DetailText.Contains("aborted after unrecoverable spawn failure", StringComparison.Ordinal));
         }
         finally
         {
@@ -1753,6 +1808,9 @@ public sealed class BasicsExecutionSessionTests
         public int? ReturnNoChildrenOnReproduceCallNumber { get; init; }
         public int? ReturnNoChildrenStartingAtReproduceCallNumber { get; init; }
         public int TransientSpawnFailureCount { get; set; }
+        public int PersistentSpawnFailureCount { get; set; }
+        public string PersistentSpawnFailureCode { get; init; } = "spawn_internal_error";
+        public string PersistentSpawnFailureMessage { get; init; } = "persistent_test_failure";
         public TimeSpan SpawnDelay { get; init; }
         public TimeSpan ReproduceDelay { get; init; }
         public string DefaultBehavior { get; init; } = "zero";
@@ -1834,6 +1892,22 @@ public sealed class BasicsExecutionSessionTests
                             PlacementReady = false,
                             FailureReasonCode = "spawn_request_failed",
                             FailureMessage = "transient_test_failure"
+                        }
+                    };
+                }
+
+                if (PersistentSpawnFailureCount > 0)
+                {
+                    PersistentSpawnFailureCount--;
+                    return new SpawnBrainViaIOAck
+                    {
+                        Ack = new SpawnBrainAck
+                        {
+                            BrainId = Guid.NewGuid().ToProtoUuid(),
+                            AcceptedForPlacement = false,
+                            PlacementReady = false,
+                            FailureReasonCode = PersistentSpawnFailureCode,
+                            FailureMessage = PersistentSpawnFailureMessage
                         }
                     };
                 }

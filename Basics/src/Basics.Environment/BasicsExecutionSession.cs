@@ -1591,8 +1591,29 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     }
 
     private static bool IsFatalSpawnFailure(BasicsTaskEvaluationResult? evaluation)
-        => evaluation is not null
-           && ResolveFailureCategory(evaluation) is "spawn_failed" or "spawn_not_placed";
+    {
+        if (evaluation is null)
+        {
+            return false;
+        }
+
+        var failureCategory = ResolveFailureCategory(evaluation);
+        if (failureCategory is not ("spawn_failed" or "spawn_not_placed"))
+        {
+            return false;
+        }
+
+        var diagnostic = evaluation.Diagnostics.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        if (string.IsNullOrWhiteSpace(diagnostic))
+        {
+            return false;
+        }
+
+        return diagnostic.Contains("spawn_unavailable", StringComparison.Ordinal)
+               || diagnostic.Contains("spawn_request_failed", StringComparison.Ordinal)
+               || diagnostic.Contains("spawn_empty_response", StringComparison.Ordinal)
+               || diagnostic.Contains("spawn_invalid_request", StringComparison.Ordinal);
+    }
 
     private static bool ShouldForceProgressPublish(InFlightBrainPhase phase)
         => phase is InFlightBrainPhase.RequestingSpawn
