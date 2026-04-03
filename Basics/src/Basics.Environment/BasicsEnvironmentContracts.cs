@@ -345,7 +345,12 @@ public enum BasicsMetricId
     LatestBatchDuration = 10,
     LatestSetupDuration = 11,
     LatestObservationDuration = 12,
-    OffspringBestFitness = 13
+    OffspringBestFitness = 13,
+    BestCandidateFitness = 14,
+    BestCandidateGeneration = 15,
+    BestCandidateAverageReadyTicks = 16,
+    BestCandidateReadyTickRange = 17,
+    BestCandidateReadyTickStdDev = 18
 }
 
 public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> RequiredMetrics)
@@ -357,6 +362,11 @@ public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> Require
             BasicsMetricId.BestAccuracy,
             BasicsMetricId.BestFitness,
             BasicsMetricId.OffspringBestFitness,
+            BasicsMetricId.BestCandidateFitness,
+            BasicsMetricId.BestCandidateGeneration,
+            BasicsMetricId.BestCandidateAverageReadyTicks,
+            BasicsMetricId.BestCandidateReadyTickRange,
+            BasicsMetricId.BestCandidateReadyTickStdDev,
             BasicsMetricId.MeanFitness,
             BasicsMetricId.PopulationCount,
             BasicsMetricId.ActiveBrainCount,
@@ -449,8 +459,11 @@ public sealed record BasicsOutputSamplingPolicy
 {
     public const int MinimumReadyWindowTicks = 1;
     public const int MaximumReadyWindowTicks = 64;
+    public const int MinimumSampleRepeatCount = 1;
+    public const int MaximumSampleRepeatCount = 5;
 
     public int MaxReadyWindowTicks { get; init; } = 4;
+    public int SampleRepeatCount { get; init; } = 1;
     public float VectorReadyThreshold { get; init; } = 0.5f;
 
     public BasicsContractValidationResult Validate()
@@ -459,6 +472,11 @@ public sealed record BasicsOutputSamplingPolicy
         if (MaxReadyWindowTicks < MinimumReadyWindowTicks || MaxReadyWindowTicks > MaximumReadyWindowTicks)
         {
             errors.Add($"Ready window ticks must be between {MinimumReadyWindowTicks} and {MaximumReadyWindowTicks}.");
+        }
+
+        if (SampleRepeatCount < MinimumSampleRepeatCount || SampleRepeatCount > MaximumSampleRepeatCount)
+        {
+            errors.Add($"Sample repeat count must be between {MinimumSampleRepeatCount} and {MaximumSampleRepeatCount}.");
         }
 
         if (!float.IsFinite(VectorReadyThreshold) || VectorReadyThreshold < 0f || VectorReadyThreshold > 1f)
@@ -708,7 +726,7 @@ public readonly record struct BasicsTaskSample(
     ulong DelayTicks = 0,
     string Label = "");
 
-public readonly record struct BasicsTaskObservation(ulong TickId, float OutputValue);
+public readonly record struct BasicsTaskObservation(ulong TickId, float OutputValue, float ReadyTickCount = 0f);
 
 public sealed record BasicsTaskEvaluationResult(
     float Fitness,
@@ -716,7 +734,12 @@ public sealed record BasicsTaskEvaluationResult(
     int SamplesEvaluated,
     int SamplesCorrect,
     IReadOnlyDictionary<string, float> ScoreBreakdown,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics,
+    float? AverageReadyTickCount = null,
+    float? MinReadyTickCount = null,
+    float? MedianReadyTickCount = null,
+    float? MaxReadyTickCount = null,
+    float? ReadyTickStdDev = null);
 
 public interface IBasicsTaskPlugin
 {

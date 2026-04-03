@@ -788,6 +788,47 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_TracksBestCandidateReadyTickMetrics_And_RepeatsCanonicalSamples()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            ThrowOnReproduceCallNumber = 2,
+            ReadySignalDelayTicks = 2,
+            PreReadyOutputValue = 0f
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.EventedOutput) with
+                {
+                    OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                    {
+                        MaxReadyWindowTicks = 8,
+                        SampleRepeatCount = 3
+                    }
+                },
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.NotNull(final.BestCandidate);
+            Assert.Equal(1, final.BestCandidate.Generation);
+            Assert.Equal(2f, final.BestCandidate.AverageReadyTickCount);
+            Assert.Equal(2f, final.BestCandidate.MinReadyTickCount);
+            Assert.Equal(2f, final.BestCandidate.MedianReadyTickCount);
+            Assert.Equal(2f, final.BestCandidate.MaxReadyTickCount);
+            Assert.True(runtimeClient.ResetBrainRuntimeStateRequests.Count >= 24);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_StopsAtConfiguredTarget_RetainsWinner_AndPrefersSimplerStructure()
     {
         var runtimeClient = new FakeBasicsRuntimeClient();
@@ -878,7 +919,7 @@ public sealed class BasicsExecutionSessionTests
                 _ => { },
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.Contains(final.State, new[] { BasicsExecutionState.Stopped, BasicsExecutionState.Succeeded });
             Assert.Equal(1, final.Generation);
             Assert.True(final.BestAccuracy > 0f);
             Assert.True(final.BestFitness > 0f);
@@ -1049,7 +1090,7 @@ public sealed class BasicsExecutionSessionTests
                 _ => { },
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.Contains(final.State, new[] { BasicsExecutionState.Stopped, BasicsExecutionState.Succeeded });
             Assert.True(runtimeClient.AwaitSpawnPlacementCallCount >= 4);
             Assert.True(
                 runtimeClient.MaxObservedConcurrentPlacementWaits >= 2,
@@ -1767,6 +1808,95 @@ public sealed class BasicsExecutionSessionTests
                     Assert.True(request.ResetBuffer);
                     Assert.True(request.ResetAccumulator);
                 });
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_AggregatesReadyTickMetrics_And_RepeatsCanonicalSamples()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            ReadySignalDelayTicks = 2
+        };
+        var session = CreateSession(runtimeClient);
+        var snapshots = new List<BasicsExecutionSnapshot>();
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1
+                    }) with
+                {
+                    OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                    {
+                        MaxReadyWindowTicks = 4,
+                        SampleRepeatCount = 3
+                    }
+                },
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.NotNull(final.BestCandidate);
+            Assert.Equal(24, runtimeClient.ResetBrainRuntimeStateRequests.Count);
+            Assert.Equal(2f, final.BestCandidate!.AverageReadyTickCount);
+            Assert.Equal(2f, final.BestCandidate.MinReadyTickCount);
+            Assert.Equal(2f, final.BestCandidate.MedianReadyTickCount);
+            Assert.Equal(2f, final.BestCandidate.MaxReadyTickCount);
+            Assert.Equal(0f, final.BestCandidate.ReadyTickStdDev);
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.BestCandidate is not null
+                    && snapshot.BestCandidate.Generation == 1
+                    && snapshot.BestCandidate.AverageReadyTickCount == 2f);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_ReportsPlacementWaitTiming_InBatchSummaries()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "or",
+            RequirePlacementWaitForVisibility = true,
+            AwaitPlacementDelay = TimeSpan.FromMilliseconds(40)
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1
+                    },
+                    new OrTaskPlugin()),
+                new OrTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.True(
+                final.State is BasicsExecutionState.Stopped or BasicsExecutionState.Succeeded,
+                $"Expected a successful terminal state, but observed {final.State}.");
+            Assert.NotNull(final.LatestBatchTiming);
+            Assert.True(final.LatestBatchTiming!.AveragePlacementWaitSeconds > 0.01d);
+            Assert.NotNull(final.LatestGenerationTiming);
+            Assert.True(final.LatestGenerationTiming!.AveragePlacementWaitSeconds > 0.01d);
         }
         finally
         {

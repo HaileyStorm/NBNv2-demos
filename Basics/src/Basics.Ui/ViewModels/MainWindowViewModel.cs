@@ -152,6 +152,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _requireBothStopTargets = true;
     private string _maximumGenerationsText = string.Empty;
     private string _maxReadyWindowTicksText = "4";
+    private string _sampleRepeatCountText = "1";
     private string _booleanLowInputValueText = "0.0";
     private string _booleanHighInputValueText = "1.0";
     private string _gtUniqueInputValuesText = "3";
@@ -621,6 +622,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _maxReadyWindowTicksText;
         set => SetProperty(ref _maxReadyWindowTicksText, value);
+    }
+
+    public string SampleRepeatCountText
+    {
+        get => _sampleRepeatCountText;
+        set => SetProperty(ref _sampleRepeatCountText, value);
     }
 
     public string BooleanLowInputValueText
@@ -1337,6 +1344,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             RequireBothStopTargets = profile.StopCriteria.RequireBothTargets;
             MaximumGenerationsText = FormatOptionalInt(profile.StopCriteria.MaximumGenerations);
             MaxReadyWindowTicksText = profile.OutputSamplingPolicy.MaxReadyWindowTicks.ToString(CultureInfo.InvariantCulture);
+            SampleRepeatCountText = profile.OutputSamplingPolicy.SampleRepeatCount.ToString(CultureInfo.InvariantCulture);
             BooleanLowInputValueText = taskSettings.BooleanTruthTable.LowInputValue.ToString("0.0##", CultureInfo.InvariantCulture);
             BooleanHighInputValueText = taskSettings.BooleanTruthTable.HighInputValue.ToString("0.0##", CultureInfo.InvariantCulture);
             GtUniqueInputValuesText = taskSettings.Gt.UniqueInputValueCount.ToString(CultureInfo.InvariantCulture);
@@ -1953,7 +1961,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         };
         var outputSamplingPolicy = new BasicsOutputSamplingPolicy
         {
-            MaxReadyWindowTicks = ParseRequiredInt(MaxReadyWindowTicksText, "Ready window ticks", errors)
+            MaxReadyWindowTicks = ParseRequiredInt(MaxReadyWindowTicksText, "Ready window ticks", errors),
+            SampleRepeatCount = ParseRequiredInt(SampleRepeatCountText, "Sample repeat count", errors)
         };
         var taskSettings = new BasicsTaskSettings
         {
@@ -2180,6 +2189,48 @@ public sealed class MainWindowViewModel : ViewModelBase
                 ? "No successful evaluation yet."
                 : $"Artifact {snapshot.BestCandidate.ArtifactSha256[..Math.Min(12, snapshot.BestCandidate.ArtifactSha256.Length)]}...");
         UpdateMetricSummary(
+            BasicsMetricId.BestCandidateFitness,
+            snapshot.BestCandidate is null
+                ? "—"
+                : snapshot.BestCandidate.Fitness.ToString("0.###", CultureInfo.InvariantCulture),
+            snapshot.BestCandidate is null
+                ? "No successful evaluation yet."
+                : $"Fitness for the current best-so-far brain from generation {snapshot.BestCandidate.Generation}.");
+        UpdateMetricSummary(
+            BasicsMetricId.BestCandidateGeneration,
+            snapshot.BestCandidate is null || snapshot.BestCandidate.Generation <= 0
+                ? "—"
+                : snapshot.BestCandidate.Generation.ToString(CultureInfo.InvariantCulture),
+            snapshot.BestCandidate is null || snapshot.BestCandidate.Generation <= 0
+                ? "No successful evaluation yet."
+                : $"Generation where the current best-so-far brain was evaluated.");
+        UpdateMetricSummary(
+            BasicsMetricId.BestCandidateAverageReadyTicks,
+            snapshot.BestCandidate?.AverageReadyTickCount is float averageReadyTicks
+                ? FormatReadyTickCount(averageReadyTicks)
+                : "—",
+            snapshot.BestCandidate?.AverageReadyTickCount is float
+                ? "Average ready-bit arrival tick across canonical samples for the current best-so-far brain."
+                : "No ready-bit timing data yet for the current best-so-far brain.");
+        UpdateMetricSummary(
+            BasicsMetricId.BestCandidateReadyTickRange,
+            snapshot.BestCandidate?.MinReadyTickCount is float minReadyTick
+                && snapshot.BestCandidate?.MedianReadyTickCount is float medianReadyTick
+                && snapshot.BestCandidate?.MaxReadyTickCount is float maxReadyTick
+                ? $"{FormatReadyTickCount(minReadyTick)} / {FormatReadyTickCount(medianReadyTick)} / {FormatReadyTickCount(maxReadyTick)}"
+                : "—",
+            snapshot.BestCandidate?.MinReadyTickCount is float
+                ? "Current best-so-far brain ready ticks shown as min / median / max across canonical samples."
+                : "No ready-bit timing data yet for the current best-so-far brain.");
+        UpdateMetricSummary(
+            BasicsMetricId.BestCandidateReadyTickStdDev,
+            snapshot.BestCandidate?.ReadyTickStdDev is float stdDevReadyTick
+                ? FormatReadyTickCount(stdDevReadyTick)
+                : "—",
+            snapshot.BestCandidate?.ReadyTickStdDev is float
+                ? "Standard deviation of ready-bit arrival ticks for the current best-so-far brain across canonical samples."
+                : "No ready-bit dispersion data yet for the current best-so-far brain.");
+        UpdateMetricSummary(
             BasicsMetricId.MeanFitness,
             snapshot.MeanFitness.ToString("0.###", CultureInfo.InvariantCulture),
             $"Generation {snapshot.Generation} mean fitness.");
@@ -2218,7 +2269,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 : FormatRuntimeSeconds(snapshot.LatestBatchTiming.BatchDurationSeconds),
             snapshot.LatestBatchTiming is null
                 ? "Instrumentation appears after the first evaluated batch."
-                : $"Batch {snapshot.LatestBatchTiming.BatchIndex}/{snapshot.LatestBatchTiming.BatchCount}: queue {FormatRuntimeSeconds(snapshot.LatestBatchTiming.AverageQueueWaitSeconds)}/brain, spawn {FormatRuntimeSeconds(snapshot.LatestBatchTiming.AverageSpawnRequestSeconds)}/brain.");
+                : $"Batch {snapshot.LatestBatchTiming.BatchIndex}/{snapshot.LatestBatchTiming.BatchCount}: queue {FormatRuntimeSeconds(snapshot.LatestBatchTiming.AverageQueueWaitSeconds)}/brain, spawn {FormatRuntimeSeconds(snapshot.LatestBatchTiming.AverageSpawnRequestSeconds)}/brain, placement {FormatRuntimeSeconds(snapshot.LatestBatchTiming.AveragePlacementWaitSeconds)}/brain.");
         UpdateMetricSummary(
             BasicsMetricId.LatestSetupDuration,
             snapshot.LatestBatchTiming is null
@@ -2647,6 +2698,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private static string FormatOptionalUInt(uint? value)
         => value.HasValue ? value.Value.ToString(CultureInfo.InvariantCulture) : string.Empty;
 
+    private static string FormatReadyTickCount(float value)
+        => value.ToString("0.##", CultureInfo.InvariantCulture);
+
     private static float ResolveLatestMetric(IReadOnlyList<float> history, float fallbackValue)
         => history.Count == 0 ? fallbackValue : history[^1];
 
@@ -2868,7 +2922,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static string BuildBatchTimingStatus(BasicsExecutionBatchTimingSummary timing)
     {
-        var detail = $"Last batch {timing.BatchIndex}/{timing.BatchCount}: total {FormatRuntimeSeconds(timing.BatchDurationSeconds)}, queue {FormatRuntimeSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn {FormatRuntimeSeconds(timing.AverageSpawnRequestSeconds)}/brain, setup {FormatRuntimeSeconds(timing.AverageSetupSeconds)}/brain, observe {FormatRuntimeSeconds(timing.AverageObservationSeconds)}/brain.";
+        var detail = $"Last batch {timing.BatchIndex}/{timing.BatchCount}: total {FormatRuntimeSeconds(timing.BatchDurationSeconds)}, queue {FormatRuntimeSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn {FormatRuntimeSeconds(timing.AverageSpawnRequestSeconds)}/brain, placement {FormatRuntimeSeconds(timing.AveragePlacementWaitSeconds)}/brain, setup {FormatRuntimeSeconds(timing.AverageSetupSeconds)}/brain, observe {FormatRuntimeSeconds(timing.AverageObservationSeconds)}/brain.";
         if (!string.IsNullOrWhiteSpace(timing.FailureSummary))
         {
             detail += $" Failures: {timing.FailureSummary}.";
@@ -2879,7 +2933,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static string BuildGenerationTimingStatus(BasicsExecutionGenerationTimingSummary timing)
     {
-        var detail = $"Generation timing: total {FormatRuntimeSeconds(timing.TotalDurationSeconds)}, avg batch {FormatRuntimeSeconds(timing.AverageBatchDurationSeconds)}, setup {FormatRuntimeSeconds(timing.AverageSetupSeconds)}/brain, observe {FormatRuntimeSeconds(timing.AverageObservationSeconds)}/brain.";
+        var detail = $"Generation timing: total {FormatRuntimeSeconds(timing.TotalDurationSeconds)}, avg batch {FormatRuntimeSeconds(timing.AverageBatchDurationSeconds)}, placement {FormatRuntimeSeconds(timing.AveragePlacementWaitSeconds)}/brain, setup {FormatRuntimeSeconds(timing.AverageSetupSeconds)}/brain, observe {FormatRuntimeSeconds(timing.AverageObservationSeconds)}/brain.";
         if (!string.IsNullOrWhiteSpace(timing.FailureSummary))
         {
             detail += $" Failures: {timing.FailureSummary}.";
@@ -2959,6 +3013,11 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Best accuracy", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.OffspringBestFitness, "Offspring fitness", "—", "No offspring evaluations yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestFitness, "Best fitness", "—", "No runtime samples yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateFitness, "Best brain fitness", "—", "Fitness for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateGeneration, "Best brain gen", "—", "Generation where the current best-so-far brain was evaluated.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAverageReadyTicks, "Best avg ready", "—", "Average ready-bit arrival tick for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickRange, "Best ready ticks", "—", "Min / median / max ready-bit arrival ticks for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickStdDev, "Best ready stddev", "—", "Standard deviation of ready-bit arrival ticks for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.MeanFitness, "Mean fitness", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.PopulationCount, "Population", "—", "Plan-derived once capacity is fetched.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.ActiveBrainCount, "Active brains", "—", "Plan-derived once capacity is fetched.");
@@ -2989,6 +3048,9 @@ public sealed class MainWindowViewModel : ViewModelBase
             BasicsDiversityPreset.Extreme => "extreme",
             _ => "medium"
         };
+
+    private static string FormatReadyTickCount(float readyTickCount)
+        => readyTickCount.ToString("0.##", CultureInfo.InvariantCulture);
 
     private static string FormatStopCriteria(BasicsExecutionStopCriteria stopCriteria)
         => stopCriteria.RequireBothTargets
@@ -3081,6 +3143,11 @@ public sealed class MainWindowViewModel : ViewModelBase
                         snapshot.BestCandidate.SpeciesId,
                         snapshot.BestCandidate.Accuracy,
                         snapshot.BestCandidate.Fitness,
+                        snapshot.BestCandidate.Generation,
+                        snapshot.BestCandidate.AverageReadyTickCount,
+                        snapshot.BestCandidate.MinReadyTickCount,
+                        snapshot.BestCandidate.MedianReadyTickCount,
+                        snapshot.BestCandidate.MaxReadyTickCount,
                         diagnostics = snapshot.BestCandidate.Diagnostics.ToArray()
                     }
             });

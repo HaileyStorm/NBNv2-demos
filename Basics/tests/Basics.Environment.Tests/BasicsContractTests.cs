@@ -189,6 +189,20 @@ public sealed class BasicsContractTests
     }
 
     [Fact]
+    public void OutputSamplingPolicy_RejectsSampleRepeatCountsAboveMaximum()
+    {
+        var policy = new BasicsOutputSamplingPolicy
+        {
+            SampleRepeatCount = BasicsOutputSamplingPolicy.MaximumSampleRepeatCount + 1
+        };
+
+        var validation = policy.Validate();
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, error => error.Contains("Sample repeat count", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void InitialBrainSeedValidation_RejectsLegacyGeometryOutsideUiImportPath()
     {
         var legacyBytes = DemoNbnBuilder.BuildSampleNbn();

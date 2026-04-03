@@ -155,6 +155,7 @@ public sealed record BasicsLiveTrialConfigurationSnapshot(
     string TemplateDescription,
     BasicsOutputObservationMode OutputObservationMode,
     int MaxReadyWindowTicks,
+    int SampleRepeatCount,
     BasicsLiveTrialVariationBandSnapshot VariationBand,
     BasicsLiveTrialSeedShapeSnapshot SeedShape,
     BasicsLiveTrialSizingSnapshot Sizing,
@@ -179,7 +180,12 @@ public sealed record BasicsLiveTrialBestCandidateRecord(
     float Accuracy,
     float Fitness,
     IReadOnlyDictionary<string, float> ScoreBreakdown,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics,
+    int Generation,
+    float? AverageReadyTickCount,
+    float? MinReadyTickCount,
+    float? MedianReadyTickCount,
+    float? MaxReadyTickCount);
 
 public sealed record BasicsLiveTrialSnapshotRecord(
     DateTimeOffset ObservedAtUtc,
@@ -595,6 +601,7 @@ public sealed class BasicsLiveTrialHarness
             TemplateDescription: options.SeedTemplate.Description,
             OutputObservationMode: options.OutputObservationMode,
             MaxReadyWindowTicks: options.OutputSamplingPolicy.MaxReadyWindowTicks,
+            SampleRepeatCount: options.OutputSamplingPolicy.SampleRepeatCount,
             VariationBand: new BasicsLiveTrialVariationBandSnapshot(
                 options.SeedTemplate.InitialVariationBand.MaxInternalNeuronDelta,
                 options.SeedTemplate.InitialVariationBand.MaxAxonDelta,
@@ -654,7 +661,8 @@ public sealed class BasicsLiveTrialHarness
             OutputObservationMode = snapshot.OutputObservationMode,
             OutputSamplingPolicy = current.OutputSamplingPolicy with
             {
-                MaxReadyWindowTicks = snapshot.MaxReadyWindowTicks
+                MaxReadyWindowTicks = snapshot.MaxReadyWindowTicks,
+                SampleRepeatCount = snapshot.SampleRepeatCount
             },
             SeedTemplate = current.SeedTemplate with
             {
@@ -721,7 +729,12 @@ public sealed class BasicsLiveTrialHarness
                     snapshot.BestCandidate.Accuracy,
                     snapshot.BestCandidate.Fitness,
                     new Dictionary<string, float>(snapshot.BestCandidate.ScoreBreakdown, StringComparer.Ordinal),
-                    snapshot.BestCandidate.Diagnostics.ToArray()),
+                    snapshot.BestCandidate.Diagnostics.ToArray(),
+                    snapshot.BestCandidate.Generation,
+                    snapshot.BestCandidate.AverageReadyTickCount,
+                    snapshot.BestCandidate.MinReadyTickCount,
+                    snapshot.BestCandidate.MedianReadyTickCount,
+                    snapshot.BestCandidate.MaxReadyTickCount),
             AccuracyHistory: snapshot.AccuracyHistory.ToArray(),
             BestFitnessHistory: snapshot.BestFitnessHistory.ToArray());
 

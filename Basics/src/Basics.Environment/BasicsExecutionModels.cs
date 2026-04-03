@@ -82,7 +82,13 @@ public sealed record BasicsExecutionBestCandidateSummary(
     float Fitness,
     BasicsDefinitionComplexitySummary? Complexity,
     IReadOnlyDictionary<string, float> ScoreBreakdown,
-    IReadOnlyList<string> Diagnostics)
+    IReadOnlyList<string> Diagnostics,
+    int Generation = 0,
+    float? AverageReadyTickCount = null,
+    float? MinReadyTickCount = null,
+    float? MedianReadyTickCount = null,
+    float? MaxReadyTickCount = null,
+    float? ReadyTickStdDev = null)
 {
     public string ArtifactSha256 => DefinitionArtifact.ToSha256Hex();
 
@@ -101,6 +107,7 @@ public sealed record BasicsExecutionBatchTimingSummary(
     double BatchDurationSeconds,
     double AverageQueueWaitSeconds,
     double AverageSpawnRequestSeconds,
+    double AveragePlacementWaitSeconds,
     double AverageSetupSeconds,
     double AverageObservationSeconds,
     string FailureSummary);
@@ -115,6 +122,7 @@ public sealed record BasicsExecutionGenerationTimingSummary(
     double AverageBatchDurationSeconds,
     double AverageQueueWaitSeconds,
     double AverageSpawnRequestSeconds,
+    double AveragePlacementWaitSeconds,
     double AverageSetupSeconds,
     double AverageObservationSeconds,
     string FailureSummary);
