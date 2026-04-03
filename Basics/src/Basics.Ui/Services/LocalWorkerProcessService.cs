@@ -8,6 +8,8 @@ public sealed record BasicsLocalWorkerLaunchRequest(
     int WorkerCount,
     int BasePort,
     int StoragePercent,
+    string BindHost,
+    string AdvertiseHost,
     string SettingsHost,
     int SettingsPort,
     string SettingsName);
@@ -16,6 +18,8 @@ public sealed record BasicsLocalWorkerInfo(
     int Port,
     string RootActorName,
     string LogicalName,
+    string BindHost,
+    string AdvertiseHost,
     int ProcessId,
     string LogPath);
 
@@ -278,9 +282,9 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         };
         process.StartInfo.ArgumentList.Add(_workerAssemblyPath);
         process.StartInfo.ArgumentList.Add("--bind-host");
-        process.StartInfo.ArgumentList.Add("127.0.0.1");
+        process.StartInfo.ArgumentList.Add(request.BindHost);
         process.StartInfo.ArgumentList.Add("--advertise-host");
-        process.StartInfo.ArgumentList.Add("127.0.0.1");
+        process.StartInfo.ArgumentList.Add(request.AdvertiseHost);
         process.StartInfo.ArgumentList.Add("--port");
         process.StartInfo.ArgumentList.Add(port.ToString());
         process.StartInfo.ArgumentList.Add("--logical-name");
@@ -332,6 +336,8 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
                 Port: port,
                 RootActorName: rootActorName,
                 LogicalName: logicalName,
+                BindHost: request.BindHost,
+                AdvertiseHost: request.AdvertiseHost,
                 ProcessId: process.Id,
                 LogPath: logPath);
         }
@@ -528,7 +534,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         => string.Join(
             " ",
             workers.Select(worker =>
-                $"{worker.RootActorName} on 127.0.0.1:{worker.Port} (pid {worker.ProcessId}, log {worker.LogPath})."));
+                $"{worker.RootActorName} on {worker.AdvertiseHost}:{worker.Port} (bind {worker.BindHost}, pid {worker.ProcessId}, log {worker.LogPath})."));
 
     private static string TrimOutputTail(string value)
     {

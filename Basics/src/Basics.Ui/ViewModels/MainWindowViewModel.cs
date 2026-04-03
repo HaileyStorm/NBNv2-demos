@@ -120,6 +120,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _capacityStatus = "No capacity snapshot fetched.";
     private string _capacitySummary = "Fetch capacity through IO to compute population bounds.";
     private string _validationSummary = "Configuration not yet validated.";
+    private string _validationDetails = "No validation details available yet.";
+    private string _bestBrainStatus = "No successful evaluation yet.";
+    private string _bestBrainDetail = "The strongest evaluated brain appears here after the first successful generation.";
     private string _templateId = "basics-template-a";
     private string _templateDescription = "Seed all initial brains from one shared 2→2 template, allowing only bounded minor divergence.";
     private string _templateArtifactSha256 = string.Empty;
@@ -214,6 +217,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         ValidationErrors = new ObservableCollection<string>();
         MetricSummaries = new ObservableCollection<MetricSummaryItemViewModel>(BuildMetricSummaryItems());
+        BestBrainSummaries = new ObservableCollection<MetricSummaryItemViewModel>(BuildBestBrainMetricSummaryItems());
         InitialBrainSeeds = new ObservableCollection<InitialBrainSeedItemViewModel>();
 
         ConnectCommand = new AsyncRelayCommand(ConnectAsync, CanConnect);
@@ -260,6 +264,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     public ObservableCollection<string> ValidationErrors { get; }
 
     public ObservableCollection<MetricSummaryItemViewModel> MetricSummaries { get; }
+
+    public ObservableCollection<MetricSummaryItemViewModel> BestBrainSummaries { get; }
 
     public ObservableCollection<InitialBrainSeedItemViewModel> InitialBrainSeeds { get; }
 
@@ -395,6 +401,24 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _validationSummary;
         private set => SetProperty(ref _validationSummary, value);
+    }
+
+    public string ValidationDetails
+    {
+        get => _validationDetails;
+        private set => SetProperty(ref _validationDetails, value);
+    }
+
+    public string BestBrainStatus
+    {
+        get => _bestBrainStatus;
+        private set => SetProperty(ref _bestBrainStatus, value);
+    }
+
+    public string BestBrainDetail
+    {
+        get => _bestBrainDetail;
+        private set => SetProperty(ref _bestBrainDetail, value);
     }
 
     public TaskOption? SelectedTask
@@ -1716,6 +1740,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         ValidationSummary = errors.Count == 0
             ? "Configuration valid."
             : $"{errors.Count} validation issue(s) blocking plan/build actions.";
+        ValidationDetails = errors.Count == 0
+            ? "No validation issues."
+            : string.Join(global::System.Environment.NewLine, errors);
     }
 
     private bool CanConnect()
@@ -1874,10 +1901,28 @@ public sealed class MainWindowViewModel : ViewModelBase
             return false;
         }
 
+        var bindHost = string.IsNullOrWhiteSpace(BindHost) ? NetworkAddressDefaults.DefaultBindHost : BindHost.Trim();
+        if (!NetworkAddressDefaults.IsLocalHost(bindHost))
+        {
+            failureMessage = "Basics UI worker launch requires a local bind host or all-interfaces bind.";
+            return false;
+        }
+
+        var advertiseHost = NetworkAddressDefaults.ResolveAdvertisedHost(
+            bindHost,
+            string.IsNullOrWhiteSpace(AdvertiseHost) ? null : AdvertiseHost.Trim());
+        if (!NetworkAddressDefaults.IsLocalHost(advertiseHost))
+        {
+            failureMessage = "Basics UI worker launch requires an advertised host that resolves to this machine.";
+            return false;
+        }
+
         request = new BasicsLocalWorkerLaunchRequest(
             WorkerCount: workerCount,
             BasePort: basePort,
             StoragePercent: storagePercent,
+            BindHost: bindHost,
+            AdvertiseHost: advertiseHost,
             SettingsHost: settingsHost,
             SettingsPort: settingsPort,
             SettingsName: settingsName);
@@ -2162,6 +2207,20 @@ public sealed class MainWindowViewModel : ViewModelBase
             {
                 _suppressValidationRefresh = false;
             }
+        }
+
+        if (snapshot.BestCandidate is null)
+        {
+            BestBrainStatus = "No successful evaluation yet.";
+            BestBrainDetail = "The strongest evaluated brain appears here after the first successful generation.";
+        }
+        else
+        {
+            var shortSha = snapshot.BestCandidate.ArtifactSha256[..Math.Min(12, snapshot.BestCandidate.ArtifactSha256.Length)];
+            BestBrainStatus = $"Best-so-far artifact {shortSha}";
+            BestBrainDetail = snapshot.BestCandidate.Generation > 0
+                ? $"Generation {snapshot.BestCandidate.Generation}, species {snapshot.BestCandidate.SpeciesId}, accuracy {snapshot.BestCandidate.Accuracy:0.###}, fitness {snapshot.BestCandidate.Fitness:0.###}."
+                : $"Species {snapshot.BestCandidate.SpeciesId}, accuracy {snapshot.BestCandidate.Accuracy:0.###}, fitness {snapshot.BestCandidate.Fitness:0.###}.";
         }
 
         UpdateMetricSummary(
@@ -2910,7 +2969,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private void UpdateMetricSummary(BasicsMetricId metricId, string value, string detail)
     {
-        var item = MetricSummaries.FirstOrDefault(entry => entry.MetricId == metricId);
+        var item = MetricSummaries.FirstOrDefault(entry => entry.MetricId == metricId)
+                   ?? BestBrainSummaries.FirstOrDefault(entry => entry.MetricId == metricId);
         if (item is null)
         {
             return;
@@ -3010,14 +3070,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private static IEnumerable<MetricSummaryItemViewModel> BuildMetricSummaryItems()
     {
         yield return new MetricSummaryItemViewModel(BasicsMetricId.Accuracy, "Offspring accuracy", "—", "No offspring evaluations yet.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Best accuracy", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.OffspringBestFitness, "Offspring fitness", "—", "No offspring evaluations yet.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestFitness, "Best fitness", "—", "No runtime samples yet.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateFitness, "Best brain fitness", "—", "Fitness for the current best-so-far brain.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateGeneration, "Best brain gen", "—", "Generation where the current best-so-far brain was evaluated.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAverageReadyTicks, "Best avg ready", "—", "Average ready-bit arrival tick for the current best-so-far brain.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickRange, "Best ready ticks", "—", "Min / median / max ready-bit arrival ticks for the current best-so-far brain.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickStdDev, "Best ready stddev", "—", "Standard deviation of ready-bit arrival ticks for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.MeanFitness, "Mean fitness", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.PopulationCount, "Population", "—", "Plan-derived once capacity is fetched.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.ActiveBrainCount, "Active brains", "—", "Plan-derived once capacity is fetched.");
@@ -3028,6 +3081,17 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return new MetricSummaryItemViewModel(BasicsMetricId.LatestBatchDuration, "Last batch", "—", "Instrumentation appears after the first evaluated batch.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.LatestSetupDuration, "Setup/brain", "—", "Average brain-info/configure/subscribe/prime time per evaluated batch.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.LatestObservationDuration, "Observe/brain", "—", "Average sample-observation time per evaluated batch.");
+    }
+
+    private static IEnumerable<MetricSummaryItemViewModel> BuildBestBrainMetricSummaryItems()
+    {
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Best accuracy", "—", "Best accuracy across all successful evaluations.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestFitness, "Best fitness", "—", "Best fitness across all successful evaluations.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateFitness, "Best brain fitness", "—", "Fitness for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateGeneration, "Best brain gen", "—", "Generation where the current best-so-far brain was evaluated.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAverageReadyTicks, "Best avg ready", "—", "Average ready-bit arrival tick for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickRange, "Best ready ticks", "—", "Min / median / max ready-bit arrival ticks for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickStdDev, "Best ready stddev", "—", "Standard deviation of ready-bit arrival ticks for the current best-so-far brain.");
     }
 
     private static string FormatOutputObservationMode(BasicsOutputObservationMode mode)

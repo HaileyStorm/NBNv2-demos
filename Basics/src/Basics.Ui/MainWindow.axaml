@@ -149,6 +149,7 @@
                             <TextBlock Grid.Column="2"
                                        VerticalAlignment="Center"
                                        Text="{Binding ValidationSummary}"
+                                       ToolTip.Tip="{Binding ValidationDetails}"
                                        Foreground="#7A5E2C"
                                        TextWrapping="Wrap" />
                         </Grid>
@@ -661,19 +662,40 @@
                         CornerRadius="16"
                         Padding="18">
                     <StackPanel Spacing="14">
-                        <TextBlock Text="Validation"
+                        <TextBlock Text="Best Brain"
                                    FontSize="18"
                                    FontWeight="SemiBold"
                                    Foreground="#182436" />
-                        <TextBlock Text="{Binding ValidationSummary}"
+                        <TextBlock Text="{Binding BestBrainStatus}"
                                    TextWrapping="Wrap"
-                                   Foreground="#7A5E2C" />
-                        <ItemsControl ItemsSource="{Binding ValidationErrors}">
+                                   FontWeight="SemiBold"
+                                   Foreground="#425466" />
+                        <TextBlock Text="{Binding BestBrainDetail}"
+                                   TextWrapping="Wrap"
+                                   Foreground="#6C7A89" />
+                        <ItemsControl ItemsSource="{Binding BestBrainSummaries}">
                             <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding .}"
-                                               TextWrapping="Wrap"
-                                               Foreground="#8B3B2E" />
+                                <DataTemplate x:DataType="vm:MetricSummaryItemViewModel">
+                                    <Border Margin="0,0,0,8"
+                                            Background="#FBF8F1"
+                                            BorderBrush="#E5DECF"
+                                            BorderThickness="1"
+                                            CornerRadius="10"
+                                            Padding="10"
+                                            ToolTip.Tip="{Binding DetailText}">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="{Binding DisplayName}"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#182436" />
+                                            <TextBlock Text="{Binding ValueText}"
+                                                       FontSize="20"
+                                                       Foreground="#182436" />
+                                            <TextBlock Text="{Binding DetailText}"
+                                                       FontSize="12"
+                                                       Foreground="#6C7A89"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
@@ -786,6 +808,11 @@
                                        FontWeight="SemiBold"
                                        Foreground="#182436" />
                             <ItemsControl ItemsSource="{Binding MetricSummaries}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <UniformGrid Columns="2" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:MetricSummaryItemViewModel">
                                         <Border Margin="0,0,0,8"
