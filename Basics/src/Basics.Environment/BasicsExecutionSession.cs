@@ -1359,7 +1359,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 var failureCode = string.IsNullOrWhiteSpace(spawnAck?.FailureReasonCode)
                     ? "spawn_not_placed"
                     : spawnAck.FailureReasonCode;
-                var failureDetail = TrimDiagnosticDetail(spawnAck?.FailureMessage);
+                var failureDetail = TrimDiagnosticDetail(failureCode, spawnAck?.FailureMessage);
                 resultMember = member with
                 {
                     LastEvaluation = CreateTransportFailure(
@@ -2980,7 +2980,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             },
             Diagnostics: new[] { diagnostic });
 
-    private static string TrimDiagnosticDetail(string? value)
+    private static string TrimDiagnosticDetail(string? failureCode, string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -2988,6 +2988,19 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         var collapsed = string.Join(" ", value.Split(default(string[]), StringSplitOptions.RemoveEmptyEntries));
+        if (string.Equals(failureCode, "spawn_internal_error", StringComparison.Ordinal))
+        {
+            const int limit = 256;
+            if (collapsed.Length <= limit)
+            {
+                return collapsed;
+            }
+
+            const int head = 160;
+            const int tail = 92;
+            return $"{collapsed[..head]} ... {collapsed[^tail..]}";
+        }
+
         return collapsed.Length <= 96 ? collapsed : collapsed[..96];
     }
 

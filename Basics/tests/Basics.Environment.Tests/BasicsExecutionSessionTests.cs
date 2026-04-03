@@ -1277,6 +1277,63 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_PreservesExtendedSpawnInternalErrorDetail_InSummaries()
+    {
+        const string detailedFailure =
+            "Artifact-backed shard load failed for brain 04b04b19-cc33-4bf9-852a-cd63b1a95e9e region 31 shard: " +
+            "Snapshot validation failed because the output region overlay length did not match the base definition.";
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            PersistentSpawnFailureCount = 1,
+            PersistentSpawnFailureCode = "spawn_internal_error",
+            PersistentSpawnFailureMessage = detailedFailure
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var plan = CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1,
+                        TargetAccuracy = 1.1f,
+                        TargetFitness = 1.1f
+                    },
+                    new AndTaskPlugin()) with
+            {
+                Capacity = new BasicsCapacityRecommendation(
+                    Source: BasicsCapacitySource.RuntimePlacementInventory,
+                    EligibleWorkerCount: 1,
+                    RecommendedInitialPopulationCount: 2,
+                    RecommendedReproductionRunCount: 1,
+                    RecommendedMaxConcurrentBrains: 2,
+                    CapacityScore: 1f,
+                    EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                    Summary: "test")
+            };
+
+            var final = await session.RunAsync(
+                plan,
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.EvaluationFailureSummary.Contains("region 31 shard", StringComparison.Ordinal)
+                            && snapshot.EvaluationFailureSummary.Contains("output region overlay length", StringComparison.Ordinal));
+            Assert.NotEqual(BasicsExecutionState.Failed, final.State);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_KeepsAtLeastTwoBrains_WhenReproductionProducesNoChildren()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -1826,6 +1883,8 @@ public sealed class BasicsExecutionSessionTests
         public bool SuppressReadyOutputEvents { get; init; }
         public bool RequirePlacementWaitForVisibility { get; init; }
         public TimeSpan AwaitPlacementDelay { get; init; }
+        public string AwaitPlacementFailureCode { get; init; } = "spawn_request_canceled";
+        public string AwaitPlacementFailureMessage { get; init; } = "placement visibility timed out";
         public int? OutputVectorWidthOverride { get; init; }
         public bool ReuseSingleChildArtifactOnReproduce { get; init; }
         public OutputVectorSource InitialOutputVectorSource { get; init; } = OutputVectorSource.Potential;
@@ -1966,11 +2025,11 @@ public sealed class BasicsExecutionSessionTests
                                 BrainId = brainId.ToProtoUuid(),
                                 AcceptedForPlacement = true,
                                 PlacementReady = false,
-                                FailureReasonCode = "spawn_request_canceled",
-                                FailureMessage = "placement visibility timed out"
+                                FailureReasonCode = AwaitPlacementFailureCode,
+                                FailureMessage = AwaitPlacementFailureMessage
                             },
-                            FailureReasonCode = "spawn_request_canceled",
-                            FailureMessage = "placement visibility timed out"
+                            FailureReasonCode = AwaitPlacementFailureCode,
+                            FailureMessage = AwaitPlacementFailureMessage
                         };
                     }
 
