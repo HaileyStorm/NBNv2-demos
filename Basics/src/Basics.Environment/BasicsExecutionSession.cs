@@ -735,7 +735,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         {
             await CommitArtifactMembershipAsync(
                     template.Definition,
-                    Array.Empty<ArtifactRef>(),
+                    Array.Empty<ProtoSpec.SpeciationParentRef>(),
                     explicitSpeciesId: template.SpeciesId,
                     explicitSpeciesDisplayName: template.SpeciesDisplayName,
                     decisionReason: "basics_seed_template",
@@ -934,7 +934,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
                 var membership = await CommitArtifactMembershipAsync(
                         childDefinition,
-                        new[] { template.Definition, template.Definition },
+                        new[] { CreateSpeciationParentRef(template.Definition), CreateSpeciationParentRef(template.Definition) },
                         explicitSpeciesId: null,
                         explicitSpeciesDisplayName: null,
                         decisionReason: "basics_seed_child",
@@ -2645,7 +2645,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
                 var membership = await CommitArtifactMembershipAsync(
                         childDefinition,
-                        new[] { parentA.Definition, parentB.Definition },
+                        new[]
+                        {
+                            CreateSpeciationParentRef(parentA.Definition, parentA.ActiveBrainId),
+                            CreateSpeciationParentRef(parentB.Definition, parentB.ActiveBrainId)
+                        },
                         explicitSpeciesId: null,
                         explicitSpeciesDisplayName: null,
                         decisionReason: "basics_generation_child",
@@ -2801,7 +2805,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
     private async Task<(string SpeciesId, string SpeciesDisplayName)> CommitArtifactMembershipAsync(
         ArtifactRef candidate,
-        IReadOnlyList<ArtifactRef> parents,
+        IReadOnlyList<ProtoSpec.SpeciationParentRef> parents,
         string? explicitSpeciesId,
         string? explicitSpeciesDisplayName,
         string decisionReason,
@@ -2822,10 +2826,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         foreach (var parent in parents)
         {
-            request.Parents.Add(new ProtoSpec.SpeciationParentRef
-            {
-                ArtifactRef = parent.Clone()
-            });
+            request.Parents.Add(parent.Clone());
         }
 
         var response = await _runtimeClient.AssignSpeciationAsync(request, cancellationToken).ConfigureAwait(false);
@@ -2848,13 +2849,44 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
         else if (string.IsNullOrWhiteSpace(decision?.SpeciesId) && parents.Count > 0)
         {
-            speciesId = NormalizeSpeciesId(parents[0].ToSha256Hex());
+            speciesId = NormalizeSpeciesId(ResolveSpeciationParentFallbackSpeciesId(parents[0]));
         }
 
         var displayName = string.IsNullOrWhiteSpace(decision?.SpeciesDisplayName)
             ? (explicitSpeciesDisplayName ?? speciesId)
             : decision!.SpeciesDisplayName;
         return (speciesId, displayName);
+    }
+
+    private static ProtoSpec.SpeciationParentRef CreateSpeciationParentRef(ArtifactRef definition)
+        => new()
+        {
+            ArtifactRef = definition.Clone()
+        };
+
+    private static ProtoSpec.SpeciationParentRef CreateSpeciationParentRef(ArtifactRef definition, Guid activeBrainId)
+        => activeBrainId != Guid.Empty
+            ? new ProtoSpec.SpeciationParentRef
+            {
+                BrainId = activeBrainId.ToProtoUuid()
+            }
+            : CreateSpeciationParentRef(definition);
+
+    private static string ResolveSpeciationParentFallbackSpeciesId(ProtoSpec.SpeciationParentRef parent)
+    {
+        if (parent.ParentCase == ProtoSpec.SpeciationParentRef.ParentOneofCase.ArtifactRef
+            && parent.ArtifactRef is not null)
+        {
+            return parent.ArtifactRef.ToSha256Hex();
+        }
+
+        if (parent.ParentCase == ProtoSpec.SpeciationParentRef.ParentOneofCase.BrainId
+            && parent.BrainId?.TryToGuid(out var brainId) == true)
+        {
+            return brainId.ToString("N");
+        }
+
+        return string.Empty;
     }
 
     private static void ApplyVariationBand(Repro.ReproduceConfig config, BasicsSeedVariationBand variationBand)

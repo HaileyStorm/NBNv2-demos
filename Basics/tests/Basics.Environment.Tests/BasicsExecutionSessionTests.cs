@@ -1904,6 +1904,29 @@ public sealed class BasicsExecutionSessionTests
         }
     }
 
+    [Fact]
+    public void ExecutionSession_SpeciationParentRef_PrefersLiveBrainId_WhenAvailable()
+    {
+        var helper = typeof(BasicsExecutionSession).GetMethod(
+            "CreateSpeciationParentRef",
+            BindingFlags.NonPublic | BindingFlags.Static,
+            binder: null,
+            types: new[] { typeof(ArtifactRef), typeof(Guid) },
+            modifiers: null);
+        Assert.NotNull(helper);
+
+        var artifact = new string('a', 64).ToArtifactRef(256, "application/x-nbn", "http://fake-store/parent");
+        var liveBrainId = Guid.NewGuid();
+
+        var liveParent = Assert.IsType<SpeciationParentRef>(helper!.Invoke(null, new object[] { artifact, liveBrainId }));
+        Assert.Equal(SpeciationParentRef.ParentOneofCase.BrainId, liveParent.ParentCase);
+        Assert.Equal(liveBrainId, liveParent.BrainId.ToGuid());
+
+        var artifactParent = Assert.IsType<SpeciationParentRef>(helper.Invoke(null, new object[] { artifact, Guid.Empty }));
+        Assert.Equal(SpeciationParentRef.ParentOneofCase.ArtifactRef, artifactParent.ParentCase);
+        Assert.Equal(artifact.ToSha256Hex(), artifactParent.ArtifactRef.ToSha256Hex());
+    }
+
     private static BasicsEnvironmentPlan CreatePlan(
         BasicsOutputObservationMode outputObservationMode,
         BasicsExecutionStopCriteria? stopCriteria = null,
@@ -2021,6 +2044,7 @@ public sealed class BasicsExecutionSessionTests
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
         public int MaxObservedConcurrentPlacementWaits => _maxObservedConcurrentPlacementWaits;
         public int AwaitSpawnPlacementCallCount { get; private set; }
+        public List<SpeciationAssignRequest> SpeciationAssignRequests { get; } = new();
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
         public List<(Guid BrainId, bool Enabled)> SetCostEnergyEnabledRequests { get; } = new();
         public List<(Guid BrainId, bool Enabled)> SetPlasticityEnabledRequests { get; } = new();
@@ -2536,6 +2560,7 @@ public sealed class BasicsExecutionSessionTests
             SpeciationAssignRequest request,
             CancellationToken cancellationToken = default)
         {
+            SpeciationAssignRequests.Add(request.Clone());
             var requestedSpeciesId = string.IsNullOrWhiteSpace(request.SpeciesId)
                 ? "species.default"
                 : request.SpeciesId.Trim();
