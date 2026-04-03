@@ -1569,6 +1569,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return false;
         }
 
+        if (diagnostic.Contains("spawn_internal_error", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
         if (diagnostic.Contains("spawn_request_canceled", StringComparison.Ordinal)
             || diagnostic.Contains("spawn_brain_info_timeout", StringComparison.Ordinal))
         {

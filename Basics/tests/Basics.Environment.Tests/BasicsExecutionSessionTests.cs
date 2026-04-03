@@ -1222,7 +1222,7 @@ public sealed class BasicsExecutionSessionTests
         var runtimeClient = new FakeBasicsRuntimeClient
         {
             DefaultBehavior = "and",
-            PersistentSpawnFailureCount = 3,
+            PersistentSpawnFailureCount = 1,
             PersistentSpawnFailureCode = "spawn_internal_error",
             PersistentSpawnFailureMessage = "artifact-backed shard load failed"
         };
@@ -1259,11 +1259,16 @@ public sealed class BasicsExecutionSessionTests
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
             Assert.NotEqual(BasicsExecutionState.Failed, final.State);
-            Assert.True(runtimeClient.SpawnRequestCount > 3);
+            Assert.True(runtimeClient.SpawnRequestCount >= 2);
             Assert.DoesNotContain(
                 snapshots,
                 snapshot => snapshot.State == BasicsExecutionState.Failed
                             && snapshot.DetailText.Contains("aborted after unrecoverable spawn failure", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Running
+                            && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("attempt 2/3", StringComparison.Ordinal));
         }
         finally
         {
