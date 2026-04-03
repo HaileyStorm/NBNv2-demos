@@ -3086,7 +3086,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     private static IEnumerable<MetricSummaryItemViewModel> BuildBestBrainMetricSummaryItems()
     {
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Best accuracy", "—", "Best accuracy across all successful evaluations.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestFitness, "Best fitness", "—", "Best fitness across all successful evaluations.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateFitness, "Best brain fitness", "—", "Fitness for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateGeneration, "Best brain gen", "—", "Generation where the current best-so-far brain was evaluated.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAverageReadyTicks, "Best avg ready", "—", "Average ready-bit arrival tick for the current best-so-far brain.");
