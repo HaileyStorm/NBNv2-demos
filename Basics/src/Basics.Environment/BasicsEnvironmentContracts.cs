@@ -350,7 +350,9 @@ public enum BasicsMetricId
     BestCandidateGeneration = 15,
     BestCandidateAverageReadyTicks = 16,
     BestCandidateReadyTickRange = 17,
-    BestCandidateReadyTickStdDev = 18
+    BestCandidateReadyTickStdDev = 18,
+    BestCandidateInternalNeuronCount = 19,
+    BestCandidateAxonCount = 20
 }
 
 public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> RequiredMetrics)
@@ -367,6 +369,8 @@ public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> Require
             BasicsMetricId.BestCandidateAverageReadyTicks,
             BasicsMetricId.BestCandidateReadyTickRange,
             BasicsMetricId.BestCandidateReadyTickStdDev,
+            BasicsMetricId.BestCandidateInternalNeuronCount,
+            BasicsMetricId.BestCandidateAxonCount,
             BasicsMetricId.MeanFitness,
             BasicsMetricId.PopulationCount,
             BasicsMetricId.ActiveBrainCount,

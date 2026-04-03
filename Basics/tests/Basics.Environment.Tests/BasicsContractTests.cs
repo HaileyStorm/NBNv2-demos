@@ -203,11 +203,20 @@ public sealed class BasicsContractTests
     }
 
     [Fact]
-    public void OutputSamplingPolicy_DefaultsToTwoSampleRepeats()
+    public void OutputSamplingPolicy_DefaultsToThreeSampleRepeats()
     {
         var policy = new BasicsOutputSamplingPolicy();
 
         Assert.Equal(3, policy.SampleRepeatCount);
+    }
+
+    [Fact]
+    public void DefaultMetricsContract_IncludesBestBrainComplexityMetrics()
+    {
+        var metrics = BasicsMetricsContract.Default.RequiredMetrics;
+
+        Assert.Contains(BasicsMetricId.BestCandidateInternalNeuronCount, metrics);
+        Assert.Contains(BasicsMetricId.BestCandidateAxonCount, metrics);
     }
 
     [Fact]
