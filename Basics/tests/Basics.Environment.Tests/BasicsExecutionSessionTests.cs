@@ -2150,6 +2150,18 @@ public sealed class BasicsExecutionSessionTests
             Assert.Contains(runtimeClient.SetCostEnergyEnabledRequests, request => request.BrainId != Guid.Empty && !request.Enabled);
             Assert.Contains(runtimeClient.SetPlasticityEnabledRequests, request => request.BrainId != Guid.Empty && !request.Enabled);
             Assert.Contains(runtimeClient.SetHomeostasisEnabledRequests, request => request.BrainId != Guid.Empty && !request.Enabled);
+            Assert.Contains(runtimeClient.SynchronizeBrainRuntimeConfigRequests, brainId => brainId != Guid.Empty);
+
+            var operations = runtimeClient.OperationLog.ToArray();
+            var homeostasisIndex = Array.IndexOf(operations, "set_homeostasis");
+            var syncIndex = Array.IndexOf(operations, "sync_brain_runtime_config");
+            var subscribeIndex = Array.IndexOf(operations, "subscribe_outputs_vector");
+            var resumeIndex = Array.IndexOf(operations, "resume_brain");
+            Assert.True(homeostasisIndex >= 0);
+            Assert.True(syncIndex > homeostasisIndex);
+            Assert.True(subscribeIndex > syncIndex);
+            Assert.True(syncIndex >= 0);
+            Assert.True(resumeIndex > syncIndex);
         }
         finally
         {
@@ -2451,12 +2463,14 @@ public sealed class BasicsExecutionSessionTests
         public List<(Guid BrainId, bool Enabled)> SetCostEnergyEnabledRequests { get; } = new();
         public List<(Guid BrainId, bool Enabled)> SetPlasticityEnabledRequests { get; } = new();
         public List<(Guid BrainId, bool Enabled)> SetHomeostasisEnabledRequests { get; } = new();
+        public List<Guid> SynchronizeBrainRuntimeConfigRequests { get; } = new();
         public List<(Guid BrainId, bool ResetBuffer, bool ResetAccumulator)> ResetBrainRuntimeStateRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
         public List<Repro.ReproduceResult> ReproduceResults { get; } = new();
         public List<TimeSpan> AwaitPlacementTimeouts { get; } = new();
         public List<TimeSpan> VectorWaitTimeouts { get; } = new();
         public List<TimeSpan> EventWaitTimeouts { get; } = new();
+        public ConcurrentQueue<string> OperationLog { get; } = new();
         public ConcurrentQueue<DateTimeOffset> SpawnRequestStartedAtUtc { get; } = new();
         private int _activeSpawnRequests;
         private int _maxObservedConcurrentSpawnRequests;
@@ -2663,12 +2677,14 @@ public sealed class BasicsExecutionSessionTests
         public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
         {
             VectorSubscriptionCount++;
+            OperationLog.Enqueue("subscribe_outputs_vector");
             return Task.CompletedTask;
         }
 
         public Task SubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
         {
             SingleSubscriptionCount++;
+            OperationLog.Enqueue("subscribe_outputs");
             return Task.CompletedTask;
         }
 
@@ -2836,6 +2852,7 @@ public sealed class BasicsExecutionSessionTests
             Guid brainId,
             CancellationToken cancellationToken = default)
         {
+            OperationLog.Enqueue("resume_brain");
             _outputAvailableAtUtc[brainId] = DateTimeOffset.UtcNow + ResumeOutputActivationDelay;
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
@@ -2877,6 +2894,7 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             SetOutputVectorSourceRequests.Add((brainId ?? Guid.Empty, outputVectorSource));
+            OperationLog.Enqueue("set_output_vector_source");
             return Task.FromResult<Nbn.Proto.Io.SetOutputVectorSourceAck?>(new Nbn.Proto.Io.SetOutputVectorSourceAck
             {
                 Success = true,
@@ -2891,6 +2909,7 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             SetCostEnergyEnabledRequests.Add((brainId, enabled));
+            OperationLog.Enqueue("set_cost_energy");
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
                 BrainId = brainId.ToProtoUuid(),
@@ -2906,6 +2925,7 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             SetPlasticityEnabledRequests.Add((brainId, enabled));
+            OperationLog.Enqueue("set_plasticity");
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
                 BrainId = brainId.ToProtoUuid(),
@@ -2921,12 +2941,28 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             SetHomeostasisEnabledRequests.Add((brainId, enabled));
+            OperationLog.Enqueue("set_homeostasis");
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
                 BrainId = brainId.ToProtoUuid(),
                 Command = "set_homeostasis",
                 Success = true,
                 Message = "applied"
+            });
+        }
+
+        public Task<IoCommandAck?> SynchronizeBrainRuntimeConfigAsync(
+            Guid brainId,
+            CancellationToken cancellationToken = default)
+        {
+            SynchronizeBrainRuntimeConfigRequests.Add(brainId);
+            OperationLog.Enqueue("sync_brain_runtime_config");
+            return Task.FromResult<IoCommandAck?>(new IoCommandAck
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Command = "sync_brain_runtime_config",
+                Success = true,
+                Message = "applied_shards=1"
             });
         }
 
@@ -2937,6 +2973,7 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             ResetBrainRuntimeStateRequests.Add((brainId, resetBuffer, resetAccumulator));
+            OperationLog.Enqueue("reset_brain_runtime_state");
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
                 BrainId = brainId.ToProtoUuid(),

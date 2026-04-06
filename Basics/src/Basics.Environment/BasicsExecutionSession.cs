@@ -717,6 +717,19 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         ValidateIoCommandAck(homeostasisAck, brainId, "set_homeostasis");
     }
 
+    private async Task SynchronizeBrainEvaluationRuntimeConfigAsync(
+        Guid brainId,
+        CancellationToken cancellationToken)
+    {
+        if (brainId == Guid.Empty)
+        {
+            return;
+        }
+
+        var syncAck = await _runtimeClient.SynchronizeBrainRuntimeConfigAsync(brainId, cancellationToken).ConfigureAwait(false);
+        ValidateIoCommandAck(syncAck, brainId, "sync_brain_runtime_config");
+    }
+
     private static void ValidateIoCommandAck(
         IoCommandAck? ack,
         Guid brainId,
@@ -1497,6 +1510,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
             await ConfigureBrainEvaluationRuntimeStateAsync(brainId, cancellationToken).ConfigureAwait(false);
             await ConfigureBrainOutputObservationModeAsync(brainId, outputObservationMode, brainInfo, cancellationToken).ConfigureAwait(false);
+            await SynchronizeBrainEvaluationRuntimeConfigAsync(brainId, cancellationToken).ConfigureAwait(false);
 
             await _runtimeClient.SubscribeOutputsVectorAsync(brainId, cancellationToken).ConfigureAwait(false);
             _runtimeClient.ResetOutputBuffer(brainId);

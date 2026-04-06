@@ -673,6 +673,11 @@ public sealed class BasicsLiveTrialHarnessTests
             CancellationToken cancellationToken = default)
             => Task.FromResult<IoCommandAck?>(null);
 
+        public Task<IoCommandAck?> SynchronizeBrainRuntimeConfigAsync(
+            Guid brainId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IoCommandAck?>(null);
+
         public Task<IoCommandAck?> ResetBrainRuntimeStateAsync(
             Guid brainId,
             bool resetBuffer,
