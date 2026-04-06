@@ -468,7 +468,9 @@ public static class BasicsOutputObservationModeExtensions
             or BasicsOutputObservationMode.VectorBuffer;
 
     public static ProtoControl.OutputVectorSource ResolveVectorSource(this BasicsOutputObservationMode mode)
-        => mode == BasicsOutputObservationMode.VectorBuffer
+        // Evented mode gates scoring on ready-bit output events, so it should observe the
+        // same buffer-domain vector values that reset_runtime_state can clear deterministically.
+        => mode is BasicsOutputObservationMode.VectorBuffer or BasicsOutputObservationMode.EventedOutput
             ? ProtoControl.OutputVectorSource.Buffer
             : ProtoControl.OutputVectorSource.Potential;
 }

@@ -353,7 +353,9 @@ public sealed class BasicsExecutionSessionTests
             Assert.Equal(BasicsExecutionState.Succeeded, final.State);
             Assert.True(runtimeClient.SingleSubscriptionCount > 0);
             Assert.True(runtimeClient.VectorSubscriptionCount > 0);
-            Assert.Empty(runtimeClient.SetOutputVectorSourceRequests);
+            Assert.Contains(
+                runtimeClient.SetOutputVectorSourceRequests,
+                static request => request.BrainId != Guid.Empty && request.OutputVectorSource == OutputVectorSource.Buffer);
             Assert.NotEmpty(runtimeClient.EventWaitTimeouts);
             Assert.All(runtimeClient.EventWaitTimeouts, timeout => Assert.Equal(TimeSpan.FromSeconds(10), timeout));
             Assert.NotEmpty(runtimeClient.VectorWaitTimeouts);
@@ -403,7 +405,7 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public async Task ExecutionSession_EventedOutput_ForcesPotentialVectorSource_WhenBrainReportsBuffer()
+    public async Task ExecutionSession_EventedOutput_DoesNotRewriteBufferVectorSource_WhenBrainReportsBuffer()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
         {
@@ -421,9 +423,7 @@ public sealed class BasicsExecutionSessionTests
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
             Assert.Equal(BasicsExecutionState.Succeeded, final.State);
-            Assert.Contains(
-                runtimeClient.SetOutputVectorSourceRequests,
-                static request => request.OutputVectorSource == OutputVectorSource.Potential);
+            Assert.Empty(runtimeClient.SetOutputVectorSourceRequests);
         }
         finally
         {
