@@ -3447,7 +3447,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return new OutputObservationModeOption(
             BasicsOutputObservationMode.EventedOutput,
             "OutputEvent",
-            "Uses OutputEvent on the ready lane as the scoring gate, with the paired value taken from the same tick's full buffer-vector sample.");
+            "Uses OutputEvent on the ready lane as the scoring gate, with the paired value taken from the same tick's full vector sample.");
         yield return new OutputObservationModeOption(
             BasicsOutputObservationMode.VectorBuffer,
             "Continuous buffer",
