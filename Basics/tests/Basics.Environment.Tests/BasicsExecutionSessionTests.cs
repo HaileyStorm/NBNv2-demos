@@ -2234,6 +2234,17 @@ public sealed class BasicsExecutionSessionTests
                     Assert.True(request.ResetBuffer);
                     Assert.True(request.ResetAccumulator);
                 });
+
+            Assert.True(runtimeClient.OperationLog.Count(operation => operation == "pause_brain") >= 4);
+            var operations = runtimeClient.OperationLog.ToArray();
+            var primeResumeIndex = Array.IndexOf(operations, "resume_brain");
+            var firstSamplePauseIndex = Array.FindIndex(operations, primeResumeIndex + 1, operation => operation == "pause_brain");
+            var firstSampleResetIndex = Array.FindIndex(operations, firstSamplePauseIndex + 1, operation => operation == "reset_brain_runtime_state");
+            var firstSampleSecondResumeIndex = Array.FindIndex(operations, firstSampleResetIndex + 1, operation => operation == "resume_brain");
+            Assert.True(primeResumeIndex >= 0);
+            Assert.True(firstSamplePauseIndex > primeResumeIndex);
+            Assert.True(firstSampleResetIndex > firstSamplePauseIndex);
+            Assert.True(firstSampleSecondResumeIndex > firstSampleResetIndex);
         }
         finally
         {
@@ -2443,6 +2454,7 @@ public sealed class BasicsExecutionSessionTests
         private readonly Dictionary<Guid, Queue<BasicsRuntimeOutputEvent>> _delayedOutputEvents = new();
         private readonly Dictionary<Guid, ulong> _ticks = new();
         private readonly Dictionary<Guid, DateTimeOffset> _outputAvailableAtUtc = new();
+        private readonly HashSet<Guid> _resumeDelayApplied = new();
         private readonly Dictionary<Guid, ArtifactRef> _pendingBrainDefinitions = new();
         private readonly Dictionary<string, string> _behaviorByArtifactSha = new(StringComparer.OrdinalIgnoreCase);
         private readonly string _artifactRoot = Path.Combine(Path.GetTempPath(), "nbn-basics-tests", Guid.NewGuid().ToString("N"));
@@ -2878,6 +2890,7 @@ public sealed class BasicsExecutionSessionTests
             string? reason,
             CancellationToken cancellationToken = default)
         {
+            OperationLog.Enqueue("pause_brain");
             _outputAvailableAtUtc[brainId] = DateTimeOffset.MaxValue;
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
@@ -2893,7 +2906,10 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             OperationLog.Enqueue("resume_brain");
-            _outputAvailableAtUtc[brainId] = DateTimeOffset.UtcNow + ResumeOutputActivationDelay;
+            var activationDelay = _resumeDelayApplied.Add(brainId)
+                ? ResumeOutputActivationDelay
+                : TimeSpan.Zero;
+            _outputAvailableAtUtc[brainId] = DateTimeOffset.UtcNow + activationDelay;
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
                 BrainId = brainId.ToProtoUuid(),
@@ -2914,6 +2930,7 @@ public sealed class BasicsExecutionSessionTests
             _delayedOutputEvents.Remove(brainId);
             _ticks.Remove(brainId);
             _outputAvailableAtUtc.Remove(brainId);
+            _resumeDelayApplied.Remove(brainId);
             _lastVectorOutputByBrain.Remove(brainId);
             return Task.FromResult<KillBrainViaIOAck?>(new KillBrainViaIOAck { Accepted = true });
         }

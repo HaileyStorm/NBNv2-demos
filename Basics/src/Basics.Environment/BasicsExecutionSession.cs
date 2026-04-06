@@ -1527,9 +1527,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             setupGate.Release();
             setupSlotHeld = false;
 
-            var resumeAck = await _runtimeClient.ResumeBrainAsync(brainId, cancellationToken).ConfigureAwait(false);
-            ValidateIoCommandAck(resumeAck, brainId, "resume_brain");
-
             var observationStopwatch = Stopwatch.StartNew();
             onAttemptProgress?.Invoke(CreateInFlightBrainProgress(
                 member,
@@ -1538,8 +1535,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 attempt,
                 InFlightBrainPhase.EvaluatingSamples));
 
-            // Spawned evaluation brains start paused, and resume is only acknowledged as queued.
-            // Prime the output path once so the first scored sample does not race a cold resume.
+            // Spawned evaluation brains start paused. Prime the output path while still paused so
+            // the first scored sample does not race either cold resume or sample-input delivery.
             var activationFailure = await PrimeOutputObservationAsync(
                     brainId,
                     taskPlugin.Contract.InputWidth,
@@ -2042,6 +2039,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsOutputSamplingPolicy outputSamplingPolicy,
         CancellationToken cancellationToken)
     {
+        var pauseAck = await _runtimeClient.PauseBrainAsync(
+                brainId,
+                reason: "basics_sample_boundary",
+                cancellationToken)
+            .ConfigureAwait(false);
+        ValidateIoCommandAck(pauseAck, brainId, "pause_brain");
+
         var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
                 brainId,
                 resetBuffer: true,
@@ -2058,6 +2062,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 new[] { sample.InputA, sample.InputB },
                 cancellationToken)
             .ConfigureAwait(false);
+
+        var resumeAck = await _runtimeClient.ResumeBrainAsync(brainId, cancellationToken).ConfigureAwait(false);
+        ValidateIoCommandAck(resumeAck, brainId, "resume_brain");
 
         return outputObservationMode == BasicsOutputObservationMode.EventedOutput
             ? await WaitForReadyEventObservationAsync(
@@ -2085,14 +2092,24 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return null;
         }
 
+        var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
+                brainId,
+                resetBuffer: true,
+                resetAccumulator: true,
+                cancellationToken)
+            .ConfigureAwait(false);
+        ValidateIoCommandAck(resetAck, brainId, "reset_brain_runtime_state");
+
         _runtimeClient.ResetOutputBuffer(brainId);
         _runtimeClient.ResetOutputEventBuffer(brainId);
-
         await _runtimeClient.SendInputVectorAsync(
                 brainId,
                 CreateNeutralInputVector(inputWidth),
                 cancellationToken)
             .ConfigureAwait(false);
+
+        var resumeAck = await _runtimeClient.ResumeBrainAsync(brainId, cancellationToken).ConfigureAwait(false);
+        ValidateIoCommandAck(resumeAck, brainId, "resume_brain");
 
         var output = await _runtimeClient.WaitForOutputVectorAsync(
                 brainId,
@@ -2105,17 +2122,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         {
             return $"startup_{failureDetail}";
         }
-
-        var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
-                brainId,
-                resetBuffer: true,
-                resetAccumulator: true,
-                cancellationToken)
-            .ConfigureAwait(false);
-        ValidateIoCommandAck(resetAck, brainId, "reset_brain_runtime_state");
-
-        _runtimeClient.ResetOutputBuffer(brainId);
-        _runtimeClient.ResetOutputEventBuffer(brainId);
         return null;
     }
 
