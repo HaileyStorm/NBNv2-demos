@@ -759,8 +759,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         Guid brainId,
         CancellationToken cancellationToken)
     {
-        const int maxAttempts = 40;
-        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (true)
         {
             var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
                     brainId,
@@ -784,7 +784,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 return;
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                break;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken).ConfigureAwait(false);
         }
 
         throw new InvalidOperationException(
