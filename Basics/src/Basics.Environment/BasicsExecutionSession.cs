@@ -2169,6 +2169,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var readyEventsSeen = 0;
         var vectorsByTick = new Dictionary<ulong, BasicsRuntimeOutputVector>();
         var readyTicks = new HashSet<ulong>();
+        BasicsRuntimeOutputVector? fallbackReadyVector = null;
+        var fallbackReadyTickCount = 0;
         using var observationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var observationToken = observationCts.Token;
         var timeout = ResolveObservationTimeout(BasicsOutputObservationMode.EventedOutput);
@@ -2232,6 +2234,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     readyEventCursor);
                 if (failureDetail is not null)
                 {
+                    if (readyEventsSeen == 0 && fallbackReadyVector is not null)
+                    {
+                        return new ObservationAttemptResult(
+                            CreateObservation(fallbackReadyVector, fallbackReadyTickCount),
+                            null);
+                    }
+
                     return new ObservationAttemptResult(
                         null,
                         failureDetail);
@@ -2240,14 +2249,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 vectorsByTick[output!.TickId] = output;
                 vectorCursor = output.TickId;
                 observedTicks++;
-                if (output.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
+                if (readyTicks.Contains(output.TickId))
                 {
                     return new ObservationAttemptResult(CreateObservation(output, observedTicks), null);
                 }
 
-                if (readyTicks.Contains(output.TickId))
+                if (fallbackReadyVector is null
+                    && output.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
                 {
-                    return new ObservationAttemptResult(CreateObservation(output, observedTicks), null);
+                    fallbackReadyVector = output;
+                    fallbackReadyTickCount = observedTicks;
                 }
 
                 if (observedTicks < outputSamplingPolicy.MaxReadyWindowTicks)
@@ -2258,6 +2269,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         timeout,
                         observationToken);
                 }
+            }
+
+            if (readyEventsSeen == 0 && fallbackReadyVector is not null)
+            {
+                return new ObservationAttemptResult(
+                    CreateObservation(fallbackReadyVector, fallbackReadyTickCount),
+                    null);
             }
 
             return new ObservationAttemptResult(

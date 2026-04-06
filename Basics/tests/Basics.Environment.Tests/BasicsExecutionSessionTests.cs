@@ -459,6 +459,42 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_EventedOutput_PrefersReadyEventOverEarlierReadyLaneFallback()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            ReadySignalDelayTicks = 2,
+            PreReadyOutputValue = 0f,
+            PreReadyReadyValue = 1f,
+            SuppressPreReadyReadyOutputEvents = true
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.EventedOutput) with
+                {
+                    OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                    {
+                        MaxReadyWindowTicks = 2
+                    }
+                },
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.Equal(1f, final.BestAccuracy);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_EventedOutput_ReportsWhenVectorAndReadyStreamsStaySilent()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -2444,8 +2480,10 @@ public sealed class BasicsExecutionSessionTests
         public bool OnlyEmitOutputVectorOnChange { get; init; }
         public int ReadySignalDelayTicks { get; init; } = 1;
         public float PreReadyOutputValue { get; init; }
+        public float PreReadyReadyValue { get; init; }
         public bool SuppressOutputVectors { get; init; }
         public bool SuppressReadyOutputEvents { get; init; }
+        public bool SuppressPreReadyReadyOutputEvents { get; init; }
         public bool RequirePlacementWaitForVisibility { get; init; }
         public TimeSpan AwaitPlacementDelay { get; init; }
         public string AwaitPlacementFailureCode { get; init; } = "spawn_request_canceled";
@@ -2706,7 +2744,7 @@ public sealed class BasicsExecutionSessionTests
             for (var offset = 1; offset <= readyDelayTicks; offset++)
             {
                 var tick = ++_ticks[brainId];
-                var ready = offset == readyDelayTicks ? 1f : 0f;
+                var ready = offset == readyDelayTicks ? 1f : PreReadyReadyValue;
                 var value = offset == readyDelayTicks ? finalOutput : PreReadyOutputValue;
                 var vector = new[] { value, ready };
                 if (OutputVectorWidthOverride is int outputVectorWidth)
@@ -2729,7 +2767,9 @@ public sealed class BasicsExecutionSessionTests
                     outputEventQueue.Enqueue(new BasicsRuntimeOutputEvent(brainId, 0, tick, value));
                 }
 
-                if (ready >= 0.5f && !SuppressReadyOutputEvents)
+                if (ready >= 0.5f
+                    && !SuppressReadyOutputEvents
+                    && (offset == readyDelayTicks || !SuppressPreReadyReadyOutputEvents))
                 {
                     outputEventQueue.Enqueue(new BasicsRuntimeOutputEvent(brainId, 1, tick, ready));
                 }
