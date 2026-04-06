@@ -755,6 +755,59 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
     }
 
+    private async Task ResetBrainRuntimeStateForSampleAsync(
+        Guid brainId,
+        CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 40;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
+                    brainId,
+                    resetBuffer: true,
+                    resetAccumulator: true,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (resetAck is not null
+                && resetAck.Success
+                && (resetAck.BrainId is null
+                    || !resetAck.BrainId.TryToGuid(out var acknowledgedBrainId)
+                    || acknowledgedBrainId == brainId))
+            {
+                return;
+            }
+
+            if (!IsRetryableTickPhaseInProgressReset(resetAck, brainId))
+            {
+                ValidateIoCommandAck(resetAck, brainId, "reset_brain_runtime_state");
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new InvalidOperationException(
+            $"reset_brain_runtime_state failed for brain {brainId}: tick_phase_in_progress persisted beyond retry budget.");
+    }
+
+    private static bool IsRetryableTickPhaseInProgressReset(IoCommandAck? ack, Guid brainId)
+    {
+        if (ack is null || ack.Success)
+        {
+            return false;
+        }
+
+        if (ack.BrainId is not null
+            && ack.BrainId.TryToGuid(out var acknowledgedBrainId)
+            && acknowledgedBrainId != brainId)
+        {
+            return false;
+        }
+
+        return string.Equals(ack.Message?.Trim(), "tick_phase_in_progress", StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task<(ArtifactRef TemplateDefinition, BasicsResolvedSeedShape? SeedShape, BasicsDefinitionComplexitySummary? Complexity)> ResolveTemplateDefinitionAsync(
         BasicsSeedTemplateContract template,
         CancellationToken cancellationToken)
@@ -2046,13 +2099,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             .ConfigureAwait(false);
         ValidateIoCommandAck(pauseAck, brainId, "pause_brain");
 
-        var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
-                brainId,
-                resetBuffer: true,
-                resetAccumulator: true,
-                cancellationToken)
-            .ConfigureAwait(false);
-        ValidateIoCommandAck(resetAck, brainId, "reset_brain_runtime_state");
+        await ResetBrainRuntimeStateForSampleAsync(brainId, cancellationToken).ConfigureAwait(false);
 
         _runtimeClient.ResetOutputBuffer(brainId);
         _runtimeClient.ResetOutputEventBuffer(brainId);
@@ -2092,13 +2139,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return null;
         }
 
-        var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
-                brainId,
-                resetBuffer: true,
-                resetAccumulator: true,
-                cancellationToken)
-            .ConfigureAwait(false);
-        ValidateIoCommandAck(resetAck, brainId, "reset_brain_runtime_state");
+        await ResetBrainRuntimeStateForSampleAsync(brainId, cancellationToken).ConfigureAwait(false);
 
         _runtimeClient.ResetOutputBuffer(brainId);
         _runtimeClient.ResetOutputEventBuffer(brainId);

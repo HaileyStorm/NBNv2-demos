@@ -2253,6 +2253,41 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_RetriesResetBrainRuntimeState_WhenTickPhaseIsStillInProgress()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            TransientResetTickPhaseInProgressCount = 2
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.EventedOutput,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1
+                    }),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.True(
+                final.State is BasicsExecutionState.Stopped or BasicsExecutionState.Succeeded,
+                $"Expected evaluation to complete after reset retries, observed state {final.State}.");
+            Assert.True(final.BestAccuracy > 0f);
+            Assert.True(runtimeClient.ResetBrainRuntimeStateRequests.Count >= 3);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_AggregatesReadyTickMetrics_And_RepeatsCanonicalSamples()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -2504,6 +2539,7 @@ public sealed class BasicsExecutionSessionTests
         public bool ReuseSingleChildArtifactOnReproduce { get; init; }
         public bool ForceIncompatibleDistinctParents { get; init; }
         public OutputVectorSource InitialOutputVectorSource { get; init; } = OutputVectorSource.Potential;
+        public int TransientResetTickPhaseInProgressCount { get; set; }
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
         public int MaxObservedConcurrentPlacementWaits => _maxObservedConcurrentPlacementWaits;
         public int AwaitSpawnPlacementCallCount { get; private set; }
@@ -3031,6 +3067,18 @@ public sealed class BasicsExecutionSessionTests
         {
             ResetBrainRuntimeStateRequests.Add((brainId, resetBuffer, resetAccumulator));
             OperationLog.Enqueue("reset_brain_runtime_state");
+            if (TransientResetTickPhaseInProgressCount > 0)
+            {
+                TransientResetTickPhaseInProgressCount--;
+                return Task.FromResult<IoCommandAck?>(new IoCommandAck
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    Command = "reset_brain_runtime_state",
+                    Success = false,
+                    Message = "tick_phase_in_progress"
+                });
+            }
+
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
                 BrainId = brainId.ToProtoUuid(),
