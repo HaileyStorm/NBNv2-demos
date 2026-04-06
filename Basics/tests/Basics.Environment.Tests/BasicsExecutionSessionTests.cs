@@ -1306,7 +1306,7 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public async Task ExecutionSession_DoesNotSerializePlacementWaits_BehindSetupConcurrency()
+    public async Task ExecutionSession_ClampsPlacementWaitConcurrency_ToEligibleWorkerCount()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
         {
@@ -1345,9 +1345,7 @@ public sealed class BasicsExecutionSessionTests
 
             Assert.Contains(final.State, new[] { BasicsExecutionState.Stopped, BasicsExecutionState.Succeeded });
             Assert.True(runtimeClient.AwaitSpawnPlacementCallCount >= 4);
-            Assert.True(
-                runtimeClient.MaxObservedConcurrentPlacementWaits >= 2,
-                $"Expected overlapping placement waits, observed {runtimeClient.MaxObservedConcurrentPlacementWaits}.");
+            Assert.InRange(runtimeClient.MaxObservedConcurrentPlacementWaits, 1, 1);
         }
         finally
         {
@@ -1807,6 +1805,7 @@ public sealed class BasicsExecutionSessionTests
             SpawnDelay = TimeSpan.FromMilliseconds(50)
         };
         var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
+        var snapshots = new List<BasicsExecutionSnapshot>();
 
         try
         {
@@ -1832,14 +1831,19 @@ public sealed class BasicsExecutionSessionTests
                     Reproduction: BasicsReproductionPolicy.CreateDefault(),
                     Scheduling: BasicsReproductionSchedulingPolicy.Default,
                     Metrics: BasicsMetricsContract.Default,
-                    StopCriteria: new BasicsExecutionStopCriteria(),
+                        StopCriteria: new BasicsExecutionStopCriteria(),
                     PlannedAtUtc: DateTimeOffset.UtcNow),
                 new AndTaskPlugin(),
-                _ => { },
+                snapshots.Add,
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
             Assert.Equal(BasicsExecutionState.Succeeded, final.State);
             Assert.InRange(runtimeClient.MaxObservedConcurrentSpawnRequests, 1, 2);
+            Assert.Contains(
+                snapshots,
+                static snapshot => snapshot.State == BasicsExecutionState.Running
+                                   && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal)
+                                   && snapshot.DetailText.Contains("Batch 1/4", StringComparison.Ordinal));
         }
         finally
         {

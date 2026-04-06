@@ -1131,7 +1131,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var evaluated = new List<PopulationMember>(population.Count);
         var batchTimings = new List<BasicsExecutionBatchTimingSummary>();
         var sampleCountPerBrain = taskPlugin.BuildDeterministicDataset().Count * Math.Max(1, outputSamplingPolicy.SampleRepeatCount);
-        var maxConcurrent = Math.Max(1, plan.Capacity.RecommendedMaxConcurrentBrains);
+        var maxConcurrent = ResolveEvaluationConcurrency(
+            plan.Capacity.RecommendedMaxConcurrentBrains,
+            plan.Capacity.EligibleWorkerCount);
         var chunkCount = (int)Math.Ceiling(population.Count / (double)maxConcurrent);
         var setupConcurrency = ResolveSetupConcurrency(plan.Capacity.EligibleWorkerCount, maxConcurrent);
         using var setupGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
@@ -1817,6 +1819,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static int ResolveSetupConcurrency(int eligibleWorkerCount, int maxConcurrent)
     {
         return Math.Max(1, Math.Min(maxConcurrent, Math.Max(1, eligibleWorkerCount)));
+    }
+
+    private static int ResolveEvaluationConcurrency(int recommendedMaxConcurrentBrains, int eligibleWorkerCount)
+    {
+        var recommended = Math.Max(1, recommendedMaxConcurrentBrains);
+        if (eligibleWorkerCount <= 0)
+        {
+            return recommended;
+        }
+
+        return Math.Max(1, Math.Min(recommended, eligibleWorkerCount));
     }
 
     private sealed class SpawnRequestPacer
