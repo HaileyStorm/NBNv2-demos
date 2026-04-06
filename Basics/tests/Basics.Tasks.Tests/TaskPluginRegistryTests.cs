@@ -52,6 +52,6 @@ public sealed class TaskPluginRegistryTests
         };
 
         Assert.True(TaskPluginRegistry.TryCreate("multiplication", settings, out var plugin));
-        Assert.Equal(9, plugin.BuildDeterministicDataset().Count);
+        Assert.Equal(5, plugin.BuildDeterministicDataset().Count);
     }
 }

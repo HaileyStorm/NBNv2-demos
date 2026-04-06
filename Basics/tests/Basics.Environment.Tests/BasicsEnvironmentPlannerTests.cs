@@ -147,6 +147,11 @@ public sealed class BasicsEnvironmentPlannerTests
         public Task<SnapshotReady?> RequestSnapshotAsync(Guid brainId, CancellationToken cancellationToken = default)
             => Task.FromResult<SnapshotReady?>(null);
 
+        public Task<Repro.ReproduceResult?> AssessCompatibilityByArtifactsAsync(
+            Repro.AssessCompatibilityByArtifactsRequest request,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<Repro.ReproduceResult?>(null);
+
         public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 

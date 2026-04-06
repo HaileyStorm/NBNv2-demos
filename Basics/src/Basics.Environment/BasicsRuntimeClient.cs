@@ -118,6 +118,10 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
         ReproduceByArtifactsRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<Nbn.Proto.Repro.ReproduceResult?> AssessCompatibilityByArtifactsAsync(
+        AssessCompatibilityByArtifactsRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<SpeciationAssignResponse?> AssignSpeciationAsync(
         SpeciationAssignRequest request,
         CancellationToken cancellationToken = default);
@@ -954,6 +958,33 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             var response = await _system.Root.RequestAsync<Nbn.Proto.Io.ReproduceResult>(
                     _ioPid,
                     new ReproduceByArtifacts { Request = request },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return response?.Result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<Nbn.Proto.Repro.ReproduceResult?> AssessCompatibilityByArtifactsAsync(
+        AssessCompatibilityByArtifactsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(request);
+
+        try
+        {
+            var response = await _system.Root.RequestAsync<Nbn.Proto.Io.AssessCompatibilityResult>(
+                    _ioPid,
+                    new AssessCompatibilityByArtifacts { Request = request },
                     _requestTimeout)
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);

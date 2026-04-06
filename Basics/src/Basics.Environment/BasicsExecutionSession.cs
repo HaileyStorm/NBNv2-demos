@@ -15,8 +15,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 {
     private static readonly TimeSpan VectorObservationTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EventedObservationTimeout = VectorObservationTimeout;
-    // TimeSpan.Zero delegates placement wait budgeting to HiveMind's queue-aware default.
-    private static readonly TimeSpan DefaultSpawnPlacementTimeout = TimeSpan.Zero;
+    private static readonly TimeSpan InitialBrainActivationTimeout = TimeSpan.FromSeconds(15);
+    // Basics uses an explicit caller-side wait budget so burst placement does not fail on HiveMind's short idle-only default.
+    private static readonly TimeSpan DefaultSpawnPlacementTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RetryableSpawnFailureBackoff = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
@@ -69,6 +70,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         ulong? speciationEpochId = null;
         var offspringAccuracyHistory = new List<float>();
         var accuracyHistory = new List<float>();
+        var offspringBalancedAccuracyHistory = new List<float>();
+        var balancedAccuracyHistory = new List<float>();
+        var offspringEdgeAccuracyHistory = new List<float>();
+        var offspringInteriorAccuracyHistory = new List<float>();
         var offspringFitnessHistory = new List<float>();
         var fitnessHistory = new List<float>();
         ulong reproductionCalls = 0;
@@ -113,6 +118,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 overallBestFitness: bestFitnessSoFar,
                 overallBestCandidate: bestCandidateSoFar,
                 offspringAccuracyHistory: offspringAccuracyHistory,
+                offspringBalancedAccuracyHistory: offspringBalancedAccuracyHistory,
+                balancedAccuracyHistory: balancedAccuracyHistory,
+                offspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory,
+                offspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory,
                 offspringFitnessHistory: offspringFitnessHistory);
         }
 
@@ -221,6 +230,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         reproductionRunsObserved,
                         offspringAccuracyHistory,
                         accuracyHistory,
+                        offspringBalancedAccuracyHistory,
+                        balancedAccuracyHistory,
+                        offspringEdgeAccuracyHistory,
+                        offspringInteriorAccuracyHistory,
                         offspringFitnessHistory,
                         fitnessHistory,
                         bestAccuracySoFar,
@@ -267,16 +280,27 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         evaluationResult.LatestBatchTiming,
                         evaluationResult.GenerationTiming,
                         offspringAccuracyHistory,
+                        offspringBalancedAccuracyHistory,
+                        balancedAccuracyHistory,
+                        offspringEdgeAccuracyHistory,
+                        offspringInteriorAccuracyHistory,
                         offspringFitnessHistory);
                 }
 
                 var previousBestCandidate = bestCandidateSoFar;
-                var generationImproved = DidGenerationImprove(generationMetrics, bestAccuracySoFar, bestFitnessSoFar);
+                var generationImproved = DidGenerationImprove(generationMetrics, bestAccuracySoFar, bestFitnessSoFar, bestCandidateSoFar);
                 UpdateBestSoFar(generationMetrics, ref bestAccuracySoFar, ref bestFitnessSoFar, ref bestCandidateSoFar);
                 bestCandidateSoFar = await EnsureBestCandidateSnapshotAsync(previousBestCandidate, bestCandidateSoFar, cancellationToken).ConfigureAwait(false);
                 stalledGenerationCount = generationImproved ? 0 : stalledGenerationCount + 1;
                 offspringAccuracyHistory.Add(generationMetrics.OffspringBestAccuracy);
                 accuracyHistory.Add(generationMetrics.BestAccuracy);
+                if (string.Equals(taskPlugin.Contract.TaskId, "multiplication", StringComparison.OrdinalIgnoreCase))
+                {
+                    offspringBalancedAccuracyHistory.Add(generationMetrics.OffspringBestBalancedAccuracy);
+                    balancedAccuracyHistory.Add(generationMetrics.BestBalancedAccuracy);
+                    offspringEdgeAccuracyHistory.Add(generationMetrics.OffspringBestEdgeAccuracy);
+                    offspringInteriorAccuracyHistory.Add(generationMetrics.OffspringBestInteriorAccuracy);
+                }
                 offspringFitnessHistory.Add(generationMetrics.OffspringBestFitness);
                 fitnessHistory.Add(generationMetrics.BestFitness);
 
@@ -296,6 +320,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     accuracyHistory,
                     fitnessHistory,
                     offspringAccuracyHistory: offspringAccuracyHistory,
+                    offspringBalancedAccuracyHistory: offspringBalancedAccuracyHistory,
+                    balancedAccuracyHistory: balancedAccuracyHistory,
+                    offspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory,
+                    offspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory,
                     offspringFitnessHistory: offspringFitnessHistory,
                     overallBestAccuracy: bestAccuracySoFar,
                     overallBestFitness: bestFitnessSoFar,
@@ -338,6 +366,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         evaluationResult.LatestBatchTiming,
                         evaluationResult.GenerationTiming,
                         offspringAccuracyHistory,
+                        offspringBalancedAccuracyHistory,
+                        balancedAccuracyHistory,
+                        offspringEdgeAccuracyHistory,
+                        offspringInteriorAccuracyHistory,
                         offspringFitnessHistory);
                 }
 
@@ -375,6 +407,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         evaluationResult.LatestBatchTiming,
                         evaluationResult.GenerationTiming,
                         offspringAccuracyHistory,
+                        offspringBalancedAccuracyHistory,
+                        balancedAccuracyHistory,
+                        offspringEdgeAccuracyHistory,
+                        offspringInteriorAccuracyHistory,
                         offspringFitnessHistory);
                 }
 
@@ -405,6 +441,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                                 accuracyHistory,
                                 fitnessHistory,
                                 offspringAccuracyHistory: offspringAccuracyHistory,
+                                offspringBalancedAccuracyHistory: offspringBalancedAccuracyHistory,
+                                balancedAccuracyHistory: balancedAccuracyHistory,
+                                offspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory,
+                                offspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory,
                                 offspringFitnessHistory: offspringFitnessHistory,
                                 overallBestAccuracy: bestAccuracySoFar,
                                 overallBestFitness: bestFitnessSoFar,
@@ -442,6 +482,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         evaluationResult.LatestBatchTiming,
                         evaluationResult.GenerationTiming,
                         offspringAccuracyHistory,
+                        offspringBalancedAccuracyHistory,
+                        balancedAccuracyHistory,
+                        offspringEdgeAccuracyHistory,
+                        offspringInteriorAccuracyHistory,
                         offspringFitnessHistory);
                 }
 
@@ -478,6 +522,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 null,
                 null,
                 offspringAccuracyHistory,
+                offspringBalancedAccuracyHistory,
+                balancedAccuracyHistory,
+                offspringEdgeAccuracyHistory,
+                offspringInteriorAccuracyHistory,
                 offspringFitnessHistory);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -512,6 +560,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 null,
                 null,
                 offspringAccuracyHistory,
+                offspringBalancedAccuracyHistory,
+                balancedAccuracyHistory,
+                offspringEdgeAccuracyHistory,
+                offspringInteriorAccuracyHistory,
                 offspringFitnessHistory);
         }
         catch (Exception ex)
@@ -546,6 +598,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 null,
                 null,
                 offspringAccuracyHistory,
+                offspringBalancedAccuracyHistory,
+                balancedAccuracyHistory,
+                offspringEdgeAccuracyHistory,
+                offspringInteriorAccuracyHistory,
                 offspringFitnessHistory);
         }
         finally
@@ -728,6 +784,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 cancellationToken)
             .ConfigureAwait(false);
         var population = new List<PopulationMember>(targetPopulation);
+        var exactCopyOrdinals = templates.ToDictionary(
+            static template => template.BootstrapTemplateIndex,
+            _ => 0);
         onProgress?.Invoke(
             "Seeding initial population...",
             $"Resolved {templates.Count} bootstrap template(s). Seeding exact copies toward {targetPopulation} generation-1 brains.");
@@ -743,12 +802,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 .ConfigureAwait(false);
             for (var copyIndex = 0; copyIndex < template.ExactCopies && population.Count < targetPopulation; copyIndex++)
             {
-                population.Add(new PopulationMember(
-                    template.Definition.Clone(),
-                    template.SpeciesId,
-                    template.SpeciesDisplayName,
-                    template.Complexity,
-                    LastEvaluation: null));
+                exactCopyOrdinals[template.BootstrapTemplateIndex]++;
+                population.Add(CreateExactBootstrapPopulationMember(
+                    template,
+                    exactCopyOrdinals[template.BootstrapTemplateIndex]));
             }
         }
 
@@ -793,12 +850,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         while (population.Count < targetPopulation && templates.Count > 0)
         {
             var template = templates[refillIndex % templates.Count];
-            population.Add(new PopulationMember(
-                template.Definition.Clone(),
-                template.SpeciesId,
-                template.SpeciesDisplayName,
-                template.Complexity,
-                LastEvaluation: null));
+            exactCopyOrdinals[template.BootstrapTemplateIndex]++;
+            population.Add(CreateExactBootstrapPopulationMember(
+                template,
+                exactCopyOrdinals[template.BootstrapTemplateIndex]));
             refillIndex++;
         }
 
@@ -832,11 +887,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     bootstrapSpeciesDisplayName,
                     resolvedTemplateComplexity,
                     ExactCopies: 1)
+                {
+                    BootstrapTemplateIndex = 1,
+                    SourceDisplayName = plan.SeedTemplate.TemplateId,
+                    ExactCopyOriginKind = BasicsBootstrapOriginKind.TemplateExactCopy,
+                    VariationOriginKind = BasicsBootstrapOriginKind.TemplateVariation
+                }
             ];
         }
 
         var dedupedSeeds = plan.InitialBrainSeeds
-            .GroupBy(seed => Convert.ToHexString(SHA256.HashData(seed.DefinitionBytes)).ToLowerInvariant(), StringComparer.Ordinal)
+            .GroupBy(ResolveSeedContentHash, StringComparer.Ordinal)
             .Select(group =>
             {
                 var first = group.First();
@@ -850,8 +911,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         onProgress?.Invoke(
             "Resolving seed templates...",
             $"Publishing {dedupedSeeds.Length} uploaded initial brain(s) as bootstrap templates.");
-        foreach (var seed in dedupedSeeds)
+        for (var seedIndex = 0; seedIndex < dedupedSeeds.Length; seedIndex++)
         {
+            var seed = dedupedSeeds[seedIndex];
             var publication = await _artifactPublisher.PublishAsync(
                     seed.DefinitionBytes,
                     mediaType: "application/x-nbn",
@@ -866,7 +928,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 speciesId,
                 $"{seed.DisplayName} bootstrap",
                 seed.Complexity,
-                ExactCopies: seed.DuplicateForReproduction ? 2 : 1));
+                ExactCopies: seed.DuplicateForReproduction ? 2 : 1)
+            {
+                BootstrapTemplateIndex = seedIndex + 1,
+                SourceDisplayName = seed.DisplayName,
+                SourceContentHash = ResolveSeedContentHash(seed),
+                ExactCopyOriginKind = BasicsBootstrapOriginKind.UploadedExactCopy,
+                VariationOriginKind = BasicsBootstrapOriginKind.UploadedVariation
+            });
             onProgress?.Invoke(
                 "Resolving seed templates...",
                 $"Published bootstrap template {templates.Count} of {dedupedSeeds.Length}: {seed.DisplayName}.");
@@ -946,7 +1015,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     membership.SpeciesDisplayName,
                     childComplexity,
                     LastEvaluation: null,
-                    CountsTowardOffspringMetrics: true));
+                    CountsTowardOffspringMetrics: true)
+                {
+                    BootstrapOrigin = CreateBootstrapOrigin(template, exactCopyOrdinal: null)
+                });
             }
 
             onProgress?.Invoke(
@@ -973,6 +1045,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         ulong reproductionRunsObserved,
         IReadOnlyList<float> offspringAccuracyHistory,
         IReadOnlyList<float> accuracyHistory,
+        IReadOnlyList<float> offspringBalancedAccuracyHistory,
+        IReadOnlyList<float> balancedAccuracyHistory,
+        IReadOnlyList<float> offspringEdgeAccuracyHistory,
+        IReadOnlyList<float> offspringInteriorAccuracyHistory,
         IReadOnlyList<float> offspringFitnessHistory,
         IReadOnlyList<float> fitnessHistory,
         float overallBestAccuracy,
@@ -1057,6 +1133,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     accuracyHistory,
                     fitnessHistory,
                     offspringAccuracyHistory: offspringAccuracyHistory,
+                    offspringBalancedAccuracyHistory: offspringBalancedAccuracyHistory,
+                    balancedAccuracyHistory: balancedAccuracyHistory,
+                    offspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory,
+                    offspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory,
                     offspringFitnessHistory: offspringFitnessHistory,
                     overallBestAccuracy: overallBestAccuracy,
                     overallBestFitness: overallBestFitness,
@@ -1157,14 +1237,18 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 activeBrainCount: 0,
                 reproductionCalls,
                 reproductionRunsObserved,
-                effectiveTemplateDefinition,
-                seedShape,
-                accuracyHistory,
-                fitnessHistory,
-                offspringAccuracyHistory: offspringAccuracyHistory,
-                offspringFitnessHistory: offspringFitnessHistory,
-                overallBestAccuracy: overallBestAccuracy,
-                overallBestFitness: overallBestFitness,
+                    effectiveTemplateDefinition,
+                    seedShape,
+                    accuracyHistory,
+                    fitnessHistory,
+                    offspringAccuracyHistory: offspringAccuracyHistory,
+                    offspringBalancedAccuracyHistory: offspringBalancedAccuracyHistory,
+                    balancedAccuracyHistory: balancedAccuracyHistory,
+                    offspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory,
+                    offspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory,
+                    offspringFitnessHistory: offspringFitnessHistory,
+                    overallBestAccuracy: overallBestAccuracy,
+                    overallBestFitness: overallBestFitness,
                 overallBestCandidate: overallBestCandidate,
                 latestBatchTiming: batchTiming,
                 latestGenerationTiming: BuildGenerationTimingSummary(generation, batchTimings)));
@@ -1432,12 +1516,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             var resumeAck = await _runtimeClient.ResumeBrainAsync(brainId, cancellationToken).ConfigureAwait(false);
             ValidateIoCommandAck(resumeAck, brainId, "resume_brain");
 
-            var observations = new List<BasicsTaskObservation>();
-            var samples = taskPlugin.BuildDeterministicDataset();
-            ulong lastTick = 0;
-            var sampleRepeatCount = Math.Max(1, outputSamplingPolicy.SampleRepeatCount);
-            var completedObservationAttempts = 0;
-
             var observationStopwatch = Stopwatch.StartNew();
             onAttemptProgress?.Invoke(CreateInFlightBrainProgress(
                 member,
@@ -1445,6 +1523,31 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 batchBrainCount,
                 attempt,
                 InFlightBrainPhase.EvaluatingSamples));
+
+            // Spawned evaluation brains start paused, and resume is only acknowledged as queued.
+            // Prime the output path once so the first scored sample does not race a cold resume.
+            var activationFailure = await PrimeOutputObservationAsync(
+                    brainId,
+                    taskPlugin.Contract.InputWidth,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(activationFailure))
+            {
+                resultMember = member with
+                {
+                    LastEvaluation = CreateTransportFailure($"output_timeout_or_width_mismatch:{activationFailure}"),
+                    EvaluationGeneration = generation,
+                    ActiveBrainId = brainId
+                };
+                observation = observationStopwatch.Elapsed;
+                return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, placementWait, setup, observation, totalStopwatch.Elapsed);
+            }
+
+            var observations = new List<BasicsTaskObservation>();
+            var samples = taskPlugin.BuildDeterministicDataset();
+            ulong lastTick = 0;
+            var sampleRepeatCount = Math.Max(1, outputSamplingPolicy.SampleRepeatCount);
+            var completedObservationAttempts = 0;
 
             foreach (var sample in samples)
             {
@@ -1958,6 +2061,50 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 .ConfigureAwait(false);
     }
 
+    private async Task<string?> PrimeOutputObservationAsync(
+        Guid brainId,
+        uint inputWidth,
+        CancellationToken cancellationToken)
+    {
+        if (brainId == Guid.Empty || inputWidth == 0)
+        {
+            return null;
+        }
+
+        _runtimeClient.ResetOutputBuffer(brainId);
+        _runtimeClient.ResetOutputEventBuffer(brainId);
+
+        await _runtimeClient.SendInputVectorAsync(
+                brainId,
+                CreateNeutralInputVector(inputWidth),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var output = await _runtimeClient.WaitForOutputVectorAsync(
+                brainId,
+                afterTickExclusive: 0,
+                InitialBrainActivationTimeout,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var failureDetail = ClassifyObservationVectorFailure(output, 0, lastTick: 0);
+        if (failureDetail is not null)
+        {
+            return $"startup_{failureDetail}";
+        }
+
+        var resetAck = await _runtimeClient.ResetBrainRuntimeStateAsync(
+                brainId,
+                resetBuffer: true,
+                resetAccumulator: true,
+                cancellationToken)
+            .ConfigureAwait(false);
+        ValidateIoCommandAck(resetAck, brainId, "reset_brain_runtime_state");
+
+        _runtimeClient.ResetOutputBuffer(brainId);
+        _runtimeClient.ResetOutputEventBuffer(brainId);
+        return null;
+    }
+
     private async Task<ObservationAttemptResult> WaitForReadyVectorObservationAsync(
         Guid brainId,
         ulong afterTickExclusive,
@@ -2132,6 +2279,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         return null;
     }
+
+    private static float[] CreateNeutralInputVector(uint inputWidth)
+        => new float[checked((int)inputWidth)];
 
     private static BasicsTaskObservation CreateObservation(BasicsRuntimeOutputVector output, int readyTickCount)
         => new(
@@ -2367,7 +2517,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             RehydrateEvaluation(bestCandidate),
             EvaluationGeneration: bestCandidate.Generation,
             ActiveBrainId: brainId,
-            SnapshotArtifact: snapshotArtifact?.Clone());
+            SnapshotArtifact: snapshotArtifact?.Clone())
+        {
+            BootstrapOrigin = bestCandidate.BootstrapOrigin
+        };
         var retainedSummary = new BasicsExecutionBestCandidateSummary(
             bestCandidate.DefinitionArtifact.Clone(),
             snapshotArtifact?.Clone(),
@@ -2382,7 +2535,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             bestCandidate.AverageReadyTickCount,
             bestCandidate.MinReadyTickCount,
             bestCandidate.MedianReadyTickCount,
-            bestCandidate.MaxReadyTickCount);
+            bestCandidate.MaxReadyTickCount)
+        {
+            BootstrapOrigin = bestCandidate.BootstrapOrigin
+        };
         return (retainedMember, retainedSummary);
     }
 
@@ -2566,7 +2722,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             : Math.Max(1, (int)Math.Ceiling(ranked.Length * effectiveScheduling.ParentSelection.EliteFraction));
         eliteCount = Math.Min(eliteCount, Math.Min(ranked.Length, targetPopulation));
 
-        var nextGeneration = ranked.Take(eliteCount).Select(static member => member with
+        var carryForwardMembers = SelectCarryForwardMembers(ranked, eliteCount).ToArray();
+        var nextGeneration = carryForwardMembers.Select(static member => member with
         {
             LastEvaluation = member.LastEvaluation,
             ActiveBrainId = Guid.Empty,
@@ -2577,27 +2734,63 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             nextGeneration.Select(static member => member.Definition.ToSha256Hex()),
             StringComparer.OrdinalIgnoreCase);
         var duplicateChildDefinitionCount = 0;
-        var parentPool = BuildParentPool(effectiveScheduling.ParentSelection, population);
+        var parentPool = await BuildParentPoolAsync(
+                effectiveScheduling.ParentSelection,
+                population,
+                carryForwardMembers,
+                plan,
+                adaptiveBoostSteps,
+                cancellationToken)
+            .ConfigureAwait(false);
         if (parentPool.Count == 0)
         {
             return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation, minimumPopulation);
         }
 
         var bestFitness = Math.Max(0.0001f, ranked.Max(member => member.LastEvaluation?.Fitness ?? 0f));
+        var compatibilityCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var queuedPairKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var queuedPairs = new Queue<QueuedBreedingPair>();
+        await EnqueueEliteCrossPairsAsync(
+                carryForwardMembers,
+                population,
+                plan,
+                adaptiveBoostSteps,
+                bestFitness,
+                queuedPairs,
+                queuedPairKeys,
+                compatibilityCache,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var frontierChildren = new List<FrontierChildCandidate>();
+        var frontierCap = ResolveWithinGenerationChildFrontierCap(targetPopulation);
         var maxAttempts = Math.Max(targetPopulation * 4, 8);
         var attempt = 0;
         while (nextGeneration.Count < targetPopulation && attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
         {
             attempt++;
-            var parentA = parentPool[attempt % parentPool.Count];
-            var parentB = SelectPairParent(parentPool, parentA, attempt);
-            var normalizedFitness = Math.Clamp(
-                (((parentA.LastEvaluation?.Fitness ?? 0f) + (parentB.LastEvaluation?.Fitness ?? 0f)) / 2f) / bestFitness,
-                0f,
-                1f);
-            var normalizedNovelty = Math.Max(
-                ComputeNovelty(parentA, population),
-                ComputeNovelty(parentB, population));
+            PopulationMember parentA;
+            PopulationMember parentB;
+            float normalizedFitness;
+            float normalizedNovelty;
+            string pairingReason;
+            if (queuedPairs.Count > 0)
+            {
+                var queuedPair = queuedPairs.Dequeue();
+                parentA = queuedPair.ParentA;
+                parentB = queuedPair.ParentB;
+                normalizedFitness = queuedPair.NormalizedFitnessHint;
+                normalizedNovelty = queuedPair.NormalizedNoveltyHint;
+                pairingReason = queuedPair.PairingReason;
+            }
+            else
+            {
+                parentA = parentPool[attempt % parentPool.Count];
+                parentB = SelectPairParent(parentPool, parentA, attempt);
+                normalizedFitness = ResolveNormalizedFitnessHint(parentA, parentB, bestFitness);
+                normalizedNovelty = ResolveNormalizedNoveltyHint(parentA, parentB, population);
+                pairingReason = "ranked parent pool";
+            }
             var runCount = BasicsReproductionBudgetPlanner.ResolveRunCount(
                 effectiveScheduling.RunAllocation,
                 plan.Capacity.RecommendedReproductionRunCount,
@@ -2605,8 +2798,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 normalizedNovelty);
             onBreedProgress?.Invoke(
                 adaptiveBoostSteps > 0
-                    ? $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId}; requesting {runCount} child run(s). Adaptive diversity {plan.DiversityPreset} -> {effectivePreset} after {stalledGenerationCount} stalled generation(s)."
-                    : $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId}; requesting {runCount} child run(s). Diversity preset {plan.DiversityPreset}.",
+                    ? $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId} via {pairingReason}; requesting {runCount} child run(s). Adaptive diversity {plan.DiversityPreset} -> {effectivePreset} after {stalledGenerationCount} stalled generation(s)."
+                    : $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId} via {pairingReason}; requesting {runCount} child run(s). Diversity preset {plan.DiversityPreset}.",
                 nextGeneration.Count);
 
             var reproduceConfig = plan.Reproduction.Config.Clone();
@@ -2656,13 +2849,42 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         cancellationToken)
                     .ConfigureAwait(false);
                 var childComplexity = await ResolveDefinitionComplexityAsync(childDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
-                nextGeneration.Add(new PopulationMember(
+                var childMember = new PopulationMember(
                     childDefinition.Clone(),
                     membership.SpeciesId,
                     membership.SpeciesDisplayName,
                     childComplexity,
                     LastEvaluation: null,
-                    CountsTowardOffspringMetrics: true));
+                    CountsTowardOffspringMetrics: true);
+                nextGeneration.Add(childMember);
+
+                if (frontierCap > 0)
+                {
+                    var frontierChild = new FrontierChildCandidate(
+                        childMember,
+                        normalizedFitness,
+                        normalizedNovelty);
+                    frontierChildren.Add(frontierChild);
+                    if (frontierChildren.Count > frontierCap)
+                    {
+                        frontierChildren.RemoveAt(0);
+                    }
+
+                    await EnqueueWithinGenerationFrontierPairsAsync(
+                            frontierChild,
+                            frontierChildren,
+                            carryForwardMembers,
+                            population,
+                            targetPopulation,
+                            plan,
+                            adaptiveBoostSteps,
+                            bestFitness,
+                            queuedPairs,
+                            queuedPairKeys,
+                            compatibilityCache,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
         }
 
@@ -2682,18 +2904,30 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int targetPopulation,
         int minimumPopulation)
     {
-        var effectiveMinimumPopulation = Math.Min(Math.Max(1, minimumPopulation), Math.Min(targetPopulation, ranked.Count));
-        var desiredPopulation = Math.Max(effectiveMinimumPopulation, Math.Min(targetPopulation, ranked.Count + nextGeneration.Count));
+        var uniqueRankedCount = ranked
+            .Select(static member => member.Definition.ToSha256Hex())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        var effectiveMinimumPopulation = Math.Min(Math.Max(1, minimumPopulation), Math.Min(targetPopulation, uniqueRankedCount));
+        var desiredPopulation = effectiveMinimumPopulation;
         if (nextGeneration.Count >= desiredPopulation)
         {
             return nextGeneration;
         }
 
+        var seenDefinitionShas = new HashSet<string>(
+            nextGeneration.Select(static member => member.Definition.ToSha256Hex()),
+            StringComparer.OrdinalIgnoreCase);
         foreach (var member in ranked)
         {
             if (nextGeneration.Count >= desiredPopulation)
             {
                 break;
+            }
+
+            if (!seenDefinitionShas.Add(member.Definition.ToSha256Hex()))
+            {
+                continue;
             }
 
             nextGeneration.Add(member with
@@ -2707,27 +2941,39 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return nextGeneration;
     }
 
-    private List<PopulationMember> BuildParentPool(
+    private async Task<List<PopulationMember>> BuildParentPoolAsync(
         BasicsParentSelectionPolicy policy,
-        IReadOnlyList<PopulationMember> population)
+        IReadOnlyList<PopulationMember> population,
+        IReadOnlyList<PopulationMember> carryForwardMembers,
+        BasicsEnvironmentPlan plan,
+        int adaptiveBoostSteps,
+        CancellationToken cancellationToken)
     {
         if (population.Count == 0)
         {
             return new List<PopulationMember>();
         }
 
-        var speciesCounts = population
+        var dedupedPopulation = population
+            .GroupBy(member => member.Definition.ToSha256Hex(), StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group
+                .OrderByDescending(static member => member.LastEvaluation?.Fitness ?? 0f)
+                .ThenByDescending(static member => member.LastEvaluation?.Accuracy ?? 0f)
+                .First())
+            .ToArray();
+
+        var speciesCounts = dedupedPopulation
             .GroupBy(member => NormalizeSpeciesId(member.SpeciesId))
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
-        var maxFitness = Math.Max(0.0001f, population.Max(member => member.LastEvaluation?.Fitness ?? 0f));
+        var maxFitness = Math.Max(0.0001f, dedupedPopulation.Max(member => member.LastEvaluation?.Fitness ?? 0f));
         var maxSpeciesCount = Math.Max(1, speciesCounts.Values.DefaultIfEmpty(1).Max());
 
-        var ranked = population
+        var ranked = dedupedPopulation
             .Select(member =>
             {
                 var speciesId = NormalizeSpeciesId(member.SpeciesId);
                 var speciesCount = speciesCounts.TryGetValue(speciesId, out var count) ? count : 1;
-                var novelty = 1f - (speciesCount / (float)population.Count);
+                var novelty = 1f - (speciesCount / (float)dedupedPopulation.Length);
                 var speciesBalance = 1f - (speciesCount / (float)maxSpeciesCount);
                 var score = BasicsReproductionBudgetPlanner.ScoreParentCandidate(
                     policy,
@@ -2756,7 +3002,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         var explorationCount = Math.Min(
-            Math.Max(0, (int)Math.Round(population.Count * policy.ExplorationFraction, MidpointRounding.AwayFromZero)),
+            Math.Max(0, (int)Math.Round(dedupedPopulation.Length * policy.ExplorationFraction, MidpointRounding.AwayFromZero)),
             Math.Max(0, ranked.Length - pool.Count));
         if (explorationCount > 0)
         {
@@ -2768,7 +3014,331 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             pool.AddRange(remaining);
         }
 
+        var temporaryEliteDuplicates = await BuildTemporaryEliteDuplicatesForReproductionAsync(
+                carryForwardMembers,
+                plan,
+                adaptiveBoostSteps,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (temporaryEliteDuplicates.Count > 0)
+        {
+            pool.AddRange(temporaryEliteDuplicates);
+        }
+
         return pool;
+    }
+
+    private async Task EnqueueEliteCrossPairsAsync(
+        IReadOnlyList<PopulationMember> carryForwardMembers,
+        IReadOnlyList<PopulationMember> population,
+        BasicsEnvironmentPlan plan,
+        int adaptiveBoostSteps,
+        float bestFitness,
+        Queue<QueuedBreedingPair> queuedPairs,
+        HashSet<string> queuedPairKeys,
+        Dictionary<string, bool> compatibilityCache,
+        CancellationToken cancellationToken)
+    {
+        if (carryForwardMembers.Count < 2)
+        {
+            return;
+        }
+
+        for (var i = 0; i < carryForwardMembers.Count; i++)
+        {
+            for (var j = i + 1; j < carryForwardMembers.Count; j++)
+            {
+                var parentA = carryForwardMembers[i];
+                var parentB = carryForwardMembers[j];
+                await TryEnqueueBreedingPairAsync(
+                        parentA,
+                        parentB,
+                        ResolveNormalizedFitnessHint(parentA, parentB, bestFitness),
+                        ResolveNormalizedNoveltyHint(parentA, parentB, population),
+                        "elite cross queue",
+                        plan,
+                        adaptiveBoostSteps,
+                        queuedPairs,
+                        queuedPairKeys,
+                        compatibilityCache,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task EnqueueWithinGenerationFrontierPairsAsync(
+        FrontierChildCandidate frontierChild,
+        IReadOnlyList<FrontierChildCandidate> frontierChildren,
+        IReadOnlyList<PopulationMember> carryForwardMembers,
+        IReadOnlyList<PopulationMember> population,
+        int targetPopulation,
+        BasicsEnvironmentPlan plan,
+        int adaptiveBoostSteps,
+        float bestFitness,
+        Queue<QueuedBreedingPair> queuedPairs,
+        HashSet<string> queuedPairKeys,
+        Dictionary<string, bool> compatibilityCache,
+        CancellationToken cancellationToken)
+    {
+        var elitePartnerCount = ResolveWithinGenerationElitePartnerCount(targetPopulation, carryForwardMembers.Count);
+        foreach (var elite in carryForwardMembers.Take(elitePartnerCount))
+        {
+            var normalizedFitness = Math.Clamp(
+                (frontierChild.NormalizedFitnessHint + ResolveNormalizedFitnessHint(elite, bestFitness)) / 2f,
+                0f,
+                1f);
+            var normalizedNovelty = Math.Max(
+                frontierChild.NormalizedNoveltyHint,
+                ComputeNovelty(elite, population));
+            await TryEnqueueBreedingPairAsync(
+                    frontierChild.Member,
+                    elite,
+                    normalizedFitness,
+                    normalizedNovelty,
+                    "within-generation child x elite",
+                    plan,
+                    adaptiveBoostSteps,
+                    queuedPairs,
+                    queuedPairKeys,
+                    compatibilityCache,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (frontierChildren.Count < 2 || targetPopulation < 6)
+        {
+            return;
+        }
+
+        foreach (var sibling in frontierChildren
+                     .Where(candidate => !string.Equals(
+                         candidate.Member.Definition.ToSha256Hex(),
+                         frontierChild.Member.Definition.ToSha256Hex(),
+                         StringComparison.OrdinalIgnoreCase))
+                     .Reverse()
+                     .Take(targetPopulation >= 12 ? 2 : 1))
+        {
+            await TryEnqueueBreedingPairAsync(
+                    frontierChild.Member,
+                    sibling.Member,
+                    Math.Clamp((frontierChild.NormalizedFitnessHint + sibling.NormalizedFitnessHint) / 2f, 0f, 1f),
+                    Math.Max(frontierChild.NormalizedNoveltyHint, sibling.NormalizedNoveltyHint),
+                    "within-generation child frontier",
+                    plan,
+                    adaptiveBoostSteps,
+                    queuedPairs,
+                    queuedPairKeys,
+                    compatibilityCache,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async Task TryEnqueueBreedingPairAsync(
+        PopulationMember parentA,
+        PopulationMember parentB,
+        float normalizedFitnessHint,
+        float normalizedNoveltyHint,
+        string pairingReason,
+        BasicsEnvironmentPlan plan,
+        int adaptiveBoostSteps,
+        Queue<QueuedBreedingPair> queuedPairs,
+        HashSet<string> queuedPairKeys,
+        Dictionary<string, bool> compatibilityCache,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(parentA.Definition.ToSha256Hex(), parentB.Definition.ToSha256Hex(), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var pairKey = BuildCompatibilityPairKey(parentA.Definition, parentB.Definition);
+        if (!queuedPairKeys.Add(pairKey))
+        {
+            return;
+        }
+
+        if (!await AreDefinitionsCompatibleForReproductionAsync(
+                parentA.Definition,
+                parentB.Definition,
+                plan,
+                adaptiveBoostSteps,
+                compatibilityCache,
+                cancellationToken)
+            .ConfigureAwait(false))
+        {
+            return;
+        }
+
+        queuedPairs.Enqueue(new QueuedBreedingPair(
+            parentA,
+            parentB,
+            Math.Clamp(normalizedFitnessHint, 0f, 1f),
+            Math.Clamp(normalizedNoveltyHint, 0f, 1f),
+            pairingReason));
+    }
+
+    private static float ResolveNormalizedFitnessHint(
+        PopulationMember parentA,
+        PopulationMember parentB,
+        float bestFitness)
+        => Math.Clamp(
+            (((parentA.LastEvaluation?.Fitness ?? 0f) + (parentB.LastEvaluation?.Fitness ?? 0f)) / 2f) / Math.Max(0.0001f, bestFitness),
+            0f,
+            1f);
+
+    private static float ResolveNormalizedFitnessHint(PopulationMember parent, float bestFitness)
+        => Math.Clamp((parent.LastEvaluation?.Fitness ?? 0f) / Math.Max(0.0001f, bestFitness), 0f, 1f);
+
+    private float ResolveNormalizedNoveltyHint(
+        PopulationMember parentA,
+        PopulationMember parentB,
+        IReadOnlyList<PopulationMember> population)
+        => Math.Max(
+            ComputeNovelty(parentA, population),
+            ComputeNovelty(parentB, population));
+
+    private static int ResolveWithinGenerationChildFrontierCap(int targetPopulation)
+        => Math.Clamp(targetPopulation / 3, 0, 4);
+
+    private static int ResolveWithinGenerationElitePartnerCount(int targetPopulation, int eliteCount)
+        => targetPopulation >= 6
+            ? Math.Min(2, eliteCount)
+            : Math.Min(1, eliteCount);
+
+    private static IReadOnlyList<PopulationMember> SelectCarryForwardMembers(
+        IReadOnlyList<PopulationMember> ranked,
+        int eliteCount)
+    {
+        if (ranked.Count == 0 || eliteCount <= 0)
+        {
+            return Array.Empty<PopulationMember>();
+        }
+
+        var selected = new List<PopulationMember>(Math.Min(eliteCount, ranked.Count));
+        var seenDefinitionShas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var member in ranked)
+        {
+            if (!seenDefinitionShas.Add(member.Definition.ToSha256Hex()))
+            {
+                continue;
+            }
+
+            selected.Add(member);
+            if (selected.Count >= eliteCount)
+            {
+                break;
+            }
+        }
+
+        return selected;
+    }
+
+    private async Task<List<PopulationMember>> BuildTemporaryEliteDuplicatesForReproductionAsync(
+        IReadOnlyList<PopulationMember> carryForwardMembers,
+        BasicsEnvironmentPlan plan,
+        int adaptiveBoostSteps,
+        CancellationToken cancellationToken)
+    {
+        var uniqueElites = carryForwardMembers
+            .GroupBy(member => member.Definition.ToSha256Hex(), StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
+        if (uniqueElites.Length == 0)
+        {
+            return new List<PopulationMember>();
+        }
+
+        var compatibilityCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var temporaryDuplicates = new List<PopulationMember>();
+        for (var i = 0; i < uniqueElites.Length; i++)
+        {
+            var elite = uniqueElites[i];
+            var hasCompatiblePeer = false;
+            for (var j = 0; j < uniqueElites.Length; j++)
+            {
+                if (i == j)
+                {
+                    continue;
+                }
+
+                if (await AreDefinitionsCompatibleForReproductionAsync(
+                        elite.Definition,
+                        uniqueElites[j].Definition,
+                        plan,
+                        adaptiveBoostSteps,
+                        compatibilityCache,
+                        cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    hasCompatiblePeer = true;
+                    break;
+                }
+            }
+
+            if (!hasCompatiblePeer)
+            {
+                temporaryDuplicates.Add(elite with
+                {
+                    ActiveBrainId = Guid.Empty,
+                    SnapshotArtifact = null,
+                    CountsTowardOffspringMetrics = false
+                });
+            }
+        }
+
+        return temporaryDuplicates;
+    }
+
+    private async Task<bool> AreDefinitionsCompatibleForReproductionAsync(
+        ArtifactRef parentA,
+        ArtifactRef parentB,
+        BasicsEnvironmentPlan plan,
+        int adaptiveBoostSteps,
+        Dictionary<string, bool> compatibilityCache,
+        CancellationToken cancellationToken)
+    {
+        if (!HasArtifactRef(parentA) || !HasArtifactRef(parentB))
+        {
+            return false;
+        }
+
+        var pairKey = BuildCompatibilityPairKey(parentA, parentB);
+        if (compatibilityCache.TryGetValue(pairKey, out var cached))
+        {
+            return cached;
+        }
+
+        var reproduceConfig = plan.Reproduction.Config.Clone();
+        ApplyVariationBand(reproduceConfig, plan.SeedTemplate.InitialVariationBand);
+        BasicsDiversityTuning.ApplyAdaptiveBoost(reproduceConfig, adaptiveBoostSteps);
+        reproduceConfig.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
+
+        var result = await _runtimeClient.AssessCompatibilityByArtifactsAsync(
+                new Repro.AssessCompatibilityByArtifactsRequest
+                {
+                    ParentADef = parentA.Clone(),
+                    ParentBDef = parentB.Clone(),
+                    StrengthSource = plan.Reproduction.StrengthSource,
+                    Config = reproduceConfig,
+                    Seed = NextSeed(),
+                    RunCount = 1
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+        var compatible = result?.Report?.Compatible ?? false;
+        compatibilityCache[pairKey] = compatible;
+        return compatible;
+    }
+
+    private static string BuildCompatibilityPairKey(ArtifactRef left, ArtifactRef right)
+    {
+        var leftSha = left.ToSha256Hex();
+        var rightSha = right.ToSha256Hex();
+        return string.Compare(leftSha, rightSha, StringComparison.OrdinalIgnoreCase) <= 0
+            ? $"{leftSha}|{rightSha}"
+            : $"{rightSha}|{leftSha}";
     }
 
     private PopulationMember SelectPairParent(
@@ -3083,6 +3653,34 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static string ShortSeedHash(byte[] bytes)
         => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()[..12];
 
+    private static string ResolveSeedContentHash(BasicsInitialBrainSeed seed)
+        => string.IsNullOrWhiteSpace(seed.ContentHash)
+            ? Convert.ToHexString(SHA256.HashData(seed.DefinitionBytes)).ToLowerInvariant()
+            : seed.ContentHash.Trim().ToLowerInvariant();
+
+    private static PopulationMember CreateExactBootstrapPopulationMember(
+        ResolvedInitialSeedTemplate template,
+        int exactCopyOrdinal)
+        => new(
+            template.Definition.Clone(),
+            template.SpeciesId,
+            template.SpeciesDisplayName,
+            template.Complexity,
+            LastEvaluation: null)
+        {
+            BootstrapOrigin = CreateBootstrapOrigin(template, exactCopyOrdinal)
+        };
+
+    private static BasicsBootstrapOrigin CreateBootstrapOrigin(
+        ResolvedInitialSeedTemplate template,
+        int? exactCopyOrdinal)
+        => new(
+            exactCopyOrdinal.HasValue ? template.ExactCopyOriginKind : template.VariationOriginKind,
+            template.SourceDisplayName,
+            template.SourceContentHash,
+            template.BootstrapTemplateIndex,
+            exactCopyOrdinal);
+
     private ulong NextSeed()
     {
         var buffer = new byte[8];
@@ -3119,6 +3717,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ["task_accuracy"] = 0f,
                 ["classification_accuracy"] = 0f,
                 ["tolerance_accuracy"] = 0f,
+                ["edge_tolerance_accuracy"] = 0f,
+                ["interior_tolerance_accuracy"] = 0f,
+                ["balanced_tolerance_accuracy"] = 0f,
                 ["mean_absolute_error"] = 1f,
                 ["mean_squared_error"] = 1f,
                 ["target_proximity_fitness"] = 0f,
@@ -3202,6 +3803,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionBatchTimingSummary? latestBatchTiming = null,
         BasicsExecutionGenerationTimingSummary? latestGenerationTiming = null,
         IReadOnlyList<float>? offspringAccuracyHistory = null,
+        IReadOnlyList<float>? offspringBalancedAccuracyHistory = null,
+        IReadOnlyList<float>? balancedAccuracyHistory = null,
+        IReadOnlyList<float>? offspringEdgeAccuracyHistory = null,
+        IReadOnlyList<float>? offspringInteriorAccuracyHistory = null,
         IReadOnlyList<float>? offspringFitnessHistory = null)
     {
         var snapshot = CreateTerminalSnapshot(
@@ -3226,6 +3831,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             latestBatchTiming,
             latestGenerationTiming,
             offspringAccuracyHistory,
+            offspringBalancedAccuracyHistory,
+            balancedAccuracyHistory,
+            offspringEdgeAccuracyHistory,
+            offspringInteriorAccuracyHistory,
             offspringFitnessHistory);
         onSnapshot(snapshot);
         return snapshot;
@@ -3253,6 +3862,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionBatchTimingSummary? latestBatchTiming,
         BasicsExecutionGenerationTimingSummary? latestGenerationTiming,
         IReadOnlyList<float>? offspringAccuracyHistory = null,
+        IReadOnlyList<float>? offspringBalancedAccuracyHistory = null,
+        IReadOnlyList<float>? balancedAccuracyHistory = null,
+        IReadOnlyList<float>? offspringEdgeAccuracyHistory = null,
+        IReadOnlyList<float>? offspringInteriorAccuracyHistory = null,
         IReadOnlyList<float>? offspringFitnessHistory = null)
     {
         if (!ShouldUseBaselineSnapshot(population, baselineSnapshot))
@@ -3279,6 +3892,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 latestBatchTiming: latestBatchTiming,
                 latestGenerationTiming: latestGenerationTiming,
                 offspringAccuracyHistory: offspringAccuracyHistory,
+                offspringBalancedAccuracyHistory: offspringBalancedAccuracyHistory,
+                balancedAccuracyHistory: balancedAccuracyHistory,
+                offspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory,
+                offspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory,
                 offspringFitnessHistory: offspringFitnessHistory);
 
             if (!ShouldPreserveBaselinePopulationSummary(state, population, baselineSnapshot))
@@ -3323,10 +3940,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             BestCandidate: CloneBestCandidate(resolvedBestCandidate),
             OffspringAccuracyHistory: offspringAccuracyHistory?.Count > 0 ? offspringAccuracyHistory.ToArray() : baseline.OffspringAccuracyHistory,
             AccuracyHistory: MergeHistory(accuracyHistory, baseline.AccuracyHistory),
+            OffspringBalancedAccuracyHistory: offspringBalancedAccuracyHistory?.Count > 0 ? offspringBalancedAccuracyHistory.ToArray() : baseline.OffspringBalancedAccuracyHistory,
+            BalancedAccuracyHistory: balancedAccuracyHistory?.Count > 0 ? balancedAccuracyHistory.ToArray() : baseline.BalancedAccuracyHistory,
+            OffspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory?.Count > 0 ? offspringEdgeAccuracyHistory.ToArray() : baseline.OffspringEdgeAccuracyHistory,
+            OffspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory?.Count > 0 ? offspringInteriorAccuracyHistory.ToArray() : baseline.OffspringInteriorAccuracyHistory,
             OffspringFitnessHistory: offspringFitnessHistory?.Count > 0 ? offspringFitnessHistory.ToArray() : baseline.OffspringFitnessHistory,
             BestFitnessHistory: MergeHistory(fitnessHistory, baseline.BestFitnessHistory),
             LatestBatchTiming: latestBatchTiming ?? baseline.LatestBatchTiming,
-            LatestGenerationTiming: latestGenerationTiming ?? baseline.LatestGenerationTiming);
+            LatestGenerationTiming: latestGenerationTiming ?? baseline.LatestGenerationTiming)
+        {
+            BootstrapCandidateTraces = baseline.BootstrapCandidateTraces.ToArray()
+        };
     }
 
     private static void PublishSnapshot(
@@ -3358,6 +3982,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionBatchTimingSummary? latestBatchTiming = null,
         BasicsExecutionGenerationTimingSummary? latestGenerationTiming = null,
         IReadOnlyList<float>? offspringAccuracyHistory = null,
+        IReadOnlyList<float>? offspringBalancedAccuracyHistory = null,
+        IReadOnlyList<float>? balancedAccuracyHistory = null,
+        IReadOnlyList<float>? offspringEdgeAccuracyHistory = null,
+        IReadOnlyList<float>? offspringInteriorAccuracyHistory = null,
         IReadOnlyList<float>? offspringFitnessHistory = null)
     {
         onSnapshot(new BasicsExecutionSnapshot(
@@ -3384,6 +4012,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             CloneBestCandidate(SelectBestCandidateSummary(bestCandidate, overallBestCandidate)),
             offspringAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
             accuracyHistory.ToArray(),
+            offspringBalancedAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
+            balancedAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
+            offspringEdgeAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
+            offspringInteriorAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
             offspringFitnessHistory?.ToArray() ?? Array.Empty<float>(),
             fitnessHistory.ToArray(),
             latestBatchTiming,
@@ -3436,7 +4068,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 candidate.MinReadyTickCount,
                 candidate.MedianReadyTickCount,
                 candidate.MaxReadyTickCount,
-                candidate.ReadyTickStdDev);
+                candidate.ReadyTickStdDev)
+            {
+                BootstrapOrigin = candidate.BootstrapOrigin
+            };
 
     private static IReadOnlyList<float> MergeHistory(
         IReadOnlyList<float> current,
@@ -3467,9 +4102,19 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static bool DidGenerationImprove(
         GenerationMetrics generationMetrics,
         float bestAccuracySoFar,
-        float bestFitnessSoFar)
-        => generationMetrics.BestAccuracy > bestAccuracySoFar + 0.0001f
-           || generationMetrics.BestFitness > bestFitnessSoFar + 0.0001f;
+        float bestFitnessSoFar,
+        BasicsExecutionBestCandidateSummary? bestCandidateSoFar)
+    {
+        if (generationMetrics.BestAccuracy > bestAccuracySoFar + 0.0001f
+            || generationMetrics.BestFitness > bestFitnessSoFar + 0.0001f)
+        {
+            return true;
+        }
+
+        return generationMetrics.TrackedBestCandidate is not null
+               && (bestCandidateSoFar is null
+                   || CompareCandidateSummary(generationMetrics.TrackedBestCandidate, bestCandidateSoFar) > 0);
+    }
 
     private static BasicsExecutionBestCandidateSummary? SelectBestCandidateSummary(
         BasicsExecutionBestCandidateSummary? left,
@@ -3500,16 +4145,23 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return viabilityComparison;
         }
 
-        var accuracyComparison = candidate.Accuracy.CompareTo(baseline.Accuracy);
-        if (accuracyComparison != 0)
+        var selectionAccuracyComparison = ResolveCandidateSelectionAccuracy(candidate)
+            .CompareTo(ResolveCandidateSelectionAccuracy(baseline));
+        if (selectionAccuracyComparison != 0)
         {
-            return accuracyComparison;
+            return selectionAccuracyComparison;
         }
 
         var fitnessComparison = candidate.Fitness.CompareTo(baseline.Fitness);
         if (fitnessComparison != 0)
         {
             return fitnessComparison;
+        }
+
+        var accuracyComparison = candidate.Accuracy.CompareTo(baseline.Accuracy);
+        if (accuracyComparison != 0)
+        {
+            return accuracyComparison;
         }
 
         var internalNeuronComparison = CompareAscendingPreference(
@@ -3594,6 +4246,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<float> accuracyHistory,
         IReadOnlyList<float> fitnessHistory,
         IReadOnlyList<float>? offspringAccuracyHistory = null,
+        IReadOnlyList<float>? offspringBalancedAccuracyHistory = null,
+        IReadOnlyList<float>? balancedAccuracyHistory = null,
+        IReadOnlyList<float>? offspringEdgeAccuracyHistory = null,
+        IReadOnlyList<float>? offspringInteriorAccuracyHistory = null,
         IReadOnlyList<float>? offspringFitnessHistory = null,
         bool includeWinnerRuntimeState = false,
         float overallBestAccuracy = 0f,
@@ -3630,10 +4286,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             CloneBestCandidate(resolvedBestCandidate),
             offspringAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
             accuracyHistory.ToArray(),
+            offspringBalancedAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
+            balancedAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
+            offspringEdgeAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
+            offspringInteriorAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
             offspringFitnessHistory?.ToArray() ?? Array.Empty<float>(),
             fitnessHistory.ToArray(),
             latestBatchTiming,
-            latestGenerationTiming);
+            latestGenerationTiming)
+        {
+            BootstrapCandidateTraces = CloneBootstrapCandidateTraces(metrics.BootstrapCandidateTraces)
+        };
     }
 
     private GenerationMetrics BuildGenerationMetrics(
@@ -3647,6 +4310,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return new GenerationMetrics(
                 OffspringBestAccuracy: 0f,
                 BestAccuracy: 0f,
+                OffspringBestBalancedAccuracy: 0f,
+                BestBalancedAccuracy: 0f,
+                OffspringBestEdgeAccuracy: 0f,
+                OffspringBestInteriorAccuracy: 0f,
                 OffspringBestFitness: 0f,
                 BestFitness: 0f,
                 OffspringEvaluatedCount: 0,
@@ -3657,7 +4324,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 BestCandidate: null,
                 TrackedBestCandidate: null,
                 EvaluationFailureCount: 0,
-                EvaluationFailureSummary: string.Empty);
+                EvaluationFailureSummary: string.Empty,
+                BootstrapCandidateTraces: Array.Empty<BasicsExecutionBootstrapCandidateTrace>());
         }
 
         var candidates = population
@@ -3699,11 +4367,27 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             failureSummary = string.Join("; ", grouped);
         }
 
+        var offspringBestBalancedAccuracy = offspringCandidates.Length == 0
+            ? 0f
+            : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "balanced_tolerance_accuracy"));
+        var bestBalancedAccuracy = candidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "balanced_tolerance_accuracy"));
+        var offspringBestEdgeAccuracy = offspringCandidates.Length == 0
+            ? 0f
+            : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "edge_tolerance_accuracy"));
+        var offspringBestInteriorAccuracy = offspringCandidates.Length == 0
+            ? 0f
+            : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "interior_tolerance_accuracy"));
+        var bootstrapCandidateTraces = BuildBootstrapCandidateTraces(population, currentGeneration);
+
         return new GenerationMetrics(
             OffspringBestAccuracy: offspringCandidates.Length == 0
                 ? 0f
                 : offspringCandidates.Max(candidate => candidate.Evaluation.Accuracy),
             BestAccuracy: candidates.Max(candidate => candidate.Evaluation.Accuracy),
+            OffspringBestBalancedAccuracy: offspringBestBalancedAccuracy,
+            BestBalancedAccuracy: bestBalancedAccuracy,
+            OffspringBestEdgeAccuracy: offspringBestEdgeAccuracy,
+            OffspringBestInteriorAccuracy: offspringBestInteriorAccuracy,
             OffspringBestFitness: offspringCandidates.Length == 0
                 ? 0f
                 : offspringCandidates.Max(candidate => candidate.Evaluation.Fitness),
@@ -3716,8 +4400,60 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             BestCandidate: BuildBestCandidateSummary(winningCandidate, includeWinnerRuntimeState),
             TrackedBestCandidate: BuildBestCandidateSummary(trackedBestCandidate, includeWinnerRuntimeState),
             EvaluationFailureCount: failureCount,
-            EvaluationFailureSummary: failureSummary);
+            EvaluationFailureSummary: failureSummary,
+            BootstrapCandidateTraces: bootstrapCandidateTraces);
     }
+
+    private static float ResolveAccuracyBreakdownMetric(BasicsTaskEvaluationResult evaluation, string key)
+        => evaluation.ScoreBreakdown.TryGetValue(key, out var value)
+            ? Math.Clamp(value, 0f, 1f)
+            : 0f;
+
+    private static IReadOnlyList<BasicsExecutionBootstrapCandidateTrace> BuildBootstrapCandidateTraces(
+        IReadOnlyList<PopulationMember> population,
+        int? currentGeneration)
+    {
+        if (!currentGeneration.HasValue || currentGeneration.Value <= 0)
+        {
+            return Array.Empty<BasicsExecutionBootstrapCandidateTrace>();
+        }
+
+        return population
+            .Where(member =>
+                member.BootstrapOrigin is not null
+                && member.LastEvaluation is not null
+                && member.EvaluationGeneration == currentGeneration.Value)
+            .Select(member => new BasicsExecutionBootstrapCandidateTrace(
+                member.BootstrapOrigin!,
+                member.Definition.ToSha256Hex(),
+                NormalizeSpeciesId(member.SpeciesId),
+                member.LastEvaluation!.Accuracy,
+                member.LastEvaluation.Fitness,
+                new Dictionary<string, float>(member.LastEvaluation.ScoreBreakdown, StringComparer.Ordinal),
+                member.LastEvaluation.Diagnostics.ToArray(),
+                currentGeneration.Value))
+            .OrderBy(trace => trace.Origin.IsUploadedSeed ? 0 : 1)
+            .ThenBy(trace => trace.Origin.IsExactCopy ? 0 : 1)
+            .ThenBy(trace => trace.Origin.BootstrapTemplateIndex)
+            .ThenBy(trace => trace.Origin.ExactCopyOrdinal ?? int.MaxValue)
+            .ThenByDescending(trace => trace.ScoreBreakdown.TryGetValue("balanced_tolerance_accuracy", out var balanced) ? Math.Clamp(balanced, 0f, 1f) : 0f)
+            .ThenByDescending(trace => trace.Accuracy)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<BasicsExecutionBootstrapCandidateTrace> CloneBootstrapCandidateTraces(
+        IReadOnlyList<BasicsExecutionBootstrapCandidateTrace> traces)
+        => traces
+            .Select(trace => new BasicsExecutionBootstrapCandidateTrace(
+                trace.Origin,
+                trace.ArtifactSha256,
+                trace.SpeciesId,
+                trace.Accuracy,
+                trace.Fitness,
+                new Dictionary<string, float>(trace.ScoreBreakdown, StringComparer.Ordinal),
+                trace.Diagnostics.ToArray(),
+                trace.Generation))
+            .ToArray();
 
     private static BasicsExecutionBestCandidateSummary BuildBestCandidateSummary(
         CandidateSelection candidate,
@@ -3737,7 +4473,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             candidate.Evaluation.MinReadyTickCount,
             candidate.Evaluation.MedianReadyTickCount,
             candidate.Evaluation.MaxReadyTickCount,
-            candidate.Evaluation.ReadyTickStdDev);
+            candidate.Evaluation.ReadyTickStdDev)
+        {
+            BootstrapOrigin = candidate.Member.BootstrapOrigin
+        };
 
     private CandidateSelection SelectWinningCandidate(
         IReadOnlyList<CandidateSelection> candidates,
@@ -3760,6 +4499,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         return candidates
             .OrderByDescending(candidate => candidate.Evaluation.Fitness)
+            .ThenByDescending(candidate => ResolveCandidateSelectionAccuracy(candidate.Evaluation))
             .ThenByDescending(candidate => candidate.Evaluation.Accuracy)
             .ThenBy(candidate => candidate.Member.Complexity?.InternalNeuronCount ?? int.MaxValue)
             .ThenBy(candidate => candidate.Member.Complexity?.AxonCount ?? int.MaxValue)
@@ -3771,6 +4511,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static CandidateSelection SelectTrackedBestCandidate(IReadOnlyList<CandidateSelection> candidates)
         => candidates
             .OrderByDescending(candidate => candidate.Evaluation.Diagnostics.Count == 0)
+            .ThenByDescending(candidate => ResolveCandidateSelectionAccuracy(candidate.Evaluation))
             .ThenByDescending(candidate => candidate.Evaluation.Accuracy)
             .ThenByDescending(candidate => candidate.Evaluation.Fitness)
             .ThenBy(candidate => candidate.Member.Complexity?.InternalNeuronCount ?? int.MaxValue)
@@ -3794,12 +4535,39 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
     }
 
+    private static float ResolveCandidateSelectionAccuracy(BasicsTaskEvaluationResult evaluation)
+        => ResolveCandidateSelectionAccuracy(evaluation.Accuracy, evaluation.ScoreBreakdown);
+
+    private static float ResolveCandidateSelectionAccuracy(BasicsExecutionBestCandidateSummary candidate)
+        => ResolveCandidateSelectionAccuracy(candidate.Accuracy, candidate.ScoreBreakdown);
+
+    private static float ResolveCandidateSelectionAccuracy(
+        float fallbackAccuracy,
+        IReadOnlyDictionary<string, float> scoreBreakdown)
+        => scoreBreakdown.TryGetValue("balanced_tolerance_accuracy", out var balancedAccuracy)
+            ? Math.Clamp(balancedAccuracy, 0f, 1f)
+            : Math.Clamp(fallbackAccuracy, 0f, 1f);
+
     private static string BuildGenerationDetail(
         int generation,
         GenerationMetrics metrics,
         BasicsExecutionGenerationTimingSummary? timing)
     {
         var summary = $"Generation {generation}: accuracy={metrics.BestAccuracy:0.###}, best_fitness={metrics.BestFitness:0.###}, offspring_accuracy={metrics.OffspringBestAccuracy:0.###}, offspring_fitness={metrics.OffspringBestFitness:0.###}, offspring_evaluated={metrics.OffspringEvaluatedCount}, retained={metrics.RetainedEvaluationCount}, mean_fitness={metrics.MeanFitness:0.###}, species={metrics.SpeciesCount}.";
+        if (metrics.BestBalancedAccuracy > 0f
+            || metrics.OffspringBestBalancedAccuracy > 0f
+            || metrics.OffspringBestEdgeAccuracy > 0f
+            || metrics.OffspringBestInteriorAccuracy > 0f)
+        {
+            summary += $" Balanced accuracy={metrics.BestBalancedAccuracy:0.###}, offspring balanced={metrics.OffspringBestBalancedAccuracy:0.###}, offspring edge={metrics.OffspringBestEdgeAccuracy:0.###}, offspring interior={metrics.OffspringBestInteriorAccuracy:0.###}.";
+        }
+
+        var bootstrapTraceDetail = BuildBootstrapTraceDetail(metrics.BootstrapCandidateTraces);
+        if (!string.IsNullOrWhiteSpace(bootstrapTraceDetail))
+        {
+            summary += $" {bootstrapTraceDetail}";
+        }
+
         if (metrics.TrackedBestCandidate?.MinReadyTickCount is float minReadyTick
             && metrics.TrackedBestCandidate.MedianReadyTickCount is float medianReadyTick
             && metrics.TrackedBestCandidate.MaxReadyTickCount is float maxReadyTick)
@@ -3818,6 +4586,42 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         return summary;
+    }
+
+    private static string BuildBootstrapTraceDetail(IReadOnlyList<BasicsExecutionBootstrapCandidateTrace> traces)
+    {
+        if (traces.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var uploadedExact = traces
+            .Where(trace => trace.Origin.Kind == BasicsBootstrapOriginKind.UploadedExactCopy)
+            .Select(trace =>
+            {
+                var balanced = trace.ScoreBreakdown.TryGetValue("balanced_tolerance_accuracy", out var value)
+                    ? Math.Clamp(value, 0f, 1f)
+                    : trace.Accuracy;
+                var hash = string.IsNullOrWhiteSpace(trace.Origin.SourceContentHash)
+                    ? "unknown"
+                    : trace.Origin.SourceContentHash[..Math.Min(12, trace.Origin.SourceContentHash.Length)];
+                var copySuffix = trace.Origin.ExactCopyOrdinal is int ordinal ? $" #{ordinal}" : string.Empty;
+                return $"{trace.Origin.SourceDisplayName}{copySuffix}={balanced:0.###} ({hash})";
+            })
+            .Take(4)
+            .ToArray();
+        if (uploadedExact.Length > 0)
+        {
+            return $"Uploaded exact seeds: {string.Join(", ", uploadedExact)}.";
+        }
+
+        var bootstrapSummary = traces
+            .Select(trace => $"{trace.Origin.SourceDisplayName}={trace.Accuracy:0.###}")
+            .Take(4)
+            .ToArray();
+        return bootstrapSummary.Length == 0
+            ? string.Empty
+            : $"Bootstrap traces: {string.Join(", ", bootstrapSummary)}.";
     }
 
     private static string BuildStopTargetDetail(
@@ -3880,6 +4684,18 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
     private readonly record struct RankedParent(PopulationMember Member, BasicsParentSelectionScore Score);
 
+    private readonly record struct QueuedBreedingPair(
+        PopulationMember ParentA,
+        PopulationMember ParentB,
+        float NormalizedFitnessHint,
+        float NormalizedNoveltyHint,
+        string PairingReason);
+
+    private readonly record struct FrontierChildCandidate(
+        PopulationMember Member,
+        float NormalizedFitnessHint,
+        float NormalizedNoveltyHint);
+
     private readonly record struct CandidateSelection(
         PopulationMember Member,
         BasicsTaskEvaluationResult Evaluation,
@@ -3888,6 +4704,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private readonly record struct GenerationMetrics(
         float OffspringBestAccuracy,
         float BestAccuracy,
+        float OffspringBestBalancedAccuracy,
+        float BestBalancedAccuracy,
+        float OffspringBestEdgeAccuracy,
+        float OffspringBestInteriorAccuracy,
         float OffspringBestFitness,
         float BestFitness,
         int OffspringEvaluatedCount,
@@ -3898,14 +4718,26 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsExecutionBestCandidateSummary? BestCandidate,
         BasicsExecutionBestCandidateSummary? TrackedBestCandidate,
         int EvaluationFailureCount,
-        string EvaluationFailureSummary);
+        string EvaluationFailureSummary,
+        IReadOnlyList<BasicsExecutionBootstrapCandidateTrace> BootstrapCandidateTraces);
 
     private sealed record ResolvedInitialSeedTemplate(
         ArtifactRef Definition,
         string SpeciesId,
         string SpeciesDisplayName,
         BasicsDefinitionComplexitySummary? Complexity,
-        int ExactCopies);
+        int ExactCopies)
+    {
+        public int BootstrapTemplateIndex { get; init; }
+
+        public string SourceDisplayName { get; init; } = string.Empty;
+
+        public string? SourceContentHash { get; init; }
+
+        public BasicsBootstrapOriginKind ExactCopyOriginKind { get; init; }
+
+        public BasicsBootstrapOriginKind VariationOriginKind { get; init; }
+    }
 
     private readonly record struct MemberEvaluationTelemetry(
         TimeSpan QueueWait,
@@ -3952,5 +4784,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int? EvaluationGeneration = null,
         bool CountsTowardOffspringMetrics = false,
         Guid ActiveBrainId = default,
-        ArtifactRef? SnapshotArtifact = null);
+        ArtifactRef? SnapshotArtifact = null)
+    {
+        public BasicsBootstrapOrigin? BootstrapOrigin { get; init; }
+    }
 }

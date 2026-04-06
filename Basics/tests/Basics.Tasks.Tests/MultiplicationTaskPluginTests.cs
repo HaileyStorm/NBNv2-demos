@@ -8,14 +8,16 @@ public sealed class MultiplicationTaskPluginTests
     private readonly MultiplicationTaskPlugin _plugin = new();
 
     [Fact]
-    public void BuildDeterministicDataset_ReturnsFullFiveByFiveGrid()
+    public void BuildDeterministicDataset_ReturnsStratifiedFiveByFiveGrid()
     {
         var dataset = _plugin.BuildDeterministicDataset();
 
-        Assert.Equal(25, dataset.Count);
+        Assert.Equal(18, dataset.Count);
         Assert.Equal((0f, 0f, 0f), (dataset[0].InputA, dataset[0].InputB, dataset[0].ExpectedOutput));
-        Assert.Equal((0.5f, 0.75f, 0.375f), (dataset[13].InputA, dataset[13].InputB, dataset[13].ExpectedOutput));
         Assert.Equal((1f, 1f, 1f), (dataset[^1].InputA, dataset[^1].InputB, dataset[^1].ExpectedOutput));
+        Assert.Contains(dataset, sample => sample.InputA == 0.5f && sample.InputB == 0.75f && sample.ExpectedOutput == 0.375f);
+        Assert.Contains(dataset, sample => sample.InputA == 0.75f && sample.InputB == 0.5f && sample.ExpectedOutput == 0.375f);
+        Assert.DoesNotContain(dataset, sample => sample.InputA == 0f && sample.InputB == 0.5f);
     }
 
     [Fact]
@@ -28,9 +30,10 @@ public sealed class MultiplicationTaskPluginTests
 
         var dataset = plugin.BuildDeterministicDataset();
 
-        Assert.Equal(9, dataset.Count);
-        Assert.Equal((0f, 0.5f, 0f), (dataset[1].InputA, dataset[1].InputB, dataset[1].ExpectedOutput));
-        Assert.Equal((0.5f, 0.5f, 0.25f), (dataset[4].InputA, dataset[4].InputB, dataset[4].ExpectedOutput));
+        Assert.Equal(5, dataset.Count);
+        Assert.Contains(dataset, sample => sample.InputA == 0f && sample.InputB == 0f && sample.ExpectedOutput == 0f);
+        Assert.Contains(dataset, sample => sample.InputA == 0f && sample.InputB == 1f && sample.ExpectedOutput == 0f);
+        Assert.Contains(dataset, sample => sample.InputA == 0.5f && sample.InputB == 0.5f && sample.ExpectedOutput == 0.25f);
         Assert.Equal((1f, 1f, 1f), (dataset[^1].InputA, dataset[^1].InputB, dataset[^1].ExpectedOutput));
     }
 
@@ -47,6 +50,9 @@ public sealed class MultiplicationTaskPluginTests
         Assert.Equal(1f, result.Accuracy);
         Assert.Equal(1f, result.ScoreBreakdown["evaluation_set_coverage"]);
         Assert.Equal(1f, result.ScoreBreakdown["tolerance_accuracy"]);
+        Assert.Equal(1f, result.ScoreBreakdown["edge_tolerance_accuracy"]);
+        Assert.Equal(1f, result.ScoreBreakdown["interior_tolerance_accuracy"]);
+        Assert.Equal(1f, result.ScoreBreakdown["balanced_tolerance_accuracy"]);
     }
 
     [Fact]
@@ -58,10 +64,31 @@ public sealed class MultiplicationTaskPluginTests
             dataset,
             dataset.Select((_, index) => new BasicsTaskObservation((ulong)(index + 1), 0f)).ToArray());
 
-        Assert.Equal(0.36f, result.Accuracy);
-        Assert.True(result.Fitness < 0.4f, $"Expected the silent baseline to be penalized, observed fitness {result.Fitness:0.###}.");
+        Assert.InRange(result.Accuracy, 0.27f, 0.28f);
+        Assert.InRange(result.ScoreBreakdown["tolerance_accuracy"], 0.27f, 0.28f);
+        Assert.InRange(result.ScoreBreakdown["balanced_tolerance_accuracy"], 0.13f, 0.15f);
+        Assert.True(result.Fitness < 0.3f, $"Expected the silent baseline to be penalized, observed fitness {result.Fitness:0.###}.");
         Assert.Equal(1f, result.ScoreBreakdown["unit_product_gap"]);
-        Assert.True(result.ScoreBreakdown["midrange_mean_absolute_error"] >= 0.35f);
+        Assert.True(result.ScoreBreakdown["midrange_mean_absolute_error"] >= 0.29f);
+    }
+
+    [Fact]
+    public void Evaluate_DemotesEdgePerfectMinBaseline()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var result = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset
+                .Select((sample, index) => new BasicsTaskObservation((ulong)(index + 1), Math.Min(sample.InputA, sample.InputB)))
+                .ToArray());
+
+        Assert.Equal(0.5f, result.ScoreBreakdown["tolerance_accuracy"]);
+        Assert.Equal(1f, result.ScoreBreakdown["edge_tolerance_accuracy"]);
+        Assert.Equal(0f, result.ScoreBreakdown["interior_tolerance_accuracy"]);
+        Assert.Equal(0.5f, result.Accuracy);
+        Assert.InRange(result.ScoreBreakdown["balanced_tolerance_accuracy"], 0.24f, 0.26f);
+        Assert.True(result.Fitness < 0.5f, $"Expected edge-perfect min baseline to be demoted, observed fitness {result.Fitness:0.###}.");
     }
 
     [Fact]

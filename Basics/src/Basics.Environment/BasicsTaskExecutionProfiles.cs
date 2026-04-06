@@ -4,6 +4,7 @@ public sealed record BasicsTaskExecutionProfile(
     BasicsOutputObservationMode OutputObservationMode,
     BasicsOutputSamplingPolicy OutputSamplingPolicy,
     BasicsDiversityPreset DiversityPreset,
+    BasicsAdaptiveDiversityOptions AdaptiveDiversity,
     BasicsSeedVariationBand VariationBand,
     BasicsSeedShapeConstraints SeedShape,
     BasicsSizingOverrides Sizing,
@@ -17,6 +18,7 @@ public static class BasicsTaskExecutionProfiles
         OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
         OutputSamplingPolicy: new BasicsOutputSamplingPolicy(),
         DiversityPreset: BasicsDiversityPreset.Medium,
+        AdaptiveDiversity: new BasicsAdaptiveDiversityOptions(),
         VariationBand: new BasicsSeedVariationBand
         {
             MaxInternalNeuronDelta = 2,
@@ -59,6 +61,11 @@ public static class BasicsTaskExecutionProfiles
             SampleRepeatCount = 3
         },
         DiversityPreset: BasicsDiversityPreset.Low,
+        AdaptiveDiversity: new BasicsAdaptiveDiversityOptions
+        {
+            Enabled = true,
+            StallGenerationWindow = 4
+        },
         VariationBand: new BasicsSeedVariationBand
         {
             MaxInternalNeuronDelta = 1,
@@ -107,6 +114,11 @@ public static class BasicsTaskExecutionProfiles
             SampleRepeatCount = 3
         },
         DiversityPreset = BasicsDiversityPreset.High,
+        AdaptiveDiversity = new BasicsAdaptiveDiversityOptions
+        {
+            Enabled = true,
+            StallGenerationWindow = 6
+        },
         VariationBand = new BasicsSeedVariationBand
         {
             MaxInternalNeuronDelta = 3,
@@ -144,6 +156,11 @@ public static class BasicsTaskExecutionProfiles
         {
             MaxReadyWindowTicks = 5,
             SampleRepeatCount = 3
+        },
+        AdaptiveDiversity = new BasicsAdaptiveDiversityOptions
+        {
+            Enabled = true,
+            StallGenerationWindow = 8
         },
         VariationBand = RicherExplorationProfile.VariationBand with
         {

@@ -73,6 +73,38 @@ public sealed record BasicsDefinitionComplexitySummary(
     int InternalNeuronCount,
     int AxonCount);
 
+public enum BasicsBootstrapOriginKind
+{
+    UploadedExactCopy = 0,
+    UploadedVariation = 1,
+    TemplateExactCopy = 2,
+    TemplateVariation = 3
+}
+
+public sealed record BasicsBootstrapOrigin(
+    BasicsBootstrapOriginKind Kind,
+    string SourceDisplayName,
+    string? SourceContentHash,
+    int BootstrapTemplateIndex,
+    int? ExactCopyOrdinal)
+{
+    public bool IsUploadedSeed
+        => Kind is BasicsBootstrapOriginKind.UploadedExactCopy or BasicsBootstrapOriginKind.UploadedVariation;
+
+    public bool IsExactCopy
+        => Kind is BasicsBootstrapOriginKind.UploadedExactCopy or BasicsBootstrapOriginKind.TemplateExactCopy;
+}
+
+public sealed record BasicsExecutionBootstrapCandidateTrace(
+    BasicsBootstrapOrigin Origin,
+    string ArtifactSha256,
+    string SpeciesId,
+    float Accuracy,
+    float Fitness,
+    IReadOnlyDictionary<string, float> ScoreBreakdown,
+    IReadOnlyList<string> Diagnostics,
+    int Generation);
+
 public sealed record BasicsExecutionBestCandidateSummary(
     ArtifactRef DefinitionArtifact,
     ArtifactRef? SnapshotArtifact,
@@ -95,6 +127,8 @@ public sealed record BasicsExecutionBestCandidateSummary(
     public bool HasRetainedBrain => ActiveBrainId.HasValue && ActiveBrainId.Value != Guid.Empty;
 
     public bool HasSnapshotArtifact => SnapshotArtifact is not null && SnapshotArtifact.TryToSha256Bytes(out _);
+
+    public BasicsBootstrapOrigin? BootstrapOrigin { get; init; }
 }
 
 public sealed record BasicsExecutionBatchTimingSummary(
@@ -151,7 +185,14 @@ public sealed record BasicsExecutionSnapshot(
     BasicsExecutionBestCandidateSummary? BestCandidate,
     IReadOnlyList<float> OffspringAccuracyHistory,
     IReadOnlyList<float> AccuracyHistory,
+    IReadOnlyList<float> OffspringBalancedAccuracyHistory,
+    IReadOnlyList<float> BalancedAccuracyHistory,
+    IReadOnlyList<float> OffspringEdgeAccuracyHistory,
+    IReadOnlyList<float> OffspringInteriorAccuracyHistory,
     IReadOnlyList<float> OffspringFitnessHistory,
     IReadOnlyList<float> BestFitnessHistory,
     BasicsExecutionBatchTimingSummary? LatestBatchTiming = null,
-    BasicsExecutionGenerationTimingSummary? LatestGenerationTiming = null);
+    BasicsExecutionGenerationTimingSummary? LatestGenerationTiming = null)
+{
+    public IReadOnlyList<BasicsExecutionBootstrapCandidateTrace> BootstrapCandidateTraces { get; init; } = Array.Empty<BasicsExecutionBootstrapCandidateTrace>();
+}

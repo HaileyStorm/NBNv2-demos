@@ -19,6 +19,8 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal((uint)4, profile.Sizing.ReproductionRunCount);
         Assert.Equal(32, profile.Sizing.MaxConcurrentBrains);
         Assert.Equal(3, profile.OutputSamplingPolicy.SampleRepeatCount);
+        Assert.True(profile.AdaptiveDiversity.Enabled);
+        Assert.Equal(6, profile.AdaptiveDiversity.StallGenerationWindow);
         Assert.Equal(0.25d, profile.Scheduling.ParentSelection.EliteFraction);
         Assert.Equal(0.53d, profile.Scheduling.ParentSelection.ExplorationFraction);
         Assert.Equal((uint)8, profile.Scheduling.RunAllocation.MaxRunsPerPair);
@@ -42,6 +44,8 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.NotNull(profile.TaskSettings);
         Assert.Equal(0f, profile.TaskSettings!.BooleanTruthTable.LowInputValue);
         Assert.Equal(1f, profile.TaskSettings.BooleanTruthTable.HighInputValue);
+        Assert.True(profile.AdaptiveDiversity.Enabled);
+        Assert.Equal(4, profile.AdaptiveDiversity.StallGenerationWindow);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
         Assert.Equal(3, profile.OutputSamplingPolicy.SampleRepeatCount);
     }
@@ -57,6 +61,8 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(32, profile.Sizing.MaxConcurrentBrains);
         Assert.NotNull(profile.TaskSettings);
         Assert.Equal(3, profile.TaskSettings!.Gt.UniqueInputValueCount);
+        Assert.True(profile.AdaptiveDiversity.Enabled);
+        Assert.Equal(4, profile.AdaptiveDiversity.StallGenerationWindow);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
         Assert.Equal(3, profile.OutputSamplingPolicy.SampleRepeatCount);
     }
@@ -84,6 +90,8 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.NotNull(profile.TaskSettings);
         Assert.Equal(5, profile.TaskSettings!.Multiplication.UniqueInputValueCount);
         Assert.Equal(0.05f, profile.TaskSettings.Multiplication.AccuracyTolerance);
+        Assert.True(profile.AdaptiveDiversity.Enabled);
+        Assert.Equal(8, profile.AdaptiveDiversity.StallGenerationWindow);
         Assert.Equal(5, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
         Assert.Equal(3, profile.OutputSamplingPolicy.SampleRepeatCount);
     }
@@ -95,6 +103,8 @@ public sealed class BasicsTaskExecutionProfilesTests
 
         Assert.Equal(BasicsOutputObservationMode.VectorPotential, profile.OutputObservationMode);
         Assert.Null(profile.Sizing.InitialPopulationCount);
+        Assert.True(profile.AdaptiveDiversity.Enabled);
+        Assert.Equal(4, profile.AdaptiveDiversity.StallGenerationWindow);
         Assert.Equal(2, profile.VariationBand.MaxInternalNeuronDelta);
         Assert.True(profile.VariationBand.AllowAxonReroute);
         Assert.Null(profile.StopCriteria.MaximumGenerations);

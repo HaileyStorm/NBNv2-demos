@@ -46,8 +46,14 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(HasFitnessChartData),
         nameof(ShowAccuracyEmptyState),
         nameof(ShowFitnessEmptyState),
+        nameof(ShowAccuracyMetricToggles),
+        nameof(ShowBalancedAccuracyChart),
+        nameof(ShowEdgeAccuracyChart),
+        nameof(ShowInteriorAccuracyChart),
         nameof(AccuracyChartValues),
         nameof(BestAccuracyChartValues),
+        nameof(AccuracyTertiaryChartValues),
+        nameof(AccuracyQuaternaryChartValues),
         nameof(FitnessChartValues),
         nameof(BestFitnessChartValues),
         nameof(AccuracyChartPoints),
@@ -96,6 +102,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _isWorkerLauncherBusy;
     private readonly List<float> _accuracyHistory = new();
     private readonly List<float> _bestAccuracyHistory = new();
+    private readonly List<float> _balancedAccuracyHistory = new();
+    private readonly List<float> _bestBalancedAccuracyHistory = new();
+    private readonly List<float> _edgeAccuracyHistory = new();
+    private readonly List<float> _interiorAccuracyHistory = new();
     private readonly List<float> _fitnessHistory = new();
     private readonly List<float> _bestFitnessHistory = new();
     // Keep these in sync with the fixed plot host inside MainWindow.axaml.
@@ -154,6 +164,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _targetFitnessText = "0.999";
     private bool _requireBothStopTargets = true;
     private string _maximumGenerationsText = string.Empty;
+    private bool _adaptiveDiversityEnabled = true;
+    private string _adaptiveDiversityStallGenerationWindowText = "4";
     private string _maxReadyWindowTicksText = "4";
     private string _sampleRepeatCountText = "3";
     private string _booleanLowInputValueText = "0.0";
@@ -187,6 +199,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _initialBrainSeedStatus = "No initial brains uploaded.";
     private ArtifactRef? _winnerDefinitionArtifact;
     private ArtifactRef? _winnerSnapshotArtifact;
+    private BasicsExecutionBestCandidateSummary? _winnerBestCandidate;
     private Guid _retainedWinnerBrainId;
     private Guid _liveWinnerBrainId;
     private string? _lastExportedWinnerArtifactSha;
@@ -194,6 +207,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private StrengthSourceOption? _selectedStrengthSource;
     private OutputObservationModeOption? _selectedOutputObservationMode;
     private DiversityPresetOption? _selectedDiversityPreset;
+    private bool _showBalancedAccuracyChart = true;
+    private bool _showEdgeAccuracyChart;
+    private bool _showInteriorAccuracyChart;
 
     public MainWindowViewModel(
         UiDispatcher dispatcher,
@@ -642,6 +658,18 @@ public sealed class MainWindowViewModel : ViewModelBase
         set => SetProperty(ref _maximumGenerationsText, value);
     }
 
+    public bool AdaptiveDiversityEnabled
+    {
+        get => _adaptiveDiversityEnabled;
+        set => SetProperty(ref _adaptiveDiversityEnabled, value);
+    }
+
+    public string AdaptiveDiversityStallGenerationWindowText
+    {
+        get => _adaptiveDiversityStallGenerationWindowText;
+        set => SetProperty(ref _adaptiveDiversityStallGenerationWindowText, value);
+    }
+
     public string MaxReadyWindowTicksText
     {
         get => _maxReadyWindowTicksText;
@@ -747,7 +775,10 @@ public sealed class MainWindowViewModel : ViewModelBase
             if (ShowMultiplicationTaskSettings)
             {
                 var count = TryParsePositiveInt(MultiplicationUniqueInputValuesText, fallbackValue: 5);
-                return $"Evaluates {count * count} products over an evenly spaced {count}x{count} grid in [0,1], with accuracy counted inside the configured tolerance. Output[0] is the task value and output[1] is the shared ready bit.";
+                var interiorAxisCount = Math.Max(0, count - 2);
+                var interiorCount = interiorAxisCount * interiorAxisCount;
+                var edgeCount = count <= 2 ? count * count : Math.Min((count * count) - interiorCount, Math.Max(4, interiorCount));
+                return $"Evaluates {interiorCount + edgeCount} stratified multiplication samples from an evenly spaced {count}x{count} grid in [0,1], keeping all interior points and a deterministic boundary subset so edge cases do not dominate. Output[0] is the task value and output[1] is the shared ready bit.";
             }
 
             return "This task does not expose custom evaluation settings yet.";
@@ -917,7 +948,50 @@ public sealed class MainWindowViewModel : ViewModelBase
         private set => SetProperty(ref _initialBrainSeedStatus, value);
     }
 
-    public bool HasAccuracyChartData => _accuracyHistory.Count > 0 || _bestAccuracyHistory.Count > 0;
+    public bool ShowAccuracyMetricToggles
+        => string.Equals(SelectedTask?.TaskId ?? _lastPlan?.SelectedTask.TaskId, "multiplication", StringComparison.OrdinalIgnoreCase)
+           || _balancedAccuracyHistory.Count > 0
+           || _bestBalancedAccuracyHistory.Count > 0
+           || _edgeAccuracyHistory.Count > 0
+           || _interiorAccuracyHistory.Count > 0;
+
+    public bool ShowBalancedAccuracyChart
+    {
+        get => _showBalancedAccuracyChart;
+        set
+        {
+            if (SetProperty(ref _showBalancedAccuracyChart, value))
+            {
+                UpdateChartBindings();
+            }
+        }
+    }
+
+    public bool ShowEdgeAccuracyChart
+    {
+        get => _showEdgeAccuracyChart;
+        set
+        {
+            if (SetProperty(ref _showEdgeAccuracyChart, value))
+            {
+                UpdateChartBindings();
+            }
+        }
+    }
+
+    public bool ShowInteriorAccuracyChart
+    {
+        get => _showInteriorAccuracyChart;
+        set
+        {
+            if (SetProperty(ref _showInteriorAccuracyChart, value))
+            {
+                UpdateChartBindings();
+            }
+        }
+    }
+
+    public bool HasAccuracyChartData => ResolveAccuracyChartGenerationCount() > 0;
 
     public bool HasFitnessChartData => _fitnessHistory.Count > 0 || _bestFitnessHistory.Count > 0;
 
@@ -925,48 +999,68 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public bool ShowFitnessEmptyState => !HasFitnessChartData;
 
-    public IReadOnlyList<float> AccuracyChartValues => _accuracyHistory;
+    public IReadOnlyList<float> AccuracyChartValues
+        => UsePartitionedAccuracyChart
+            ? (ShowBalancedAccuracyChart ? _balancedAccuracyHistory : Array.Empty<float>())
+            : _accuracyHistory;
 
-    public IReadOnlyList<float> BestAccuracyChartValues => BuildBestSoFarHistory(_bestAccuracyHistory);
+    public IReadOnlyList<float> BestAccuracyChartValues
+        => UsePartitionedAccuracyChart
+            ? (ShowBalancedAccuracyChart ? BuildBestSoFarHistory(_bestBalancedAccuracyHistory) : Array.Empty<float>())
+            : BuildBestSoFarHistory(_bestAccuracyHistory);
+
+    public IReadOnlyList<float> AccuracyTertiaryChartValues
+        => UsePartitionedAccuracyChart && ShowEdgeAccuracyChart
+            ? _edgeAccuracyHistory
+            : Array.Empty<float>();
+
+    public IReadOnlyList<float> AccuracyQuaternaryChartValues
+        => UsePartitionedAccuracyChart && ShowInteriorAccuracyChart
+            ? _interiorAccuracyHistory
+            : Array.Empty<float>();
 
     public IReadOnlyList<float> FitnessChartValues => _fitnessHistory;
 
     public IReadOnlyList<float> BestFitnessChartValues => BuildBestSoFarHistory(_bestFitnessHistory);
 
-    public IReadOnlyList<Point> AccuracyChartPoints => BuildChartPoints(_accuracyHistory);
+    public IReadOnlyList<Point> AccuracyChartPoints => BuildChartPoints(AccuracyChartValues);
 
-    public IReadOnlyList<Point> BestAccuracyChartPoints => BuildChartPoints(BuildBestSoFarHistory(_bestAccuracyHistory));
+    public IReadOnlyList<Point> BestAccuracyChartPoints => BuildChartPoints(BestAccuracyChartValues);
 
     public IReadOnlyList<Point> FitnessChartPoints => BuildChartPoints(_fitnessHistory);
 
     public IReadOnlyList<Point> BestFitnessChartPoints => BuildChartPoints(BuildBestSoFarHistory(_bestFitnessHistory));
 
     public IReadOnlyList<ChartAxisTickItem> AccuracyGenerationTicks
-        => BuildGenerationTicks(_accuracyHistory, _bestAccuracyHistory);
+        => BuildGenerationTicks(
+            AccuracyChartValues,
+            BestAccuracyChartValues,
+            AccuracyTertiaryChartValues,
+            AccuracyQuaternaryChartValues);
 
     public IReadOnlyList<ChartAxisTickItem> FitnessGenerationTicks
         => BuildGenerationTicks(_fitnessHistory, _bestFitnessHistory);
 
     public IReadOnlyList<ChartAxisValueTickItem> NormalizedValueAxisTicks { get; } = BuildNormalizedValueAxisTicks();
 
-    public bool ShowAccuracyStartGenerationTick => ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory) > 0;
+    public bool ShowAccuracyStartGenerationTick => ResolveAccuracyChartGenerationCount() > 0;
 
     public bool ShowAccuracyMidGenerationTick
-        => HasCenteredGenerationTick(ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory));
+        => HasCenteredGenerationTick(ResolveAccuracyChartGenerationCount());
 
-    public bool ShowAccuracyEndGenerationTick => ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory) > 1;
+    public bool ShowAccuracyEndGenerationTick => ResolveAccuracyChartGenerationCount() > 1;
 
     public string AccuracyStartGenerationTickLabel
         => ShowAccuracyStartGenerationTick ? "1" : string.Empty;
 
     public string AccuracyMidGenerationTickLabel
         => ShowAccuracyMidGenerationTick
-            ? FormatGenerationTickLabel(ResolveMidpointGeneration(ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory)))
+            ? FormatGenerationTickLabel(ResolveMidpointGeneration(ResolveAccuracyChartGenerationCount()))
             : string.Empty;
 
     public string AccuracyEndGenerationTickLabel
         => ShowAccuracyEndGenerationTick
-            ? FormatGenerationTickLabel(ResolveChartGenerationCount(_accuracyHistory, _bestAccuracyHistory))
+            ? FormatGenerationTickLabel(ResolveAccuracyChartGenerationCount())
             : string.Empty;
 
     public bool ShowFitnessStartGenerationTick => ResolveChartGenerationCount(_fitnessHistory, _bestFitnessHistory) > 0;
@@ -1367,6 +1461,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             TargetFitnessText = profile.StopCriteria.TargetFitness.ToString("0.0##", CultureInfo.InvariantCulture);
             RequireBothStopTargets = profile.StopCriteria.RequireBothTargets;
             MaximumGenerationsText = FormatOptionalInt(profile.StopCriteria.MaximumGenerations);
+            AdaptiveDiversityEnabled = profile.AdaptiveDiversity.Enabled;
+            AdaptiveDiversityStallGenerationWindowText = profile.AdaptiveDiversity.StallGenerationWindow.ToString(CultureInfo.InvariantCulture);
             MaxReadyWindowTicksText = profile.OutputSamplingPolicy.MaxReadyWindowTicks.ToString(CultureInfo.InvariantCulture);
             SampleRepeatCountText = profile.OutputSamplingPolicy.SampleRepeatCount.ToString(CultureInfo.InvariantCulture);
             BooleanLowInputValueText = taskSettings.BooleanTruthTable.LowInputValue.ToString("0.0##", CultureInfo.InvariantCulture);
@@ -2004,6 +2100,14 @@ public sealed class MainWindowViewModel : ViewModelBase
             RequireBothTargets = RequireBothStopTargets,
             MaximumGenerations = ParseOptionalInt(MaximumGenerationsText, "Maximum generations", errors)
         };
+        var adaptiveDiversity = new BasicsAdaptiveDiversityOptions
+        {
+            Enabled = AdaptiveDiversityEnabled,
+            StallGenerationWindow = ParseRequiredInt(
+                AdaptiveDiversityStallGenerationWindowText,
+                "Adaptive stall window",
+                errors)
+        };
         var outputSamplingPolicy = new BasicsOutputSamplingPolicy
         {
             MaxReadyWindowTicks = ParseRequiredInt(MaxReadyWindowTicksText, "Ready window ticks", errors),
@@ -2046,7 +2150,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             OutputObservationMode = SelectedOutputObservationMode?.Mode ?? BasicsOutputObservationMode.VectorPotential,
             OutputSamplingPolicy = outputSamplingPolicy,
             DiversityPreset = diversityPreset,
-            AdaptiveDiversity = new BasicsAdaptiveDiversityOptions(),
+            AdaptiveDiversity = adaptiveDiversity,
             Reproduction = new BasicsReproductionPolicy
             {
                 Config = reproductionConfig,
@@ -2059,7 +2163,10 @@ public sealed class MainWindowViewModel : ViewModelBase
                 seed.DisplayName,
                 seed.DefinitionBytes.ToArray(),
                 seed.DuplicateForReproduction,
-                seed.Complexity)).ToArray()
+                seed.Complexity)
+            {
+                ContentHash = seed.ContentHash
+            }).ToArray()
         };
 
         var validation = options.Validate();
@@ -2182,14 +2289,28 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         ReplaceHistory(_accuracyHistory, snapshot.OffspringAccuracyHistory);
         ReplaceHistory(_bestAccuracyHistory, snapshot.AccuracyHistory);
+        ReplaceHistory(_balancedAccuracyHistory, snapshot.OffspringBalancedAccuracyHistory);
+        ReplaceHistory(_bestBalancedAccuracyHistory, snapshot.BalancedAccuracyHistory);
+        ReplaceHistory(_edgeAccuracyHistory, snapshot.OffspringEdgeAccuracyHistory);
+        ReplaceHistory(_interiorAccuracyHistory, snapshot.OffspringInteriorAccuracyHistory);
         ReplaceHistory(_fitnessHistory, snapshot.OffspringFitnessHistory);
         ReplaceHistory(_bestFitnessHistory, snapshot.BestFitnessHistory);
         UpdateChartBindings();
 
         var displayedAccuracy = ResolveLatestMetric(snapshot.OffspringAccuracyHistory, snapshot.OffspringBestAccuracy);
         var displayedBestAccuracy = ResolvePeakMetric(snapshot.AccuracyHistory, snapshot.BestAccuracy);
+        var displayedBalancedAccuracy = ResolveLatestMetric(snapshot.OffspringBalancedAccuracyHistory, 0f);
+        var displayedEdgeAccuracy = ResolveLatestMetric(snapshot.OffspringEdgeAccuracyHistory, 0f);
+        var displayedInteriorAccuracy = ResolveLatestMetric(snapshot.OffspringInteriorAccuracyHistory, 0f);
         var displayedOffspringFitness = ResolveLatestMetric(snapshot.OffspringFitnessHistory, snapshot.OffspringBestFitness);
         var displayedBestFitness = ResolvePeakMetric(snapshot.BestFitnessHistory, snapshot.BestFitness);
+        var bestBrainBalancedAccuracy = ResolveBestCandidateAccuracyMetric(snapshot.BestCandidate, "balanced_tolerance_accuracy");
+        var bestBrainEdgeAccuracy = ResolveBestCandidateAccuracyMetric(snapshot.BestCandidate, "edge_tolerance_accuracy");
+        var bestBrainInteriorAccuracy = ResolveBestCandidateAccuracyMetric(snapshot.BestCandidate, "interior_tolerance_accuracy");
+        var hasPartitionedAccuracy = snapshot.OffspringBalancedAccuracyHistory.Count > 0
+            || bestBrainBalancedAccuracy.HasValue
+            || bestBrainEdgeAccuracy.HasValue
+            || bestBrainInteriorAccuracy.HasValue;
 
         if (snapshot.EffectiveTemplateDefinition is not null)
         {
@@ -2218,9 +2339,15 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             var shortSha = snapshot.BestCandidate.ArtifactSha256[..Math.Min(12, snapshot.BestCandidate.ArtifactSha256.Length)];
             BestBrainStatus = $"Best-so-far artifact {shortSha}";
+            var accuracyDetail = hasPartitionedAccuracy && bestBrainBalancedAccuracy.HasValue
+                ? $"raw accuracy {snapshot.BestCandidate.Accuracy:0.###}, balanced {bestBrainBalancedAccuracy.Value:0.###}, fitness {snapshot.BestCandidate.Fitness:0.###}."
+                : $"accuracy {snapshot.BestCandidate.Accuracy:0.###}, fitness {snapshot.BestCandidate.Fitness:0.###}.";
+            var originDetail = snapshot.BestCandidate.BootstrapOrigin is null
+                ? string.Empty
+                : $" Origin {DescribeBootstrapOrigin(snapshot.BestCandidate.BootstrapOrigin)}.";
             BestBrainDetail = snapshot.BestCandidate.Generation > 0
-                ? $"Generation {snapshot.BestCandidate.Generation}, species {snapshot.BestCandidate.SpeciesId}, accuracy {snapshot.BestCandidate.Accuracy:0.###}, fitness {snapshot.BestCandidate.Fitness:0.###}."
-                : $"Species {snapshot.BestCandidate.SpeciesId}, accuracy {snapshot.BestCandidate.Accuracy:0.###}, fitness {snapshot.BestCandidate.Fitness:0.###}.";
+                ? $"Generation {snapshot.BestCandidate.Generation}, species {snapshot.BestCandidate.SpeciesId}, {accuracyDetail}{originDetail}"
+                : $"Species {snapshot.BestCandidate.SpeciesId}, {accuracyDetail}{originDetail}";
         }
 
         UpdateMetricSummary(
@@ -2228,13 +2355,37 @@ public sealed class MainWindowViewModel : ViewModelBase
             displayedAccuracy.ToString("0.###", CultureInfo.InvariantCulture),
             snapshot.Generation <= 0
                 ? "No offspring evaluations yet."
-                : $"Best accuracy among newly evaluated members in generation {snapshot.Generation}.");
+                : $"Best raw tolerance accuracy among newly evaluated members in generation {snapshot.Generation}.");
         UpdateMetricSummary(
             BasicsMetricId.BestAccuracy,
             displayedBestAccuracy.ToString("0.###", CultureInfo.InvariantCulture),
             snapshot.BestCandidate is null
                 ? "No successful evaluation yet."
-                : $"Best-so-far artifact {snapshot.BestCandidate.ArtifactSha256[..Math.Min(12, snapshot.BestCandidate.ArtifactSha256.Length)]}...");
+                : $"Best raw accuracy across all successful evaluations so far.");
+        UpdateMetricSummary(
+            BasicsMetricId.BalancedAccuracy,
+            hasPartitionedAccuracy
+                ? displayedBalancedAccuracy.ToString("0.###", CultureInfo.InvariantCulture)
+                : "—",
+            hasPartitionedAccuracy
+                ? $"Balanced offspring multiplication accuracy for generation {snapshot.Generation}; edge samples are down-weighted relative to interior samples."
+                : "Balanced multiplication accuracy appears when the active task publishes partitioned accuracy metrics.");
+        UpdateMetricSummary(
+            BasicsMetricId.EdgeAccuracy,
+            hasPartitionedAccuracy
+                ? displayedEdgeAccuracy.ToString("0.###", CultureInfo.InvariantCulture)
+                : "—",
+            hasPartitionedAccuracy
+                ? $"Offspring accuracy on multiplication edge samples where one input is 0 or 1 in generation {snapshot.Generation}."
+                : "Edge-specific multiplication accuracy appears when the active task publishes partitioned accuracy metrics.");
+        UpdateMetricSummary(
+            BasicsMetricId.InteriorAccuracy,
+            hasPartitionedAccuracy
+                ? displayedInteriorAccuracy.ToString("0.###", CultureInfo.InvariantCulture)
+                : "—",
+            hasPartitionedAccuracy
+                ? $"Offspring accuracy on multiplication interior samples where both inputs are strictly between 0 and 1 in generation {snapshot.Generation}."
+                : "Interior-specific multiplication accuracy appears when the active task publishes partitioned accuracy metrics.");
         UpdateMetricSummary(
             BasicsMetricId.OffspringBestFitness,
             displayedOffspringFitness.ToString("0.###", CultureInfo.InvariantCulture),
@@ -2255,6 +2406,30 @@ public sealed class MainWindowViewModel : ViewModelBase
             snapshot.BestCandidate is null
                 ? "No successful evaluation yet."
                 : $"Fitness for the current best-so-far brain from generation {snapshot.BestCandidate.Generation}.");
+        UpdateMetricSummary(
+            BasicsMetricId.BestCandidateBalancedAccuracy,
+            bestBrainBalancedAccuracy.HasValue
+                ? bestBrainBalancedAccuracy.Value.ToString("0.###", CultureInfo.InvariantCulture)
+                : "—",
+            bestBrainBalancedAccuracy.HasValue
+                ? "Balanced accuracy for the current best-so-far brain, weighting interior multiplication samples more heavily than edge samples."
+                : "Balanced best-brain accuracy appears when the active task publishes partitioned accuracy metrics.");
+        UpdateMetricSummary(
+            BasicsMetricId.BestCandidateEdgeAccuracy,
+            bestBrainEdgeAccuracy.HasValue
+                ? bestBrainEdgeAccuracy.Value.ToString("0.###", CultureInfo.InvariantCulture)
+                : "—",
+            bestBrainEdgeAccuracy.HasValue
+                ? "Accuracy for the current best-so-far brain on multiplication edge samples."
+                : "Edge-specific best-brain accuracy appears when the active task publishes partitioned accuracy metrics.");
+        UpdateMetricSummary(
+            BasicsMetricId.BestCandidateInteriorAccuracy,
+            bestBrainInteriorAccuracy.HasValue
+                ? bestBrainInteriorAccuracy.Value.ToString("0.###", CultureInfo.InvariantCulture)
+                : "—",
+            bestBrainInteriorAccuracy.HasValue
+                ? "Accuracy for the current best-so-far brain on multiplication interior samples."
+                : "Interior-specific best-brain accuracy appears when the active task publishes partitioned accuracy metrics.");
         UpdateMetricSummary(
             BasicsMetricId.BestCandidateGeneration,
             snapshot.BestCandidate is null || snapshot.BestCandidate.Generation <= 0
@@ -2385,7 +2560,13 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         try
         {
-            var definitionArtifact = _winnerDefinitionArtifact!.Clone();
+            var liveDefinitionArtifact = CanCaptureLiveWinnerDefinition()
+                ? await TryExportLiveWinnerDefinitionAsync().ConfigureAwait(false)
+                : null;
+            var definitionArtifact = HasArtifactRef(liveDefinitionArtifact)
+                ? liveDefinitionArtifact!.Clone()
+                : _winnerDefinitionArtifact!.Clone();
+            var effectiveBestCandidate = BuildEffectiveWinnerSummary(_winnerBestCandidate, definitionArtifact);
             var winnerArtifactSha = definitionArtifact.ToSha256Hex();
             var definitionPath = await _artifactExportService.ExportAsync(
                     definitionArtifact,
@@ -2423,11 +2604,32 @@ public sealed class MainWindowViewModel : ViewModelBase
                     .ConfigureAwait(false);
             }
 
+            var provenanceWriteResult = await TryWriteWinnerTraceabilityAsync(
+                    definitionPath,
+                    snapshotPath,
+                    effectiveBestCandidate,
+                    definitionArtifact,
+                    snapshotArtifact,
+                    usedLiveDefinitionExport: HasArtifactRef(liveDefinitionArtifact),
+                    usedLiveSnapshotCapture: HasArtifactRef(snapshotArtifact) && !HasArtifactRef(_winnerSnapshotArtifact))
+                .ConfigureAwait(false);
+
             _dispatcher.Post(() =>
             {
+                if (HasArtifactRef(liveDefinitionArtifact))
+                {
+                    _winnerDefinitionArtifact = liveDefinitionArtifact!.Clone();
+                    if (_winnerBestCandidate is not null)
+                    {
+                        _winnerBestCandidate = CloneBestCandidateSummary(effectiveBestCandidate);
+                    }
+                }
+
                 var exportResult = BuildExportResult(
                     definitionPath,
                     snapshotPath,
+                    provenanceWriteResult.SidecarPath,
+                    provenanceWriteResult.Warning,
                     winnerArtifactSha,
                     snapshotEligible,
                     snapshotAvailable);
@@ -2479,6 +2681,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         var sameWinner = string.Equals(currentWinnerSha, nextWinnerSha, StringComparison.OrdinalIgnoreCase);
 
         _winnerDefinitionArtifact = winner.DefinitionArtifact.Clone();
+        _winnerBestCandidate = CloneBestCandidateSummary(winner);
         if (HasArtifactRef(winner.SnapshotArtifact))
         {
             _winnerSnapshotArtifact = winner.SnapshotArtifact!.Clone();
@@ -2502,6 +2705,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             _winnerDefinitionArtifact = null;
             _winnerSnapshotArtifact = null;
+            _winnerBestCandidate = null;
             _lastExportedWinnerArtifactSha = null;
         }
 
@@ -2548,11 +2752,45 @@ public sealed class MainWindowViewModel : ViewModelBase
             detailParts.Add("These artifacts can change while the run is still active.");
         }
 
+        if (_winnerBestCandidate?.BootstrapOrigin is { } bootstrapOrigin)
+        {
+            detailParts.Add($"Origin: {DescribeBootstrapOrigin(bootstrapOrigin)}.");
+        }
+
         WinnerExportDetail = string.Join(' ', detailParts);
     }
 
     private bool CanCaptureLiveWinnerSnapshot()
         => _liveWinnerBrainId != Guid.Empty && _runtimeClient is not null;
+
+    private bool CanCaptureLiveWinnerDefinition()
+        => _liveWinnerBrainId != Guid.Empty && _runtimeClient is not null;
+
+    private async Task<ArtifactRef?> TryExportLiveWinnerDefinitionAsync()
+    {
+        var runtimeClient = _runtimeClient;
+        var liveWinnerBrainId = _liveWinnerBrainId;
+        if (runtimeClient is null || liveWinnerBrainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            var ready = await runtimeClient.ExportBrainDefinitionAsync(
+                    liveWinnerBrainId,
+                    rebaseOverlays: true)
+                .ConfigureAwait(false);
+            return HasArtifactRef(ready?.BrainDef)
+                ? ready!.BrainDef!.Clone()
+                : null;
+        }
+        catch
+        {
+            // Live definition export is opportunistic during active or retained runs.
+            return null;
+        }
+    }
 
     private async Task<ArtifactRef?> TryCaptureLiveWinnerSnapshotAsync(string expectedWinnerArtifactSha)
     {
@@ -2594,9 +2832,73 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private static BasicsExecutionBestCandidateSummary? BuildEffectiveWinnerSummary(
+        BasicsExecutionBestCandidateSummary? winner,
+        ArtifactRef definitionArtifact)
+        => winner is null
+            ? null
+            : CloneBestCandidateSummary(winner with
+            {
+                DefinitionArtifact = definitionArtifact.Clone()
+            });
+
+    private async Task<(string? SidecarPath, string Warning)> TryWriteWinnerTraceabilityAsync(
+        string definitionPath,
+        string? snapshotPath,
+        BasicsExecutionBestCandidateSummary? winner,
+        ArtifactRef definitionArtifact,
+        ArtifactRef? snapshotArtifact,
+        bool usedLiveDefinitionExport,
+        bool usedLiveSnapshotCapture)
+    {
+        try
+        {
+            var tracePath = $"{definitionPath}.trace.json";
+            var traceRecord = new WinnerExportTraceabilityRecord(
+                ExportedAtUtc: DateTimeOffset.UtcNow,
+                TaskId: _lastPlan?.SelectedTask.TaskId ?? SelectedTask?.TaskId ?? "unknown",
+                TaskDisplayName: _lastPlan?.SelectedTask.DisplayName ?? SelectedTask?.DisplayName ?? "Unknown",
+                RunLogPath: NormalizeRunLogPath(ExecutionLogPath),
+                DefinitionPath: definitionPath,
+                DefinitionArtifactSha256: definitionArtifact.ToSha256Hex(),
+                SnapshotPath: snapshotPath,
+                SnapshotArtifactSha256: HasArtifactRef(snapshotArtifact) ? snapshotArtifact!.ToSha256Hex() : null,
+                UsedLiveDefinitionExport: usedLiveDefinitionExport,
+                UsedLiveSnapshotCapture: usedLiveSnapshotCapture,
+                BestCandidate: winner is null
+                    ? null
+                    : new WinnerExportBestCandidateTrace(
+                        winner.ArtifactSha256,
+                        winner.SpeciesId,
+                        winner.Generation,
+                        winner.Accuracy,
+                        winner.Fitness,
+                        new Dictionary<string, float>(winner.ScoreBreakdown, StringComparer.Ordinal),
+                        winner.Diagnostics.ToArray(),
+                        winner.BootstrapOrigin,
+                        winner.AverageReadyTickCount,
+                        winner.MinReadyTickCount,
+                        winner.MedianReadyTickCount,
+                        winner.MaxReadyTickCount,
+                        winner.ReadyTickStdDev));
+            var json = JsonSerializer.Serialize(traceRecord, new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                WriteIndented = true
+            });
+            await File.WriteAllTextAsync(tracePath, json).ConfigureAwait(false);
+            return (tracePath, string.Empty);
+        }
+        catch (Exception ex)
+        {
+            return (null, $" Trace sidecar write failed: {ex.GetBaseException().Message}.");
+        }
+    }
+
     private (string Status, string Detail) BuildExportResult(
         string definitionPath,
         string? snapshotPath,
+        string? traceabilityPath,
+        string traceabilityWarning,
         string winnerArtifactSha,
         bool snapshotEligible,
         bool snapshotAvailable)
@@ -2609,31 +2911,35 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
 
         _lastExportedWinnerArtifactSha = winnerArtifactSha;
+        var traceabilityDetail = string.IsNullOrWhiteSpace(traceabilityPath)
+            ? traceabilityWarning
+            : $" Trace: {traceabilityPath}.{traceabilityWarning}";
+        var definitionDetail = $"Definition: {definitionPath}";
 
         if (!string.IsNullOrWhiteSpace(snapshotPath))
         {
             return (
                 Status: "Best-so-far definition + snapshot exported.",
-                Detail: $"Definition: {definitionPath} Snapshot: {snapshotPath}.{warning}");
+                Detail: $"{definitionDetail} Snapshot: {snapshotPath}.{traceabilityDetail}{warning}".Trim());
         }
 
         if (snapshotEligible && snapshotAvailable)
         {
             return (
                 Status: "Best-so-far definition exported; snapshot export canceled.",
-                Detail: $"Definition: {definitionPath} The .nbs export was canceled.{warning}");
+                Detail: $"{definitionDetail} The .nbs export was canceled.{traceabilityDetail}{warning}".Trim());
         }
 
         if (snapshotEligible)
         {
             return (
                 Status: "Best-so-far definition exported.",
-                Detail: $"Definition: {definitionPath} Snapshot state was not available for this export.{warning}");
+                Detail: $"{definitionDetail} Snapshot state was not available for this export.{traceabilityDetail}{warning}".Trim());
         }
 
         return (
             Status: "Best-so-far definition exported.",
-            Detail: $"Definition: {definitionPath}{warning}");
+            Detail: $"{definitionDetail}{traceabilityDetail}{warning}".Trim());
     }
 
     private async Task DisposeRuntimeClientAsync()
@@ -2668,6 +2974,57 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static bool HasArtifactRef(ArtifactRef? artifact)
         => artifact is not null && artifact.TryToSha256Bytes(out _);
+
+    private static BasicsExecutionBestCandidateSummary? CloneBestCandidateSummary(BasicsExecutionBestCandidateSummary? candidate)
+        => candidate is null
+            ? null
+            : candidate with
+            {
+                DefinitionArtifact = candidate.DefinitionArtifact.Clone(),
+                SnapshotArtifact = candidate.SnapshotArtifact?.Clone(),
+                ScoreBreakdown = new Dictionary<string, float>(candidate.ScoreBreakdown, StringComparer.Ordinal),
+                Diagnostics = candidate.Diagnostics.ToArray()
+            };
+
+    private static string DescribeBootstrapOrigin(BasicsBootstrapOrigin origin)
+    {
+        var kindText = origin.Kind switch
+        {
+            BasicsBootstrapOriginKind.UploadedExactCopy => "uploaded seed exact copy",
+            BasicsBootstrapOriginKind.UploadedVariation => "uploaded seed variation",
+            BasicsBootstrapOriginKind.TemplateExactCopy => "template exact copy",
+            BasicsBootstrapOriginKind.TemplateVariation => "template variation",
+            _ => "bootstrap origin"
+        };
+        var detail = $"{kindText} '{origin.SourceDisplayName}'";
+        if (!string.IsNullOrWhiteSpace(origin.SourceContentHash))
+        {
+            detail += $" ({origin.SourceContentHash[..Math.Min(12, origin.SourceContentHash.Length)]})";
+        }
+
+        if (origin.ExactCopyOrdinal is int exactCopyOrdinal)
+        {
+            detail += $" copy #{exactCopyOrdinal}";
+        }
+
+        return detail;
+    }
+
+    private static string? NormalizeRunLogPath(string runLogPath)
+    {
+        if (string.IsNullOrWhiteSpace(runLogPath))
+        {
+            return null;
+        }
+
+        const string prefix = "Run log:";
+        var normalized = runLogPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? runLogPath[prefix.Length..].Trim()
+            : runLogPath.Trim();
+        return string.Equals(normalized, "none yet.", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : normalized;
+    }
 
     private static int ParseRequiredInt(string text, string fieldName, ICollection<string> errors)
     {
@@ -2782,6 +3139,11 @@ public sealed class MainWindowViewModel : ViewModelBase
     private static float ResolvePeakMetric(IReadOnlyList<float> history, float fallbackValue)
         => history.Count == 0 ? fallbackValue : Math.Max(fallbackValue, history.Max());
 
+    private static float? ResolveBestCandidateAccuracyMetric(BasicsExecutionBestCandidateSummary? bestCandidate, string key)
+        => bestCandidate?.ScoreBreakdown.TryGetValue(key, out var value) == true
+            ? Math.Clamp(value, 0f, 1f)
+            : null;
+
     private static bool CanUseBestCandidateForExport(BasicsExecutionBestCandidateSummary? bestCandidate)
         => bestCandidate is not null
            && bestCandidate.Diagnostics.Count == 0
@@ -2804,13 +3166,19 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowGtTaskSettings));
         OnPropertyChanged(nameof(ShowMultiplicationTaskSettings));
         OnPropertyChanged(nameof(ShowUnavailableTaskSettingsMessage));
+        OnPropertyChanged(nameof(ShowAccuracyMetricToggles));
         OnPropertyChanged(nameof(TaskSettingsDetail));
+        UpdateChartBindings();
     }
 
     private void ResetCharts()
     {
         _accuracyHistory.Clear();
         _bestAccuracyHistory.Clear();
+        _balancedAccuracyHistory.Clear();
+        _bestBalancedAccuracyHistory.Clear();
+        _edgeAccuracyHistory.Clear();
+        _interiorAccuracyHistory.Clear();
         _fitnessHistory.Clear();
         _bestFitnessHistory.Clear();
         UpdateChartBindings();
@@ -2830,6 +3198,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowFitnessEmptyState));
         OnPropertyChanged(nameof(AccuracyChartValues));
         OnPropertyChanged(nameof(BestAccuracyChartValues));
+        OnPropertyChanged(nameof(AccuracyTertiaryChartValues));
+        OnPropertyChanged(nameof(AccuracyQuaternaryChartValues));
         OnPropertyChanged(nameof(FitnessChartValues));
         OnPropertyChanged(nameof(BestFitnessChartValues));
         OnPropertyChanged(nameof(AccuracyChartPoints));
@@ -2851,6 +3221,15 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(FitnessMidGenerationTickLabel));
         OnPropertyChanged(nameof(FitnessEndGenerationTickLabel));
     }
+
+    private bool UsePartitionedAccuracyChart => ShowAccuracyMetricToggles;
+
+    private int ResolveAccuracyChartGenerationCount()
+        => ResolveChartGenerationCount(
+            AccuracyChartValues,
+            BestAccuracyChartValues,
+            AccuracyTertiaryChartValues,
+            AccuracyQuaternaryChartValues);
 
     private static IReadOnlyList<Point> BuildChartPoints(IReadOnlyList<float> history)
     {
@@ -2894,11 +3273,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         return bestSoFar;
     }
 
-    private static IReadOnlyList<ChartAxisTickItem> BuildGenerationTicks(
-        IReadOnlyList<float> firstHistory,
-        IReadOnlyList<float> secondHistory)
+    private static IReadOnlyList<ChartAxisTickItem> BuildGenerationTicks(params IReadOnlyList<float>[] histories)
     {
-        var generationCount = ResolveChartGenerationCount(firstHistory, secondHistory);
+        var generationCount = ResolveChartGenerationCount(histories);
         if (generationCount == 0)
         {
             return Array.Empty<ChartAxisTickItem>();
@@ -2971,8 +3348,10 @@ public sealed class MainWindowViewModel : ViewModelBase
         return indices;
     }
 
-    private static int ResolveChartGenerationCount(IReadOnlyList<float> firstHistory, IReadOnlyList<float> secondHistory)
-        => Math.Max(firstHistory.Count, secondHistory.Count);
+    private static int ResolveChartGenerationCount(params IReadOnlyList<float>[] histories)
+        => histories.Length == 0
+            ? 0
+            : histories.Max(static history => history.Count);
 
     private static bool HasCenteredGenerationTick(int generationCount)
         => generationCount > 2 && generationCount % 2 == 1;
@@ -3085,7 +3464,10 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static IEnumerable<MetricSummaryItemViewModel> BuildMetricSummaryItems()
     {
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.Accuracy, "Offspring accuracy", "—", "No offspring evaluations yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.Accuracy, "Offspring raw acc", "—", "No offspring evaluations yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BalancedAccuracy, "Offspring balanced", "—", "No partitioned multiplication accuracy yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.EdgeAccuracy, "Offspring edge", "—", "No partitioned multiplication accuracy yet.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.InteriorAccuracy, "Offspring interior", "—", "No partitioned multiplication accuracy yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.OffspringBestFitness, "Offspring fitness", "—", "No offspring evaluations yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.MeanFitness, "Mean fitness", "—", "No runtime samples yet.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.PopulationCount, "Population", "—", "Plan-derived once capacity is fetched.");
@@ -3101,14 +3483,17 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static IEnumerable<MetricSummaryItemViewModel> BuildBestBrainMetricSummaryItems()
     {
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Best accuracy", "—", "Best accuracy across all successful evaluations.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateFitness, "Best brain fitness", "—", "Fitness for the current best-so-far brain.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateGeneration, "Best brain gen", "—", "Generation where the current best-so-far brain was evaluated.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAverageReadyTicks, "Best avg ready", "—", "Average ready-bit arrival tick for the current best-so-far brain.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateInternalNeuronCount, "Best neurons", "—", "Internal neuron count for the current best-so-far brain.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAxonCount, "Best axons", "—", "Axon count for the current best-so-far brain.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickRange, "Best ready ticks", "—", "Min / median / max ready-bit arrival ticks for the current best-so-far brain.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickStdDev, "Best ready stddev", "—", "Standard deviation of ready-bit arrival ticks for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Raw acc", "—", "Best raw accuracy across all successful evaluations.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateBalancedAccuracy, "Balanced", "—", "Balanced accuracy for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateEdgeAccuracy, "Edge", "—", "Edge-sample accuracy for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateInteriorAccuracy, "Interior", "—", "Interior-sample accuracy for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateFitness, "Fitness", "—", "Fitness for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateGeneration, "Gen", "—", "Generation where the current best-so-far brain was evaluated.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAverageReadyTicks, "Avg ready", "—", "Average ready-bit arrival tick for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateInternalNeuronCount, "Neurons", "—", "Internal neuron count for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAxonCount, "Axons", "—", "Axon count for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickRange, "Ready ticks", "—", "Min / median / max ready-bit arrival ticks for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickStdDev, "Ready stddev", "—", "Standard deviation of ready-bit arrival ticks for the current best-so-far brain.");
     }
 
     private static string FormatOutputObservationMode(BasicsOutputObservationMode mode)
@@ -3179,7 +3564,14 @@ public sealed class MainWindowViewModel : ViewModelBase
                 maximumGenerations = plan.StopCriteria.MaximumGenerations,
                 recommendedInitialPopulation = plan.Capacity.RecommendedInitialPopulationCount,
                 recommendedMaxConcurrentBrains = plan.Capacity.RecommendedMaxConcurrentBrains,
-                eligibleWorkerCount = plan.Capacity.EligibleWorkerCount
+                eligibleWorkerCount = plan.Capacity.EligibleWorkerCount,
+                initialBrainSeeds = plan.InitialBrainSeeds.Select(seed => new
+                {
+                    seed.DisplayName,
+                    seed.DuplicateForReproduction,
+                    seed.ContentHash,
+                    seed.Complexity
+                }).ToArray()
             });
         }
 
@@ -3213,6 +3605,17 @@ public sealed class MainWindowViewModel : ViewModelBase
                 bestFitnessHistory = snapshot.BestFitnessHistory.ToArray(),
                 latestBatchTiming = snapshot.LatestBatchTiming,
                 latestGenerationTiming = snapshot.LatestGenerationTiming,
+                bootstrapCandidateTraces = snapshot.BootstrapCandidateTraces.Select(trace => new
+                {
+                    trace.ArtifactSha256,
+                    trace.SpeciesId,
+                    trace.Accuracy,
+                    trace.Fitness,
+                    trace.Generation,
+                    trace.ScoreBreakdown,
+                    diagnostics = trace.Diagnostics.ToArray(),
+                    bootstrapOrigin = trace.Origin
+                }).ToArray(),
                 bestCandidate = snapshot.BestCandidate is null
                     ? null
                     : new
@@ -3226,6 +3629,8 @@ public sealed class MainWindowViewModel : ViewModelBase
                         snapshot.BestCandidate.MinReadyTickCount,
                         snapshot.BestCandidate.MedianReadyTickCount,
                         snapshot.BestCandidate.MaxReadyTickCount,
+                        snapshot.BestCandidate.ScoreBreakdown,
+                        bootstrapOrigin = snapshot.BestCandidate.BootstrapOrigin,
                         diagnostics = snapshot.BestCandidate.Diagnostics.ToArray()
                     }
             });
@@ -3387,3 +3792,31 @@ public sealed class InitialBrainSeedItemViewModel : ViewModelBase
         set => SetProperty(ref _duplicateForReproduction, value);
     }
 }
+
+public sealed record WinnerExportBestCandidateTrace(
+    string ArtifactSha256,
+    string SpeciesId,
+    int Generation,
+    float Accuracy,
+    float Fitness,
+    IReadOnlyDictionary<string, float> ScoreBreakdown,
+    IReadOnlyList<string> Diagnostics,
+    BasicsBootstrapOrigin? BootstrapOrigin,
+    float? AverageReadyTickCount,
+    float? MinReadyTickCount,
+    float? MedianReadyTickCount,
+    float? MaxReadyTickCount,
+    float? ReadyTickStdDev);
+
+public sealed record WinnerExportTraceabilityRecord(
+    DateTimeOffset ExportedAtUtc,
+    string TaskId,
+    string TaskDisplayName,
+    string? RunLogPath,
+    string DefinitionPath,
+    string DefinitionArtifactSha256,
+    string? SnapshotPath,
+    string? SnapshotArtifactSha256,
+    bool UsedLiveDefinitionExport,
+    bool UsedLiveSnapshotCapture,
+    WinnerExportBestCandidateTrace? BestCandidate);

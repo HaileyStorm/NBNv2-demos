@@ -49,11 +49,12 @@ All implemented Basics tasks use the same `2 -> 2` geometry, require tick-aligne
 ### Multiplication
 
 - `Multiplication` uses bounded scalar inputs `a,b in {0.0, 0.25, 0.5, 0.75, 1.0}`.
-- The deterministic evaluation set is the full `5 x 5` grid over that domain.
+- The deterministic evaluation set is stratified from that grid: all interior points are kept, while boundary samples where `a` or `b` is `0`/`1` are deterministically capped so edge cases do not outnumber interior cases on small grids.
 - The expected output is the normalized product `a * b`. Because the input domain is already bounded to `[0,1]`, no extra remapping is applied.
 - Accuracy is tolerance-based for this task: a sample counts as correct when the observed output is within `+/-0.05` of the canonical product target.
+- Multiplication now keeps raw overall tolerance accuracy in the primary `task_accuracy`/`tolerance_accuracy` fields, but also reports `edge_tolerance_accuracy`, `interior_tolerance_accuracy`, and `balanced_tolerance_accuracy`. Multiplication fitness uses a moderately interior-biased balanced view plus an edge/interior agreement signal so `min(a,b)`-style edge memorization does not masquerade as real multiplication progress while edge recovery still matters.
 - The task value is still read from `output[0]`; `output[1]` is only the readiness signal.
-- Shared breakdown keys remain `task_accuracy`, `mean_absolute_error`, `mean_squared_error`, `target_proximity_fitness`, and `dataset_coverage`; task-specific regression keys are `tolerance_accuracy`, `zero_product_mean_output`, `unit_product_gap`, `midrange_mean_absolute_error`, and `evaluation_set_coverage`.
+- Shared breakdown keys remain `task_accuracy`, `mean_absolute_error`, `mean_squared_error`, `target_proximity_fitness`, and `dataset_coverage`; task-specific regression keys are `tolerance_accuracy`, `edge_tolerance_accuracy`, `interior_tolerance_accuracy`, `balanced_tolerance_accuracy`, `zero_product_mean_output`, `unit_product_gap`, `midrange_mean_absolute_error`, and `evaluation_set_coverage`.
 
 ## Project Layout
 

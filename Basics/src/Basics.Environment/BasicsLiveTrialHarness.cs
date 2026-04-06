@@ -185,7 +185,10 @@ public sealed record BasicsLiveTrialBestCandidateRecord(
     float? AverageReadyTickCount,
     float? MinReadyTickCount,
     float? MedianReadyTickCount,
-    float? MaxReadyTickCount);
+    float? MaxReadyTickCount)
+{
+    public BasicsBootstrapOrigin? BootstrapOrigin { get; init; }
+}
 
 public sealed record BasicsLiveTrialSnapshotRecord(
     DateTimeOffset ObservedAtUtc,
@@ -207,7 +210,10 @@ public sealed record BasicsLiveTrialSnapshotRecord(
     float MeanFitness,
     BasicsLiveTrialBestCandidateRecord? BestCandidate,
     IReadOnlyList<float> AccuracyHistory,
-    IReadOnlyList<float> BestFitnessHistory);
+    IReadOnlyList<float> BestFitnessHistory)
+{
+    public IReadOnlyList<BasicsExecutionBootstrapCandidateTrace> BootstrapCandidateTraces { get; init; } = Array.Empty<BasicsExecutionBootstrapCandidateTrace>();
+}
 
 public sealed record BasicsLiveTuningDecision(
     bool Applied,
@@ -734,9 +740,25 @@ public sealed class BasicsLiveTrialHarness
                     snapshot.BestCandidate.AverageReadyTickCount,
                     snapshot.BestCandidate.MinReadyTickCount,
                     snapshot.BestCandidate.MedianReadyTickCount,
-                    snapshot.BestCandidate.MaxReadyTickCount),
+                    snapshot.BestCandidate.MaxReadyTickCount)
+                {
+                    BootstrapOrigin = snapshot.BestCandidate.BootstrapOrigin
+                },
             AccuracyHistory: snapshot.AccuracyHistory.ToArray(),
-            BestFitnessHistory: snapshot.BestFitnessHistory.ToArray());
+            BestFitnessHistory: snapshot.BestFitnessHistory.ToArray())
+        {
+            BootstrapCandidateTraces = snapshot.BootstrapCandidateTraces
+                .Select(trace => new BasicsExecutionBootstrapCandidateTrace(
+                    trace.Origin,
+                    trace.ArtifactSha256,
+                    trace.SpeciesId,
+                    trace.Accuracy,
+                    trace.Fitness,
+                    new Dictionary<string, float>(trace.ScoreBreakdown, StringComparer.Ordinal),
+                    trace.Diagnostics.ToArray(),
+                    trace.Generation))
+                .ToArray()
+        };
 
     private static BasicsLiveTuningDecision? TryBuildTuningDecision(
         BasicsEnvironmentOptions current,

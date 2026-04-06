@@ -173,7 +173,7 @@
                                    FontWeight="SemiBold"
                                    Foreground="#182436" />
                         <Grid ColumnDefinitions="Auto,*"
-                              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Task" VerticalAlignment="Center" />
@@ -204,25 +204,17 @@
                                 </ComboBox.ItemTemplate>
                             </ComboBox>
 
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Ready window ticks" VerticalAlignment="Center"
-                                       ToolTip.Tip="Maximum number of post-input ticks to wait for the shared ready bit before a sample is treated as not ready." />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxReadyWindowTicksText}" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Template ID" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TemplateId}" />
 
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Sample repeats" VerticalAlignment="Center"
-                                       ToolTip.Tip="How many times to run each canonical sample before averaging its output into one scored observation." />
-                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding SampleRepeatCountText}" />
-
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Template ID" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding TemplateId}" />
-
-                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Description" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="5" Grid.Column="1"
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Description" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="3" Grid.Column="1"
                                      Text="{Binding TemplateDescription}"
                                      AcceptsReturn="True"
                                      Height="72"
                                      TextWrapping="Wrap" />
 
-                            <Grid Grid.Row="6"
+                            <Grid Grid.Row="4"
                                   Grid.ColumnSpan="2"
                                   ColumnDefinitions="Auto,Auto,Auto,Auto"
                                   ColumnSpacing="16">
@@ -348,6 +340,18 @@
                                    Foreground="#425466"
                                    TextWrapping="Wrap" />
 
+                        <Grid ColumnDefinitions="Auto,120,Auto,120,*"
+                              RowDefinitions="Auto"
+                              ColumnSpacing="12"
+                              RowSpacing="10">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Ready window ticks" VerticalAlignment="Center"
+                                       ToolTip.Tip="Maximum number of post-input ticks to wait for the shared ready bit before a sample is treated as not ready." />
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MaxReadyWindowTicksText}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Sample repeats" VerticalAlignment="Center"
+                                       ToolTip.Tip="How many times to run each canonical sample before averaging its output into one scored observation." />
+                            <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding SampleRepeatCountText}" />
+                        </Grid>
+
                         <Grid IsVisible="{Binding ShowBooleanTaskSettings}"
                               ColumnDefinitions="Auto,120,Auto,120,*"
                               RowDefinitions="Auto,Auto"
@@ -385,13 +389,13 @@
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Unique input values" VerticalAlignment="Center"
-                                       ToolTip.Tip="Number of evenly spaced scalar values to place on each multiplication input axis. Dataset size is this count squared." />
+                                       ToolTip.Tip="Number of evenly spaced scalar values to place on each multiplication input axis. Basics evaluates all interior points plus a deterministic subset of boundary cases so 0/1 edges do not dominate small grids." />
                             <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MultiplicationUniqueInputValuesText}" />
                             <TextBlock Grid.Row="0" Grid.Column="2" Text="Accuracy tolerance" VerticalAlignment="Center"
                                        ToolTip.Tip="Maximum absolute output error still counted as accurate for multiplication scoring." />
                             <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding MultiplicationToleranceText}" />
                             <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="5"
-                                       Text="Multiplication uses an evenly spaced grid in [0,1], expected output A×B, and counts a sample correct when the observed output is within the configured tolerance."
+                                       Text="Multiplication uses a stratified deterministic subset of the selected [0,1] grid, preserves all interior points, and exposes raw, balanced, edge, and interior accuracy views."
                                        Foreground="#6C7A89"
                                        TextWrapping="Wrap" />
                         </Grid>
@@ -553,21 +557,6 @@
                                     Command="{Binding ApplySuggestedBoundsCommand}"
                                     MinWidth="180" />
                         </Grid>
-                        <Grid ColumnDefinitions="Auto,*"
-                              ColumnSpacing="12">
-                            <Button Grid.Column="0"
-                                    Content="Export best available"
-                                    Command="{Binding ExportBestCommand}"
-                                    MinWidth="180" />
-                            <TextBlock Grid.Column="1"
-                                       Text="{Binding WinnerExportStatus}"
-                                       TextWrapping="Wrap"
-                                       VerticalAlignment="Center"
-                                       Foreground="#425466" />
-                        </Grid>
-                        <TextBlock Text="{Binding WinnerExportDetail}"
-                                   TextWrapping="Wrap"
-                                   Foreground="#6C7A89" />
                         <TextBlock Text="{Binding LastPlanSummary}"
                                    TextWrapping="Wrap"
                                    Foreground="#6C7A89" />
@@ -587,7 +576,7 @@
                                    FontWeight="SemiBold"
                                    Foreground="#182436" />
                         <Grid ColumnDefinitions="Auto,140,Auto,140,Auto,140"
-                              RowDefinitions="Auto,Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Strength source" VerticalAlignment="Center" />
@@ -633,8 +622,17 @@
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Max parents/species" VerticalAlignment="Center"
                                        ToolTip.Tip="Caps how many parent candidates any one species can contribute before exploration picks from the remainder." />
                             <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MaxParentsPerSpeciesText}" />
-                            <TextBlock Grid.Row="3" Grid.Column="2" Grid.ColumnSpan="4"
-                                       Text="Adaptive stall boost is on by default and escalates diversity after several stagnant generations."
+                            <CheckBox Grid.Row="3" Grid.Column="2"
+                                      Content="Adaptive stall boost"
+                                      IsChecked="{Binding AdaptiveDiversityEnabled}"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="When enabled, Basics increases diversity pressure after a task-specific number of stagnant generations." />
+                            <TextBlock Grid.Row="3" Grid.Column="4" Text="Stall window" VerticalAlignment="Center"
+                                       ToolTip.Tip="Number of consecutive non-improving generations before the adaptive diversity bump begins." />
+                            <TextBox Grid.Row="3" Grid.Column="5" Text="{Binding AdaptiveDiversityStallGenerationWindowText}" />
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="6"
+                                       Text="Adaptive stall boost is on by default for every task. Task defaults currently use shorter windows for easier tasks and a longer window for multiplication."
                                        Foreground="#6C7A89"
                                        VerticalAlignment="Center"
                                        TextWrapping="Wrap" />
@@ -671,6 +669,21 @@
                                    FontWeight="SemiBold"
                                    Foreground="#425466" />
                         <TextBlock Text="{Binding BestBrainDetail}"
+                                   TextWrapping="Wrap"
+                                   Foreground="#6C7A89" />
+                        <Grid ColumnDefinitions="Auto,*"
+                              ColumnSpacing="12">
+                            <Button Grid.Column="0"
+                                    Content="Export best available"
+                                    Command="{Binding ExportBestCommand}"
+                                    MinWidth="180" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding WinnerExportStatus}"
+                                       TextWrapping="Wrap"
+                                       VerticalAlignment="Center"
+                                       Foreground="#425466" />
+                        </Grid>
+                        <TextBlock Text="{Binding WinnerExportDetail}"
                                    TextWrapping="Wrap"
                                    Foreground="#6C7A89" />
                         <ItemsControl ItemsSource="{Binding BestBrainSummaries}">
@@ -716,6 +729,18 @@
                                        FontSize="18"
                                        FontWeight="SemiBold"
                                        Foreground="#182436" />
+                            <WrapPanel IsVisible="{Binding ShowAccuracyMetricToggles}"
+                                       ItemSpacing="12">
+                                <CheckBox Content="Balanced"
+                                          IsChecked="{Binding ShowBalancedAccuracyChart}"
+                                          Foreground="#2563EB" />
+                                <CheckBox Content="Edge"
+                                          IsChecked="{Binding ShowEdgeAccuracyChart}"
+                                          Foreground="#D97706" />
+                                <CheckBox Content="Interior"
+                                          IsChecked="{Binding ShowInteriorAccuracyChart}"
+                                          Foreground="#9F1239" />
+                            </WrapPanel>
                             <Border BorderBrush="#D9D0C2"
                                     BorderThickness="1"
                                     CornerRadius="10"
@@ -739,8 +764,12 @@
                                     <ui:MetricLineChart Grid.Column="1"
                                                         PrimaryValues="{Binding AccuracyChartValues}"
                                                         SecondaryValues="{Binding BestAccuracyChartValues}"
-                                                        PrimaryStroke="#0E7490"
-                                                        SecondaryStroke="#1D4ED8"
+                                                        TertiaryValues="{Binding AccuracyTertiaryChartValues}"
+                                                        QuaternaryValues="{Binding AccuracyQuaternaryChartValues}"
+                                                        PrimaryStroke="#2563EB"
+                                                        SecondaryStroke="#1E3A8A"
+                                                        TertiaryStroke="#D97706"
+                                                        QuaternaryStroke="#9F1239"
                                                         EmptyText="No runtime accuracy samples yet."
                                                         HorizontalAlignment="Stretch"
                                                         VerticalAlignment="Stretch" />

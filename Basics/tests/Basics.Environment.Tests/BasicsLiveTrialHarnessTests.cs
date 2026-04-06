@@ -531,6 +531,10 @@ public sealed class BasicsLiveTrialHarnessTests
                 Diagnostics: Array.Empty<string>()),
             OffspringAccuracyHistory: new[] { bestAccuracy },
             AccuracyHistory: new[] { bestAccuracy },
+            OffspringBalancedAccuracyHistory: Array.Empty<float>(),
+            BalancedAccuracyHistory: Array.Empty<float>(),
+            OffspringEdgeAccuracyHistory: Array.Empty<float>(),
+            OffspringInteriorAccuracyHistory: Array.Empty<float>(),
             OffspringFitnessHistory: new[] { bestFitness },
             BestFitnessHistory: new[] { bestFitness });
 
@@ -576,6 +580,11 @@ public sealed class BasicsLiveTrialHarnessTests
 
         public Task<SnapshotReady?> RequestSnapshotAsync(Guid brainId, CancellationToken cancellationToken = default)
             => Task.FromResult<SnapshotReady?>(null);
+
+        public Task<Repro.ReproduceResult?> AssessCompatibilityByArtifactsAsync(
+            Repro.AssessCompatibilityByArtifactsRequest request,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<Repro.ReproduceResult?>(null);
 
         public Task SubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
             => Task.CompletedTask;

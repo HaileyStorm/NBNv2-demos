@@ -132,6 +132,108 @@ internal static class BasicsTaskPluginScoring
         return CreateBoundedRegressionSuccess(outcomes, correct, accuracy, breakdown);
     }
 
+    public static BasicsTaskEvaluationResult EvaluateMultiplicationDataset(
+        BasicsTaskContract contract,
+        IReadOnlyList<BasicsTaskSample> canonicalDataset,
+        BasicsTaskEvaluationContext context,
+        IReadOnlyList<BasicsTaskSample> samples,
+        IReadOnlyList<BasicsTaskObservation> observations,
+        string coverageKey,
+        float accuracyTolerance)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalDataset);
+        if (!float.IsFinite(accuracyTolerance) || accuracyTolerance < 0f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(accuracyTolerance));
+        }
+
+        var failureBreakdown = CreateFailureBreakdown(
+            coverageKey,
+            ("tolerance_accuracy", 0f),
+            ("edge_tolerance_accuracy", 0f),
+            ("interior_tolerance_accuracy", 0f),
+            ("balanced_tolerance_accuracy", 0f),
+            ("zero_product_mean_output", 1f),
+            ("unit_product_gap", 1f),
+            ("midrange_mean_absolute_error", 1f));
+        var outcomes = TryBuildOutcomes(contract, canonicalDataset, context, samples, observations, failureBreakdown, out var failure);
+        if (outcomes is null)
+        {
+            return failure!;
+        }
+
+        var correct = 0;
+        var zeroOutputSum = 0f;
+        var unitGapSum = 0f;
+        var midrangeAbsoluteErrorSum = 0f;
+        var zeroCount = 0;
+        var unitCount = 0;
+        var midrangeCount = 0;
+        var edgeCorrect = 0;
+        var edgeCount = 0;
+        var interiorCorrect = 0;
+        var interiorCount = 0;
+
+        foreach (var outcome in outcomes)
+        {
+            var sampleCorrect = outcome.Delta <= accuracyTolerance;
+            if (sampleCorrect)
+            {
+                correct++;
+            }
+
+            var isEdgeSample = IsMultiplicationEdgeSample(outcome.Sample);
+            if (isEdgeSample)
+            {
+                edgeCount++;
+                if (sampleCorrect)
+                {
+                    edgeCorrect++;
+                }
+            }
+            else
+            {
+                interiorCount++;
+                if (sampleCorrect)
+                {
+                    interiorCorrect++;
+                }
+            }
+
+            if (outcome.Sample.ExpectedOutput == 0f)
+            {
+                zeroOutputSum += Math.Abs(outcome.Observation.OutputValue);
+                zeroCount++;
+            }
+            else if (outcome.Sample.ExpectedOutput == 1f)
+            {
+                unitGapSum += Math.Abs(1f - outcome.Observation.OutputValue);
+                unitCount++;
+            }
+            else
+            {
+                midrangeAbsoluteErrorSum += outcome.Delta;
+                midrangeCount++;
+            }
+        }
+
+        var sampleCount = outcomes.Count;
+        var rawAccuracy = correct / (float)sampleCount;
+        var edgeAccuracy = edgeCount == 0 ? rawAccuracy : edgeCorrect / (float)edgeCount;
+        var interiorAccuracy = interiorCount == 0 ? rawAccuracy : interiorCorrect / (float)interiorCount;
+        var balancedAccuracy = ResolveMultiplicationBalancedAccuracy(edgeAccuracy, interiorAccuracy);
+
+        var breakdown = CreateBaseBreakdown(outcomes, rawAccuracy, coverageKey);
+        breakdown["tolerance_accuracy"] = rawAccuracy;
+        breakdown["edge_tolerance_accuracy"] = edgeAccuracy;
+        breakdown["interior_tolerance_accuracy"] = interiorAccuracy;
+        breakdown["balanced_tolerance_accuracy"] = balancedAccuracy;
+        breakdown["zero_product_mean_output"] = zeroCount == 0 ? 0f : zeroOutputSum / zeroCount;
+        breakdown["unit_product_gap"] = unitCount == 0 ? 0f : unitGapSum / unitCount;
+        breakdown["midrange_mean_absolute_error"] = midrangeCount == 0 ? 0f : midrangeAbsoluteErrorSum / midrangeCount;
+        return CreateMultiplicationSuccess(outcomes, correct, rawAccuracy, breakdown);
+    }
+
     private static IReadOnlyList<DeterministicScalarOutcome>? TryBuildOutcomes(
         BasicsTaskContract contract,
         IReadOnlyList<BasicsTaskSample> canonicalDataset,
@@ -319,6 +421,54 @@ internal static class BasicsTaskPluginScoring
             ScoreBreakdown: breakdown,
             Diagnostics: Array.Empty<string>());
     }
+
+    private static BasicsTaskEvaluationResult CreateMultiplicationSuccess(
+        IReadOnlyList<DeterministicScalarOutcome> outcomes,
+        int correct,
+        float accuracy,
+        IReadOnlyDictionary<string, float> breakdown)
+    {
+        var balancedAccuracy = breakdown.TryGetValue("balanced_tolerance_accuracy", out var balanced)
+            ? Math.Clamp(balanced, 0f, 1f)
+            : accuracy;
+        var sharedFitness = Math.Clamp(
+            (0.50f * breakdown["target_proximity_fitness"])
+            + (0.25f * (1f - breakdown["mean_absolute_error"]))
+            + (0.25f * balancedAccuracy),
+            0f,
+            1f);
+        var zeroProductScore = 1f - Math.Clamp(breakdown["zero_product_mean_output"], 0f, 1f);
+        var unitProductScore = 1f - Math.Clamp(breakdown["unit_product_gap"], 0f, 1f);
+        var midrangeScore = 1f - Math.Clamp(breakdown["midrange_mean_absolute_error"], 0f, 1f);
+        var interiorAccuracy = breakdown.TryGetValue("interior_tolerance_accuracy", out var interior)
+            ? Math.Clamp(interior, 0f, 1f)
+            : accuracy;
+        var structuredRegressionScore = Math.Clamp(
+            (0.20f * unitProductScore)
+            + (0.15f * zeroProductScore)
+            + (0.45f * interiorAccuracy)
+            + (0.20f * midrangeScore),
+            0f,
+            1f);
+        var fitness = Math.Clamp(
+            sharedFitness * (0.25f + (0.75f * structuredRegressionScore)),
+            0f,
+            1f);
+
+        return new BasicsTaskEvaluationResult(
+            Fitness: fitness,
+            Accuracy: accuracy,
+            SamplesEvaluated: outcomes.Count,
+            SamplesCorrect: correct,
+            ScoreBreakdown: breakdown,
+            Diagnostics: Array.Empty<string>());
+    }
+
+    private static bool IsMultiplicationEdgeSample(BasicsTaskSample sample)
+        => sample.InputA is 0f or 1f || sample.InputB is 0f or 1f;
+
+    private static float ResolveMultiplicationBalancedAccuracy(float edgeAccuracy, float interiorAccuracy)
+        => Math.Clamp((0.25f * edgeAccuracy) + (0.75f * interiorAccuracy), 0f, 1f);
 
     private static float ComputeSharedFitness(
         float accuracy,

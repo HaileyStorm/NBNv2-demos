@@ -298,6 +298,8 @@ public sealed record BasicsInitialBrainSeed(
     bool DuplicateForReproduction,
     BasicsDefinitionComplexitySummary Complexity)
 {
+    public string? ContentHash { get; init; }
+
     public BasicsContractValidationResult Validate()
     {
         var errors = new List<string>();
@@ -352,7 +354,13 @@ public enum BasicsMetricId
     BestCandidateReadyTickRange = 17,
     BestCandidateReadyTickStdDev = 18,
     BestCandidateInternalNeuronCount = 19,
-    BestCandidateAxonCount = 20
+    BestCandidateAxonCount = 20,
+    BalancedAccuracy = 21,
+    EdgeAccuracy = 22,
+    InteriorAccuracy = 23,
+    BestCandidateBalancedAccuracy = 24,
+    BestCandidateEdgeAccuracy = 25,
+    BestCandidateInteriorAccuracy = 26
 }
 
 public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> RequiredMetrics)
@@ -371,6 +379,12 @@ public sealed record BasicsMetricsContract(IReadOnlyList<BasicsMetricId> Require
             BasicsMetricId.BestCandidateReadyTickStdDev,
             BasicsMetricId.BestCandidateInternalNeuronCount,
             BasicsMetricId.BestCandidateAxonCount,
+            BasicsMetricId.BalancedAccuracy,
+            BasicsMetricId.EdgeAccuracy,
+            BasicsMetricId.InteriorAccuracy,
+            BasicsMetricId.BestCandidateBalancedAccuracy,
+            BasicsMetricId.BestCandidateEdgeAccuracy,
+            BasicsMetricId.BestCandidateInteriorAccuracy,
             BasicsMetricId.MeanFitness,
             BasicsMetricId.PopulationCount,
             BasicsMetricId.ActiveBrainCount,

@@ -25,6 +25,18 @@ public sealed class MetricLineChart : Control
     public static readonly StyledProperty<IBrush?> SecondaryStrokeProperty =
         AvaloniaProperty.Register<MetricLineChart, IBrush?>(nameof(SecondaryStroke));
 
+    public static readonly StyledProperty<IReadOnlyList<float>?> TertiaryValuesProperty =
+        AvaloniaProperty.Register<MetricLineChart, IReadOnlyList<float>?>(nameof(TertiaryValues));
+
+    public static readonly StyledProperty<IReadOnlyList<float>?> QuaternaryValuesProperty =
+        AvaloniaProperty.Register<MetricLineChart, IReadOnlyList<float>?>(nameof(QuaternaryValues));
+
+    public static readonly StyledProperty<IBrush?> TertiaryStrokeProperty =
+        AvaloniaProperty.Register<MetricLineChart, IBrush?>(nameof(TertiaryStroke));
+
+    public static readonly StyledProperty<IBrush?> QuaternaryStrokeProperty =
+        AvaloniaProperty.Register<MetricLineChart, IBrush?>(nameof(QuaternaryStroke));
+
     public static readonly StyledProperty<string> EmptyTextProperty =
         AvaloniaProperty.Register<MetricLineChart, string>(nameof(EmptyText), "No chart data.");
 
@@ -36,8 +48,12 @@ public sealed class MetricLineChart : Control
         AffectsRender<MetricLineChart>(
             PrimaryValuesProperty,
             SecondaryValuesProperty,
+            TertiaryValuesProperty,
+            QuaternaryValuesProperty,
             PrimaryStrokeProperty,
             SecondaryStrokeProperty,
+            TertiaryStrokeProperty,
+            QuaternaryStrokeProperty,
             EmptyTextProperty,
             XAxisTitleProperty);
     }
@@ -69,6 +85,30 @@ public sealed class MetricLineChart : Control
     {
         get => GetValue(SecondaryStrokeProperty);
         set => SetValue(SecondaryStrokeProperty, value);
+    }
+
+    public IReadOnlyList<float>? TertiaryValues
+    {
+        get => GetValue(TertiaryValuesProperty);
+        set => SetValue(TertiaryValuesProperty, value);
+    }
+
+    public IReadOnlyList<float>? QuaternaryValues
+    {
+        get => GetValue(QuaternaryValuesProperty);
+        set => SetValue(QuaternaryValuesProperty, value);
+    }
+
+    public IBrush? TertiaryStroke
+    {
+        get => GetValue(TertiaryStrokeProperty);
+        set => SetValue(TertiaryStrokeProperty, value);
+    }
+
+    public IBrush? QuaternaryStroke
+    {
+        get => GetValue(QuaternaryStrokeProperty);
+        set => SetValue(QuaternaryStrokeProperty, value);
     }
 
     public string EmptyText
@@ -136,11 +176,17 @@ public sealed class MetricLineChart : Control
 
         var primaryValues = PrimaryValues ?? Array.Empty<float>();
         var secondaryValues = SecondaryValues ?? Array.Empty<float>();
-        var generationCount = Math.Max(primaryValues.Count, secondaryValues.Count);
+        var tertiaryValues = TertiaryValues ?? Array.Empty<float>();
+        var quaternaryValues = QuaternaryValues ?? Array.Empty<float>();
+        var generationCount = Math.Max(
+            Math.Max(primaryValues.Count, secondaryValues.Count),
+            Math.Max(tertiaryValues.Count, quaternaryValues.Count));
 
         DrawAxes(context, plotRect, dataRect, yLabelLayouts, xAxisTitleLayout, sampleXAxisLabelLayout.Height);
         DrawSeries(context, dataRect, primaryValues, new Pen(PrimaryStroke ?? new SolidColorBrush(Color.Parse("#0E7490")), 1.35, lineCap: PenLineCap.Round));
         DrawSeries(context, dataRect, secondaryValues, new Pen(SecondaryStroke ?? new SolidColorBrush(Color.Parse("#1D4ED8")), 1.35, dashStyle: new DashStyle([4d, 3d], 0d), lineCap: PenLineCap.Round));
+        DrawSeries(context, dataRect, tertiaryValues, new Pen(TertiaryStroke ?? new SolidColorBrush(Color.Parse("#059669")), 1.2, lineCap: PenLineCap.Round));
+        DrawSeries(context, dataRect, quaternaryValues, new Pen(QuaternaryStroke ?? new SolidColorBrush(Color.Parse("#DC2626")), 1.2, lineCap: PenLineCap.Round));
 
         if (generationCount > 0)
         {
