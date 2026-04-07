@@ -82,7 +82,12 @@ public static class BasicsCapacitySizer
             RecommendedMaxConcurrentBrains: maxConcurrentBrains,
             CapacityScore: (float)Math.Round(scoreUnits, 3, MidpointRounding.AwayFromZero),
             EffectiveRamFreeBytes: effectiveRamFreeBytes,
-            Summary: $"placement workers={eligibleWorkers}, cpu_score={effectiveCpuScore:0.###}, gpu_score={effectiveGpuScore:0.###}, ram_gib={effectiveRamFreeBytes / (double)Gibibyte:0.###}");
+            Summary: BuildRuntimePlacementSummary(
+                inventory,
+                eligibleWorkers,
+                effectiveCpuScore,
+                effectiveGpuScore,
+                effectiveRamFreeBytes));
         return ApplyOverrides(recommendation, overrides);
     }
 
@@ -132,4 +137,36 @@ public static class BasicsCapacitySizer
 
     private static int ClampInt(int value, int minimum, int maximum)
         => Math.Min(maximum, Math.Max(minimum, value));
+
+    private static string BuildRuntimePlacementSummary(
+        PlacementWorkerInventory inventory,
+        int eligibleWorkers,
+        float effectiveCpuScore,
+        float effectiveGpuScore,
+        ulong effectiveRamFreeBytes)
+    {
+        var summary = $"placement workers={eligibleWorkers}, cpu_score={effectiveCpuScore:0.###}, gpu_score={effectiveGpuScore:0.###}, ram_gib={effectiveRamFreeBytes / (double)Gibibyte:0.###}";
+        if (inventory is null)
+        {
+            return summary;
+        }
+
+        var totalWorkersSeen = (int)Math.Max(0, inventory.TotalWorkersSeen);
+        if (totalWorkersSeen > 0)
+        {
+            summary += $", total_seen={totalWorkersSeen}";
+        }
+
+        if (inventory.ExclusionCounts.Count == 0)
+        {
+            return summary;
+        }
+
+        var reasons = inventory.ExclusionCounts
+            .OrderByDescending(static entry => entry.Count)
+            .ThenBy(static entry => entry.ReasonCode, StringComparer.Ordinal)
+            .Select(static entry => $"{entry.ReasonCode}={entry.Count}")
+            .ToArray();
+        return $"{summary}, excluded[{string.Join(", ", reasons)}]";
+    }
 }

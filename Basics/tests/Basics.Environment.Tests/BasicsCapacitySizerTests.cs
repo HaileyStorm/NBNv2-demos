@@ -66,6 +66,37 @@ public sealed class BasicsCapacitySizerTests
     }
 
     [Fact]
+    public void Recommend_IncludesExcludedWorkerReasonsInSummary()
+    {
+        var inventory = BuildInventory(
+            cpuScore: 100f,
+            cpuLimitPercent: 50,
+            gpuScore: 0f,
+            gpuComputeLimitPercent: 0,
+            ramFreeBytes: 16 * Gibibyte,
+            ramTotalBytes: 32 * Gibibyte,
+            processRamUsedBytes: 4 * Gibibyte,
+            ramLimitPercent: 50);
+        inventory.TotalWorkersSeen = 32;
+        inventory.ExclusionCounts.Add(new PlacementWorkerExclusionCount
+        {
+            ReasonCode = "stale_capabilities",
+            Count = 27
+        });
+
+        var result = new PlacementWorkerInventoryResult
+        {
+            Success = true,
+            Inventory = inventory
+        };
+
+        var recommendation = BasicsCapacitySizer.Recommend(result);
+
+        Assert.Contains("total_seen=32", recommendation.Summary, StringComparison.Ordinal);
+        Assert.Contains("stale_capabilities=27", recommendation.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Recommend_FallsBackWhenIoCapacityQueryFails()
     {
         var result = new PlacementWorkerInventoryResult
