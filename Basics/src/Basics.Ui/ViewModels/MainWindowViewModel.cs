@@ -97,6 +97,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private CancellationTokenSource? _executionCts;
     private BasicsExecutionRunLog? _executionRunLog;
     private BasicsEnvironmentPlan? _lastPlan;
+    private BasicsExecutionPlanTraceRecord? _lastPlanTrace;
+    private BasicsBuildTraceRecord? _lastBuildTrace;
     private bool _suppressValidationRefresh;
     private bool _isExecutionRunning;
     private bool _isWorkerLauncherBusy;
@@ -1574,14 +1576,18 @@ public sealed class MainWindowViewModel : ViewModelBase
                 $"Building the {options.SelectedTask.DisplayName} execution plan and sizing the initial population.");
             var planner = new BasicsEnvironmentPlanner(_runtimeClient);
             var plan = await planner.BuildPlanAsync(options).ConfigureAwait(false);
+            var planTrace = BasicsTraceability.BuildPlanTrace(plan);
+            var buildTrace = BuildCurrentBuildTrace();
             _dispatcher.Post(() => ApplyPlan(plan));
+            _lastPlanTrace = planTrace;
+            _lastBuildTrace = buildTrace;
 
             _dispatcher.Post(() => ClearWinnerState(clearArtifacts: true));
 
             _executionRunLog?.Dispose();
             try
             {
-                _executionRunLog = BasicsExecutionRunLog.Create(plan);
+                _executionRunLog = BasicsExecutionRunLog.Create(plan, planTrace, buildTrace, IoAddress);
                 _executionRunLog.AppendRunStarted(plan);
             }
             catch
@@ -2857,10 +2863,15 @@ public sealed class MainWindowViewModel : ViewModelBase
         try
         {
             var tracePath = $"{definitionPath}.trace.json";
+            var planTrace = _lastPlanTrace
+                ?? (_lastPlan is null ? null : BasicsTraceability.BuildPlanTrace(_lastPlan));
+            var buildTrace = _lastBuildTrace ?? BuildCurrentBuildTrace();
             var traceRecord = new WinnerExportTraceabilityRecord(
+                SchemaVersion: BasicsTraceability.SchemaVersion,
                 ExportedAtUtc: DateTimeOffset.UtcNow,
                 TaskId: _lastPlan?.SelectedTask.TaskId ?? SelectedTask?.TaskId ?? "unknown",
                 TaskDisplayName: _lastPlan?.SelectedTask.DisplayName ?? SelectedTask?.DisplayName ?? "Unknown",
+                IoAddress: IoAddress,
                 RunLogPath: NormalizeRunLogPath(ExecutionLogPath),
                 DefinitionPath: definitionPath,
                 DefinitionArtifactSha256: definitionArtifact.ToSha256Hex(),
@@ -2868,6 +2879,8 @@ public sealed class MainWindowViewModel : ViewModelBase
                 SnapshotArtifactSha256: HasArtifactRef(snapshotArtifact) ? snapshotArtifact!.ToSha256Hex() : null,
                 UsedLiveDefinitionExport: usedLiveDefinitionExport,
                 UsedLiveSnapshotCapture: usedLiveSnapshotCapture,
+                Plan: planTrace,
+                Build: buildTrace,
                 BestCandidate: winner is null
                     ? null
                     : new WinnerExportBestCandidateTrace(
@@ -3027,6 +3040,61 @@ public sealed class MainWindowViewModel : ViewModelBase
         return string.Equals(normalized, "none yet.", StringComparison.OrdinalIgnoreCase)
             ? null
             : normalized;
+    }
+
+    private static BasicsBuildTraceRecord BuildCurrentBuildTrace()
+        => BasicsTraceability.BuildBuildTrace(
+            assemblies:
+            [
+                typeof(MainWindowViewModel).Assembly,
+                typeof(BasicsEnvironmentPlan).Assembly,
+                typeof(TaskPluginRegistry).Assembly
+            ],
+            repositories: ResolveTraceabilityRepositoryTargets());
+
+    private static IReadOnlyList<BasicsTraceabilityRepositoryTarget> ResolveTraceabilityRepositoryTargets()
+    {
+        var targets = new List<BasicsTraceabilityRepositoryTarget>();
+        var demosRepoRoot = ResolveBasicsRepoRoot();
+        if (string.IsNullOrWhiteSpace(demosRepoRoot))
+        {
+            return targets;
+        }
+
+        targets.Add(new BasicsTraceabilityRepositoryTarget("NBNv2-demos", demosRepoRoot));
+        var runtimeRepoRoot = System.IO.Path.GetFullPath(System.IO.Path.Combine(demosRepoRoot, "..", "NBNv2"));
+        if (File.Exists(System.IO.Path.Combine(runtimeRepoRoot, "NBNv2.sln")) || Directory.Exists(System.IO.Path.Combine(runtimeRepoRoot, ".git")))
+        {
+            targets.Add(new BasicsTraceabilityRepositoryTarget("NBNv2-local-sibling", runtimeRepoRoot));
+        }
+
+        return targets;
+    }
+
+    private static string? ResolveBasicsRepoRoot()
+    {
+        var assemblyDirectory = System.IO.Path.GetDirectoryName(typeof(MainWindowViewModel).Assembly.Location) ?? string.Empty;
+        foreach (var start in new[] { assemblyDirectory, AppContext.BaseDirectory, global::System.Environment.CurrentDirectory })
+        {
+            var current = start;
+            while (!string.IsNullOrWhiteSpace(current))
+            {
+                var nestedBasicsRoot = System.IO.Path.Combine(current, "Basics");
+                if (File.Exists(System.IO.Path.Combine(nestedBasicsRoot, "Basics.sln")))
+                {
+                    return current;
+                }
+
+                if (File.Exists(System.IO.Path.Combine(current, "Basics.sln")))
+                {
+                    return Directory.GetParent(current)?.FullName ?? current;
+                }
+
+                current = Directory.GetParent(current)?.FullName ?? string.Empty;
+            }
+        }
+
+        return null;
     }
 
     private static int ParseRequiredInt(string text, string fieldName, ICollection<string> errors)
@@ -3528,16 +3596,31 @@ public sealed class MainWindowViewModel : ViewModelBase
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private readonly StreamWriter _writer;
         private readonly object _gate = new();
+        private readonly BasicsExecutionPlanTraceRecord _planTrace;
+        private readonly BasicsBuildTraceRecord _buildTrace;
+        private readonly string _ioAddress;
 
-        private BasicsExecutionRunLog(string path, StreamWriter writer)
+        private BasicsExecutionRunLog(
+            string path,
+            StreamWriter writer,
+            BasicsExecutionPlanTraceRecord planTrace,
+            BasicsBuildTraceRecord buildTrace,
+            string ioAddress)
         {
             Path = path;
             _writer = writer;
+            _planTrace = planTrace;
+            _buildTrace = buildTrace;
+            _ioAddress = ioAddress;
         }
 
         public string Path { get; }
 
-        public static BasicsExecutionRunLog Create(BasicsEnvironmentPlan plan)
+        public static BasicsExecutionRunLog Create(
+            BasicsEnvironmentPlan plan,
+            BasicsExecutionPlanTraceRecord planTrace,
+            BasicsBuildTraceRecord buildTrace,
+            string ioAddress)
         {
             var root = ResolveRunLogRoot();
             Directory.CreateDirectory(root);
@@ -3548,7 +3631,12 @@ public sealed class MainWindowViewModel : ViewModelBase
             {
                 AutoFlush = true
             };
-            return new BasicsExecutionRunLog(path, writer);
+            return new BasicsExecutionRunLog(
+                path,
+                writer,
+                planTrace,
+                buildTrace,
+                ioAddress);
         }
 
         public void AppendRunStarted(BasicsEnvironmentPlan plan)
@@ -3557,6 +3645,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             {
                 eventType = "run_started",
                 timestampUtc = DateTimeOffset.UtcNow,
+                traceSchemaVersion = BasicsTraceability.SchemaVersion,
+                ioAddress = _ioAddress,
                 taskId = plan.SelectedTask.TaskId,
                 taskDisplayName = plan.SelectedTask.DisplayName,
                 outputObservationMode = plan.OutputObservationMode.ToString(),
@@ -3574,7 +3664,9 @@ public sealed class MainWindowViewModel : ViewModelBase
                     seed.DuplicateForReproduction,
                     seed.ContentHash,
                     seed.Complexity
-                }).ToArray()
+                }).ToArray(),
+                planTrace = _planTrace,
+                buildTrace = _buildTrace
             });
         }
 
@@ -3820,9 +3912,11 @@ public sealed record WinnerExportBestCandidateTrace(
     float? ReadyTickStdDev);
 
 public sealed record WinnerExportTraceabilityRecord(
+    int SchemaVersion,
     DateTimeOffset ExportedAtUtc,
     string TaskId,
     string TaskDisplayName,
+    string IoAddress,
     string? RunLogPath,
     string DefinitionPath,
     string DefinitionArtifactSha256,
@@ -3830,4 +3924,6 @@ public sealed record WinnerExportTraceabilityRecord(
     string? SnapshotArtifactSha256,
     bool UsedLiveDefinitionExport,
     bool UsedLiveSnapshotCapture,
+    BasicsExecutionPlanTraceRecord? Plan,
+    BasicsBuildTraceRecord Build,
     WinnerExportBestCandidateTrace? BestCandidate);
