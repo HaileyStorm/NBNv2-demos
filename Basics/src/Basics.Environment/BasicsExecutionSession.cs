@@ -1089,7 +1089,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
-
             foreach (var childDefinition in ExtractChildDefinitions(seedResult))
             {
                 if (children.Count >= targetChildCount)
@@ -1108,7 +1107,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 {
                     continue;
                 }
-
                 var membership = await CommitArtifactMembershipAsync(
                         childDefinition,
                         new[] { CreateSpeciationParentRef(template.Definition), CreateSpeciationParentRef(template.Definition) },
@@ -2295,9 +2293,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         readyEventCursor = Math.Max(readyEventCursor, readyEvent.TickId);
                         if (vectorsByTick.TryGetValue(readyEvent.TickId, out var readyVector))
                         {
-                            return new ObservationAttemptResult(
-                                CreateObservation(readyVector, CountReadyTicksThrough(vectorsByTick, readyEvent.TickId)),
-                                null);
+                            if (readyVector.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
+                            {
+                                return new ObservationAttemptResult(
+                                    CreateObservation(readyVector, CountReadyTicksThrough(vectorsByTick, readyEvent.TickId)),
+                                    null);
+                            }
+
+                            readyTicks.Remove(readyEvent.TickId);
                         }
 
                         readyTicks.Add(readyEvent.TickId);
@@ -2344,7 +2347,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 observedTicks++;
                 if (readyTicks.Contains(output.TickId))
                 {
-                    return new ObservationAttemptResult(CreateObservation(output, observedTicks), null);
+                    if (output.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
+                    {
+                        return new ObservationAttemptResult(CreateObservation(output, observedTicks), null);
+                    }
+
+                    readyTicks.Remove(output.TickId);
                 }
 
                 if (observedTicks < outputSamplingPolicy.MaxReadyWindowTicks)
@@ -2933,7 +2941,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ? runCount
                 : result.RequestedRunCount;
             onReproductionObserved?.Invoke(observedRunCount);
-
             foreach (var childDefinition in ExtractChildDefinitions(result))
             {
                 if (nextGeneration.Count >= targetPopulation)
@@ -2946,7 +2953,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     duplicateChildDefinitionCount++;
                     continue;
                 }
-
+                var childComplexity = await ResolveDefinitionComplexityAsync(childDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
                 var membership = await CommitArtifactMembershipAsync(
                         childDefinition,
                         new[]
@@ -2959,7 +2966,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         decisionReason: "basics_generation_child",
                         cancellationToken)
                     .ConfigureAwait(false);
-                var childComplexity = await ResolveDefinitionComplexityAsync(childDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
                 var childMember = new PopulationMember(
                     childDefinition.Clone(),
                     membership.SpeciesId,

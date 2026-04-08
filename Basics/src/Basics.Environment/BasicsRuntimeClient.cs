@@ -501,7 +501,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         return Task.CompletedTask;
     }
 
-    public Task SendInputVectorAsync(
+    public async Task SendInputVectorAsync(
         Guid brainId,
         IReadOnlyList<float> values,
         CancellationToken cancellationToken = default)
@@ -510,11 +510,29 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         ArgumentNullException.ThrowIfNull(values);
         if (brainId == Guid.Empty)
         {
-            return Task.CompletedTask;
+            return;
         }
 
-        _system.Root.Send(_receiverPid, new BasicsInputVectorCommand(brainId, values));
-        return Task.CompletedTask;
+        var message = new InputVector
+        {
+            BrainId = brainId.ToProtoUuid()
+        };
+        message.Values.Add(values);
+
+        var ack = await ExecuteIoRequestWithReconnectAsync(
+                () => _system.Root.RequestAsync<IoCommandAck>(
+                        _ioPid,
+                        message,
+                        _requestTimeout),
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (ack is null
+            || (ack.BrainId is not null && ack.BrainId.TryToGuid(out var acknowledgedBrainId) && acknowledgedBrainId != brainId)
+            || !ack.Success)
+        {
+            var detail = ack?.Message ?? "input_vector_empty_response";
+            throw new InvalidOperationException($"input_vector failed for brain {brainId}: {detail}");
+        }
     }
 
     public void ResetOutputBuffer(Guid brainId)
