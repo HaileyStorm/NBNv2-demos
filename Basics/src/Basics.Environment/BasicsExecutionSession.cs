@@ -21,7 +21,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan RetryableSpawnFailureBackoff = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
-    private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.Zero;
+    // A tiny stagger reduces local thundering-herd placement spikes without materially slowing evaluation.
+    private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.FromMilliseconds(10);
     private static readonly TimeSpan DefaultEvaluationProgressPublishInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan DefaultBreedingProgressPublishInterval = TimeSpan.FromMilliseconds(250);
     private const uint ValueOutputIndex = 0;
