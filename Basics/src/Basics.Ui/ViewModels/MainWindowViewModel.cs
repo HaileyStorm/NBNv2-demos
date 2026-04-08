@@ -1324,6 +1324,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             displayName: file.DisplayName,
             localPath: file.LocalPath,
             definitionBytes: file.DefinitionBytes,
+            snapshotLocalPath: file.SnapshotLocalPath,
+            snapshotBytes: file.SnapshotBytes,
             contentHash: contentHash,
             complexity: analysis.Complexity,
             duplicateForReproduction: true,
@@ -2165,7 +2167,8 @@ public sealed class MainWindowViewModel : ViewModelBase
                 seed.DuplicateForReproduction,
                 seed.Complexity)
             {
-                ContentHash = seed.ContentHash
+                ContentHash = seed.ContentHash,
+                SnapshotBytes = seed.SnapshotBytes?.ToArray()
             }).ToArray()
         };
 
@@ -3760,6 +3763,8 @@ public sealed class InitialBrainSeedItemViewModel : ViewModelBase
         string displayName,
         string? localPath,
         byte[] definitionBytes,
+        string? snapshotLocalPath,
+        byte[]? snapshotBytes,
         string contentHash,
         BasicsDefinitionComplexitySummary complexity,
         bool duplicateForReproduction,
@@ -3768,6 +3773,8 @@ public sealed class InitialBrainSeedItemViewModel : ViewModelBase
         DisplayName = displayName;
         LocalPath = localPath;
         DefinitionBytes = definitionBytes;
+        SnapshotLocalPath = snapshotLocalPath;
+        SnapshotBytes = snapshotBytes;
         ContentHash = contentHash;
         Complexity = complexity;
         _duplicateForReproduction = duplicateForReproduction;
@@ -3779,6 +3786,10 @@ public sealed class InitialBrainSeedItemViewModel : ViewModelBase
     public string? LocalPath { get; }
 
     public byte[] DefinitionBytes { get; }
+
+    public string? SnapshotLocalPath { get; }
+
+    public byte[]? SnapshotBytes { get; }
 
     public string ContentHash { get; }
 

@@ -300,6 +300,8 @@ public sealed record BasicsInitialBrainSeed(
 {
     public string? ContentHash { get; init; }
 
+    public byte[]? SnapshotBytes { get; init; }
+
     public BasicsContractValidationResult Validate()
     {
         var errors = new List<string>();
@@ -326,6 +328,11 @@ public sealed record BasicsInitialBrainSeed(
             {
                 errors.Add($"Initial brain DefinitionBytes must be a valid .nbn definition ({ex.GetBaseException().Message}).");
             }
+        }
+
+        if (SnapshotBytes is { Length: 0 })
+        {
+            errors.Add("Initial brain SnapshotBytes must be omitted or contain a valid .nbs payload.");
         }
 
         return BasicsContractValidationResult.FromErrors(errors);

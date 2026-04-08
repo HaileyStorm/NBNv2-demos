@@ -835,6 +835,60 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_UsesUploadedSeedSnapshot_ForExactCopySpawn()
+    {
+        var plugin = new MultiplicationTaskPlugin();
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "multiplication"
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var seedBytes = runtimeClient.CreateDefinitionBytes("multiplication");
+            var snapshotBytes = new byte[] { 0x4E, 0x42, 0x4E, 0x53, 0x01, 0x00, 0x00, 0x00 };
+
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorBuffer, taskPlugin: plugin) with
+                {
+                    InitialBrainSeeds =
+                    [
+                        new BasicsInitialBrainSeed(
+                            DisplayName: "seed-with-snapshot",
+                            DefinitionBytes: seedBytes,
+                            DuplicateForReproduction: false,
+                            Complexity: BasicsDefinitionAnalyzer.Analyze(seedBytes).Complexity)
+                        {
+                            SnapshotBytes = snapshotBytes
+                        }
+                    ],
+                    Capacity = new BasicsCapacityRecommendation(
+                        Source: BasicsCapacitySource.RuntimePlacementInventory,
+                        EligibleWorkerCount: 1,
+                        RecommendedInitialPopulationCount: 1,
+                        RecommendedReproductionRunCount: 1,
+                        RecommendedMaxConcurrentBrains: 1,
+                        CapacityScore: 1f,
+                        EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                        Summary: "test")
+                },
+                plugin,
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            var snapshotAwareSpawn = Assert.Single(runtimeClient.SpawnRequests.Where(static request => request.LastSnapshot is not null));
+            Assert.Equal("application/x-nbs", snapshotAwareSpawn.LastSnapshot.MediaType);
+            Assert.True(snapshotAwareSpawn.LastSnapshot.TryToSha256Bytes(out _));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task SelectBestCandidateSummary_PrefersHigherFitness_WhenAccuracyTies()
     {
         await using var runtimeClient = new FakeBasicsRuntimeClient();
@@ -2560,6 +2614,7 @@ public sealed class BasicsExecutionSessionTests
         public List<TimeSpan> AwaitPlacementTimeouts { get; } = new();
         public List<TimeSpan> VectorWaitTimeouts { get; } = new();
         public List<TimeSpan> EventWaitTimeouts { get; } = new();
+        public List<SpawnBrain> SpawnRequests { get; } = new();
         public ConcurrentQueue<string> OperationLog { get; } = new();
         public ConcurrentQueue<DateTimeOffset> SpawnRequestStartedAtUtc { get; } = new();
         private int _activeSpawnRequests;
@@ -2600,6 +2655,7 @@ public sealed class BasicsExecutionSessionTests
             {
                 SpawnRequestCount++;
                 SpawnRequestStartedAtUtc.Enqueue(DateTimeOffset.UtcNow);
+                SpawnRequests.Add(request.Clone());
                 if (SpawnDelay > TimeSpan.Zero)
                 {
                     await Task.Delay(SpawnDelay, cancellationToken);

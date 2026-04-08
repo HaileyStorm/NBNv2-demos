@@ -954,6 +954,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             [
                 new ResolvedInitialSeedTemplate(
                     defaultTemplateDefinition.Clone(),
+                    null,
                     bootstrapSpeciesId,
                     bootstrapSpeciesDisplayName,
                     resolvedTemplateComplexity,
@@ -993,9 +994,23 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     advertisedHost: _publishingOptions.AdvertiseHost,
                     cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
+            ArtifactRef? snapshotArtifact = null;
+            if (seed.SnapshotBytes is { Length: > 0 })
+            {
+                var snapshotPublication = await _artifactPublisher.PublishAsync(
+                        seed.SnapshotBytes,
+                        mediaType: "application/x-nbs",
+                        backingStoreRoot: ResolveBackingStoreRoot($"{plan.SeedTemplate.TemplateId}-{SanitizePathSegment(seed.DisplayName)}-snapshot"),
+                        bindHost: _publishingOptions.BindHost,
+                        advertisedHost: _publishingOptions.AdvertiseHost,
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                snapshotArtifact = snapshotPublication.ArtifactRef.Clone();
+            }
             var speciesId = BuildBootstrapSpeciesId($"{plan.SeedTemplate.TemplateId}-{ShortSeedHash(seed.DefinitionBytes)}");
             templates.Add(new ResolvedInitialSeedTemplate(
                 publication.ArtifactRef.Clone(),
+                snapshotArtifact,
                 speciesId,
                 $"{seed.DisplayName} bootstrap",
                 seed.Complexity,
@@ -1476,10 +1491,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             SpawnBrainAck? spawnAck;
             try
             {
-                spawnAck = await RequestBrainSpawnAsync(
+                    spawnAck = await RequestBrainSpawnAsync(
                         new SpawnBrain
                         {
                             BrainDef = member.Definition.Clone(),
+                            LastSnapshot = HasArtifactRef(member.SnapshotArtifact) ? member.SnapshotArtifact!.Clone() : null,
                             InputWidth = taskPlugin.Contract.InputWidth,
                             OutputWidth = taskPlugin.Contract.OutputWidth,
                             StartPaused = true
@@ -3763,7 +3779,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             template.SpeciesId,
             template.SpeciesDisplayName,
             template.Complexity,
-            LastEvaluation: null)
+            LastEvaluation: null,
+            SnapshotArtifact: template.SnapshotArtifact?.Clone())
         {
             BootstrapOrigin = CreateBootstrapOrigin(template, exactCopyOrdinal)
         };
@@ -4820,6 +4837,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
     private sealed record ResolvedInitialSeedTemplate(
         ArtifactRef Definition,
+        ArtifactRef? SnapshotArtifact,
         string SpeciesId,
         string SpeciesDisplayName,
         BasicsDefinitionComplexitySummary? Complexity,
