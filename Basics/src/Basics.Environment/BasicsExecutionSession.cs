@@ -2271,8 +2271,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var readyEventsSeen = 0;
         var vectorsByTick = new Dictionary<ulong, BasicsRuntimeOutputVector>();
         var readyTicks = new HashSet<ulong>();
-        BasicsRuntimeOutputVector? fallbackReadyVector = null;
-        var fallbackReadyTickCount = 0;
         using var observationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var observationToken = observationCts.Token;
         var timeout = ResolveObservationTimeout(BasicsOutputObservationMode.EventedOutput);
@@ -2336,13 +2334,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     readyEventCursor);
                 if (failureDetail is not null)
                 {
-                    if (readyEventsSeen == 0 && fallbackReadyVector is not null)
-                    {
-                        return new ObservationAttemptResult(
-                            CreateObservation(fallbackReadyVector, fallbackReadyTickCount),
-                            null);
-                    }
-
                     return new ObservationAttemptResult(
                         null,
                         failureDetail);
@@ -2356,13 +2347,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     return new ObservationAttemptResult(CreateObservation(output, observedTicks), null);
                 }
 
-                if (fallbackReadyVector is null
-                    && output.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
-                {
-                    fallbackReadyVector = output;
-                    fallbackReadyTickCount = observedTicks;
-                }
-
                 if (observedTicks < outputSamplingPolicy.MaxReadyWindowTicks)
                 {
                     nextVectorTask = _runtimeClient.WaitForOutputVectorAsync(
@@ -2371,13 +2355,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         timeout,
                         observationToken);
                 }
-            }
-
-            if (readyEventsSeen == 0 && fallbackReadyVector is not null)
-            {
-                return new ObservationAttemptResult(
-                    CreateObservation(fallbackReadyVector, fallbackReadyTickCount),
-                    null);
             }
 
             return new ObservationAttemptResult(

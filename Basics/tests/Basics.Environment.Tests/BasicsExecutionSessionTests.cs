@@ -432,7 +432,7 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public async Task ExecutionSession_EventedOutput_FallsBackToReadyLaneInVectorStream_WhenSingleReadyEventIsMissing()
+    public async Task ExecutionSession_EventedOutput_FailsWhenReadyEventIsMissing()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
         {
@@ -449,8 +449,8 @@ public sealed class BasicsExecutionSessionTests
                 _ => { },
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
-            Assert.True(final.BestAccuracy > 0f);
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Contains("output_timeout_or_width_mismatch", final.EvaluationFailureSummary, StringComparison.Ordinal);
         }
         finally
         {
