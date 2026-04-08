@@ -2291,14 +2291,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     {
                         readyEventsSeen++;
                         readyEventCursor = Math.Max(readyEventCursor, readyEvent.TickId);
-                        if (vectorsByTick.TryGetValue(readyEvent.TickId, out var readyVector))
-                        {
-                            return new ObservationAttemptResult(
-                                CreateObservation(readyVector, CountReadyTicksThrough(vectorsByTick, readyEvent.TickId)),
-                                null);
-                        }
-
                         readyTicks.Add(readyEvent.TickId);
+                        if (TryResolveEarliestReadyObservation(vectorsByTick, readyTicks, out var resolvedReadyObservation))
+                        {
+                            return new ObservationAttemptResult(resolvedReadyObservation, null);
+                        }
                     }
 
                     nextReadyEventTask = _runtimeClient.WaitForOutputEventAsync(
@@ -2340,9 +2337,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 vectorsByTick[output!.TickId] = output;
                 vectorCursor = output.TickId;
                 observedTicks++;
-                if (readyTicks.Contains(output.TickId))
+                if (TryResolveEarliestReadyObservation(vectorsByTick, readyTicks, out var readyObservation))
                 {
-                    return new ObservationAttemptResult(CreateObservation(output, observedTicks), null);
+                    return new ObservationAttemptResult(readyObservation, null);
                 }
 
                 if (observedTicks < outputSamplingPolicy.MaxReadyWindowTicks)
@@ -2397,6 +2394,24 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             output.TickId,
             output.Values[(int)ValueOutputIndex],
             checked((float)Math.Max(1, readyTickCount)));
+
+    private static bool TryResolveEarliestReadyObservation(
+        IReadOnlyDictionary<ulong, BasicsRuntimeOutputVector> vectorsByTick,
+        IReadOnlySet<ulong> readyTicks,
+        out BasicsTaskObservation observation)
+    {
+        foreach (var readyTickId in readyTicks.OrderBy(static tickId => tickId))
+        {
+            if (vectorsByTick.TryGetValue(readyTickId, out var readyVector))
+            {
+                observation = CreateObservation(readyVector, CountReadyTicksThrough(vectorsByTick, readyTickId));
+                return true;
+            }
+        }
+
+        observation = default;
+        return false;
+    }
 
     private static int CountReadyTicksThrough(
         IReadOnlyDictionary<ulong, BasicsRuntimeOutputVector> vectorsByTick,

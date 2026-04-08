@@ -495,6 +495,29 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public void ExecutionSession_EventedOutput_UsesEarliestReadyTick_WhenMultipleReadyTicksAreAvailable()
+    {
+        var helper = typeof(BasicsExecutionSession).GetMethod(
+            "TryResolveEarliestReadyObservation",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(helper);
+
+        var vectorsByTick = new Dictionary<ulong, BasicsRuntimeOutputVector>
+        {
+            [7] = new(Guid.NewGuid(), 7, new[] { 0.7f, 1f }),
+            [5] = new(Guid.NewGuid(), 5, new[] { 0.5f, 1f })
+        };
+        var readyTicks = new HashSet<ulong> { 7, 5 };
+        var args = new object?[] { vectorsByTick, readyTicks, null };
+
+        var resolved = Assert.IsType<bool>(helper!.Invoke(null, args));
+        Assert.True(resolved);
+        var observation = Assert.IsType<BasicsTaskObservation>(args[2]);
+        Assert.Equal(5UL, observation.TickId);
+        Assert.Equal(0.5f, observation.OutputValue);
+    }
+
+    [Fact]
     public async Task ExecutionSession_EventedOutput_ReportsWhenVectorAndReadyStreamsStaySilent()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
