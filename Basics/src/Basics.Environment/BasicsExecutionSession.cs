@@ -2293,14 +2293,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         readyEventCursor = Math.Max(readyEventCursor, readyEvent.TickId);
                         if (vectorsByTick.TryGetValue(readyEvent.TickId, out var readyVector))
                         {
-                            if (readyVector.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
-                            {
-                                return new ObservationAttemptResult(
-                                    CreateObservation(readyVector, CountReadyTicksThrough(vectorsByTick, readyEvent.TickId)),
-                                    null);
-                            }
-
-                            readyTicks.Remove(readyEvent.TickId);
+                            return new ObservationAttemptResult(
+                                CreateObservation(readyVector, CountReadyTicksThrough(vectorsByTick, readyEvent.TickId)),
+                                null);
                         }
 
                         readyTicks.Add(readyEvent.TickId);
@@ -2347,12 +2342,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 observedTicks++;
                 if (readyTicks.Contains(output.TickId))
                 {
-                    if (output.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
-                    {
-                        return new ObservationAttemptResult(CreateObservation(output, observedTicks), null);
-                    }
-
-                    readyTicks.Remove(output.TickId);
+                    return new ObservationAttemptResult(CreateObservation(output, observedTicks), null);
                 }
 
                 if (observedTicks < outputSamplingPolicy.MaxReadyWindowTicks)
