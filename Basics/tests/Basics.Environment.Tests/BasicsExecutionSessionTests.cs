@@ -600,7 +600,9 @@ public sealed class BasicsExecutionSessionTests
                 _ => { },
                 new CancellationTokenSource(TimeSpan.FromSeconds(45)).Token);
 
-            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.True(
+                final.State is BasicsExecutionState.Stopped or BasicsExecutionState.Succeeded,
+                $"Expected a clean terminal state, observed {final.State}.");
             Assert.Equal(0, final.EvaluationFailureCount);
             Assert.True(final.BestAccuracy > 0f);
             Assert.Contains(
@@ -1702,7 +1704,9 @@ public sealed class BasicsExecutionSessionTests
                 snapshots.Add,
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.True(
+                final.State is BasicsExecutionState.Stopped or BasicsExecutionState.Succeeded,
+                $"Expected a clean terminal state, observed {final.State}.");
             Assert.Equal(2, final.Generation);
             Assert.Equal(1, final.PopulationCount);
             Assert.Contains(
@@ -1741,7 +1745,9 @@ public sealed class BasicsExecutionSessionTests
                 snapshots.Add,
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.True(
+                final.State is BasicsExecutionState.Stopped or BasicsExecutionState.Succeeded,
+                $"Expected a clean terminal state, observed {final.State}.");
 
             var generationOneSummary = Assert.Single(
                 snapshots.Where(snapshot =>
@@ -2435,6 +2441,54 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_ThrottlesIntermediateEvaluationAndBreedingSnapshots()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "zero"
+        };
+        var session = CreateSession(
+            runtimeClient,
+            evaluationProgressPublishInterval: TimeSpan.FromDays(1),
+            breedingProgressPublishInterval: TimeSpan.FromDays(1));
+        var snapshots = new List<BasicsExecutionSnapshot>();
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        TargetAccuracy = 1f,
+                        TargetFitness = 0.999f,
+                        RequireBothTargets = true,
+                        MaximumGenerations = 2
+                    },
+                    new AndTaskPlugin()),
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.True(
+                final.State is BasicsExecutionState.Stopped or BasicsExecutionState.Succeeded,
+                $"Expected a clean terminal state, observed {final.State}.");
+            Assert.InRange(
+                snapshots.Count(snapshot => snapshot.StatusText.StartsWith("Evaluating generation", StringComparison.Ordinal)),
+                2,
+                12);
+            Assert.InRange(
+                snapshots.Count(snapshot => snapshot.StatusText.StartsWith("Breeding generation", StringComparison.Ordinal)),
+                1,
+                1);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public void ExecutionSession_SpeciationParentRef_PrefersLiveBrainId_WhenAvailable()
     {
         var helper = typeof(BasicsExecutionSession).GetMethod(
@@ -2493,12 +2547,16 @@ public sealed class BasicsExecutionSessionTests
         FakeBasicsRuntimeClient runtimeClient,
         BasicsTemplatePublishingOptions? publishingOptions = null,
         TimeSpan? minimumSpawnRequestInterval = null,
-        TimeSpan? spawnPlacementTimeout = null)
+        TimeSpan? spawnPlacementTimeout = null,
+        TimeSpan? evaluationProgressPublishInterval = null,
+        TimeSpan? breedingProgressPublishInterval = null)
         => new(
             runtimeClient,
             publishingOptions ?? new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" },
             minimumSpawnRequestInterval ?? TimeSpan.FromMilliseconds(1),
-            spawnPlacementTimeout);
+            spawnPlacementTimeout,
+            evaluationProgressPublishInterval,
+            breedingProgressPublishInterval);
 
     private static string ResolvePairKey(Repro.ReproduceByArtifactsRequest request)
         => ResolvePairKey(

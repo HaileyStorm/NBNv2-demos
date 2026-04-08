@@ -22,6 +22,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan DefaultMinimumSpawnRequestInterval = TimeSpan.Zero;
+    private static readonly TimeSpan DefaultEvaluationProgressPublishInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan DefaultBreedingProgressPublishInterval = TimeSpan.FromMilliseconds(250);
     private const uint ValueOutputIndex = 0;
     private const uint ReadyOutputIndex = 1;
     private const int MaxMemberEvaluationAttempts = 3;
@@ -35,6 +37,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private readonly ConcurrentDictionary<string, BasicsDefinitionComplexitySummary?> _definitionComplexityCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly TimeSpan _minimumSpawnRequestInterval;
     private readonly TimeSpan _spawnPlacementTimeout;
+    private readonly TimeSpan _evaluationProgressPublishInterval;
+    private readonly TimeSpan _breedingProgressPublishInterval;
 
     private readonly record struct ObservationAttemptResult(BasicsTaskObservation? Observation, string? FailureDetail);
 
@@ -42,12 +46,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IBasicsRuntimeClient runtimeClient,
         BasicsTemplatePublishingOptions publishingOptions,
         TimeSpan? minimumSpawnRequestInterval = null,
-        TimeSpan? spawnPlacementTimeout = null)
+        TimeSpan? spawnPlacementTimeout = null,
+        TimeSpan? evaluationProgressPublishInterval = null,
+        TimeSpan? breedingProgressPublishInterval = null)
     {
         _runtimeClient = runtimeClient ?? throw new ArgumentNullException(nameof(runtimeClient));
         _publishingOptions = publishingOptions ?? throw new ArgumentNullException(nameof(publishingOptions));
         _minimumSpawnRequestInterval = minimumSpawnRequestInterval ?? DefaultMinimumSpawnRequestInterval;
         _spawnPlacementTimeout = spawnPlacementTimeout ?? DefaultSpawnPlacementTimeout;
+        _evaluationProgressPublishInterval = evaluationProgressPublishInterval ?? DefaultEvaluationProgressPublishInterval;
+        _breedingProgressPublishInterval = breedingProgressPublishInterval ?? DefaultBreedingProgressPublishInterval;
     }
 
     public async Task<BasicsExecutionSnapshot> RunAsync(
@@ -415,6 +423,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 }
 
                 population = await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
+                var breedingProgressStopwatch = Stopwatch.StartNew();
+                var breedingProgressPublished = false;
 
                 var nextGeneration = await BreedNextGenerationAsync(
                         plan,
@@ -425,6 +435,18 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         cancellationToken,
                         onBreedProgress: (detail, activePopulationCount) =>
                         {
+                            var forcePublish = !breedingProgressPublished
+                                || detail.Contains("Skipped", StringComparison.Ordinal);
+                            if (!forcePublish
+                                && breedingProgressPublished
+                                && _breedingProgressPublishInterval > TimeSpan.Zero
+                                && breedingProgressStopwatch.Elapsed < _breedingProgressPublishInterval)
+                            {
+                                return;
+                            }
+
+                            breedingProgressStopwatch.Restart();
+                            breedingProgressPublished = true;
                             publishSnapshot(CreateSnapshot(
                                 plan.StopCriteria,
                                 BasicsExecutionState.Running,
@@ -1188,7 +1210,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     return;
                 }
 
-                if (!force && progressPublishStopwatch.Elapsed < TimeSpan.FromMilliseconds(250))
+                if (!force
+                    && _evaluationProgressPublishInterval > TimeSpan.Zero
+                    && progressPublishStopwatch.Elapsed < _evaluationProgressPublishInterval)
                 {
                     return;
                 }
@@ -1254,13 +1278,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         batchBrainCount: membersToEvaluate.Length,
                         onAttemptProgress: progress =>
                         {
+                            var forcePublish = !inFlightBrainProgress.TryGetValue(progress.BatchBrainOrdinal, out var previousProgress)
+                                               || previousProgress.AttemptNumber != progress.AttemptNumber;
                             inFlightBrainProgress[progress.BatchBrainOrdinal] = progress;
-                            PublishBatchProgress(force: ShouldForceProgressPublish(progress.Phase));
+                            PublishBatchProgress(force: forcePublish);
                         },
                         onEvaluationFinished: () =>
                         {
                             inFlightBrainProgress.TryRemove(memberIndex + 1, out _);
-                            PublishBatchProgress(force: true);
+                            PublishBatchProgress();
                         },
                         (brainOrdinal, completedSampleCount) =>
                         {
@@ -1280,7 +1306,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     var result = await completedTask.ConfigureAwait(false);
                     completedEvaluations.Add(result);
                     completedBrains++;
-                    PublishBatchProgress(force: true);
+                    PublishBatchProgress();
 
                     if (IsFatalSpawnFailure(result.Member.LastEvaluation))
                     {
@@ -1826,11 +1852,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                || diagnostic.Contains("spawn_empty_response", StringComparison.Ordinal)
                || diagnostic.Contains("spawn_invalid_request", StringComparison.Ordinal);
     }
-
-    private static bool ShouldForceProgressPublish(InFlightBrainPhase phase)
-        => phase is InFlightBrainPhase.RequestingSpawn
-            or InFlightBrainPhase.WaitingForPlacement
-            or InFlightBrainPhase.WaitingForSetupSlot;
 
     private static int ResolveSetupConcurrency(int eligibleWorkerCount, int maxConcurrent)
     {
