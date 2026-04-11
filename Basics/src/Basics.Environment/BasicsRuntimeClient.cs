@@ -142,6 +142,11 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 {
     private static readonly TimeSpan OutputSubscriptionReadyTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan OutputSubscriptionRetryDelay = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan OutputUnsubscriptionRequestTimeout = TimeSpan.FromSeconds(2);
+    private const int OutputBufferCapacity = 256;
+    private const int OutputEventBufferCapacity = 256;
+    private const int TerminationBufferCapacity = 8;
+    private const int MaxPendingOutputSegmentTicksPerBrain = 16;
     private readonly ActorSystem _system;
     private readonly PID _ioPid;
     private readonly PID _receiverPid;
@@ -477,28 +482,49 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         return EnsureOutputSubscriptionAsync(brainId, vector: false, cancellationToken);
     }
 
-    public Task UnsubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
+    public async Task UnsubscribeOutputsVectorAsync(Guid brainId, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         if (brainId == Guid.Empty)
         {
-            return Task.CompletedTask;
+            return;
         }
 
-        _system.Root.Send(_receiverPid, new BasicsUnsubscribeOutputsVectorCommand(brainId));
-        return Task.CompletedTask;
+        try
+        {
+            await EnsureOutputUnsubscriptionAsync(brainId, vector: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort unsubscribe: local cleanup must still run if IO is already down.
+        }
+        finally
+        {
+            CompleteAndRemoveOutputBuffer(brainId);
+            _pendingOutputSegments.TryRemove(brainId, out _);
+        }
     }
 
-    public Task UnsubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
+    public async Task UnsubscribeOutputsAsync(Guid brainId, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         if (brainId == Guid.Empty)
         {
-            return Task.CompletedTask;
+            return;
         }
 
-        _system.Root.Send(_receiverPid, new BasicsUnsubscribeOutputsCommand(brainId));
-        return Task.CompletedTask;
+        try
+        {
+            await EnsureOutputUnsubscriptionAsync(brainId, vector: false, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort unsubscribe: local cleanup must still run if IO is already down.
+        }
+        finally
+        {
+            CompleteAndRemoveOutputEventBuffer(brainId);
+        }
     }
 
     public async Task SendInputVectorAsync(
@@ -1190,7 +1216,11 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             return;
         }
 
-        var channel = EnsureOutputEventBuffer(brainId);
+        if (!_outputEventBuffers.TryGetValue(brainId, out var channel))
+        {
+            return;
+        }
+
         channel.Writer.TryWrite(new BasicsRuntimeOutputEvent(brainId, output.OutputIndex, output.TickId, output.Value));
     }
 
@@ -1215,7 +1245,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             pendingByTick.TryRemove(output.TickId, out _);
         }
 
-        WriteOutputVector(brainId, output.TickId, values);
+        TryWriteOutputVector(brainId, output.TickId, values);
     }
 
     private void OnOutputVectorSegment(OutputVectorSegment output)
@@ -1254,7 +1284,12 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 pendingByTick.TryRemove(output.TickId, out _);
             }
 
-            WriteOutputVector(brainId, output.TickId, output.Values.ToArray());
+            TryWriteOutputVector(brainId, output.TickId, output.Values.ToArray());
+            return;
+        }
+
+        if (!_outputBuffers.ContainsKey(brainId))
+        {
             return;
         }
 
@@ -1296,7 +1331,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             completedByTick.TryRemove(output.TickId, out _);
         }
 
-        WriteOutputVector(brainId, output.TickId, completedValues);
+        TryWriteOutputVector(brainId, output.TickId, completedValues);
     }
 
     private void OnBrainTerminated(BrainTerminated terminated)
@@ -1308,25 +1343,28 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
 
         _pendingOutputSegments.TryRemove(brainId, out _);
         _outputWidths.TryRemove(brainId, out _);
+        CompleteAndRemoveOutputBuffer(brainId);
+        CompleteAndRemoveOutputEventBuffer(brainId);
         var channel = EnsureTerminationBuffer(brainId);
         channel.Writer.TryWrite(terminated.Clone());
     }
 
-    private void WriteOutputVector(Guid brainId, ulong tickId, IReadOnlyList<float> values)
+    private bool TryWriteOutputVector(Guid brainId, ulong tickId, IReadOnlyList<float> values)
     {
-        var channel = EnsureOutputBuffer(brainId);
-        channel.Writer.TryWrite(new BasicsRuntimeOutputVector(brainId, tickId, values));
+        return _outputBuffers.TryGetValue(brainId, out var channel)
+               && channel.Writer.TryWrite(new BasicsRuntimeOutputVector(brainId, tickId, values));
     }
 
     private Channel<BasicsRuntimeOutputVector> EnsureOutputBuffer(Guid brainId)
     {
         return _outputBuffers.GetOrAdd(
             brainId,
-            static _ => Channel.CreateUnbounded<BasicsRuntimeOutputVector>(
-                new UnboundedChannelOptions
+            static _ => Channel.CreateBounded<BasicsRuntimeOutputVector>(
+                new BoundedChannelOptions(OutputBufferCapacity)
                 {
                     SingleReader = false,
-                    SingleWriter = false
+                    SingleWriter = false,
+                    FullMode = BoundedChannelFullMode.DropOldest
                 }));
     }
 
@@ -1334,11 +1372,12 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     {
         return _outputEventBuffers.GetOrAdd(
             brainId,
-            static _ => Channel.CreateUnbounded<BasicsRuntimeOutputEvent>(
-                new UnboundedChannelOptions
+            static _ => Channel.CreateBounded<BasicsRuntimeOutputEvent>(
+                new BoundedChannelOptions(OutputEventBufferCapacity)
                 {
                     SingleReader = false,
-                    SingleWriter = false
+                    SingleWriter = false,
+                    FullMode = BoundedChannelFullMode.DropOldest
                 }));
     }
 
@@ -1346,11 +1385,12 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     {
         return _terminationBuffers.GetOrAdd(
             brainId,
-            static _ => Channel.CreateUnbounded<BrainTerminated>(
-                new UnboundedChannelOptions
+            static _ => Channel.CreateBounded<BrainTerminated>(
+                new BoundedChannelOptions(TerminationBufferCapacity)
                 {
                     SingleReader = false,
-                    SingleWriter = false
+                    SingleWriter = false,
+                    FullMode = BoundedChannelFullMode.DropOldest
                 }));
     }
 
@@ -1408,11 +1448,49 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         var pendingByTick = _pendingOutputSegments.GetOrAdd(
             brainId,
             static _ => new ConcurrentDictionary<ulong, PendingOutputVector>());
+        TrimPendingOutputSegments(pendingByTick, tickId);
         return pendingByTick.AddOrUpdate(
             tickId,
             static (_, width) => new PendingOutputVector(width),
             static (_, existing, width) => existing.Values.Length == width ? existing : new PendingOutputVector(width),
             outputWidth);
+    }
+
+    private static void TrimPendingOutputSegments(
+        ConcurrentDictionary<ulong, PendingOutputVector> pendingByTick,
+        ulong currentTick)
+    {
+        foreach (var tick in pendingByTick.Keys)
+        {
+            if (tick < currentTick && currentTick - tick > MaxPendingOutputSegmentTicksPerBrain)
+            {
+                pendingByTick.TryRemove(tick, out _);
+            }
+        }
+
+        while (pendingByTick.Count >= MaxPendingOutputSegmentTicksPerBrain)
+        {
+            if (!pendingByTick.TryRemove(pendingByTick.Keys.Min(), out _))
+            {
+                break;
+            }
+        }
+    }
+
+    private void CompleteAndRemoveOutputBuffer(Guid brainId)
+    {
+        if (_outputBuffers.TryRemove(brainId, out var channel))
+        {
+            channel.Writer.TryComplete();
+        }
+    }
+
+    private void CompleteAndRemoveOutputEventBuffer(Guid brainId)
+    {
+        if (_outputEventBuffers.TryRemove(brainId, out var channel))
+        {
+            channel.Writer.TryComplete();
+        }
     }
 
     private void ResetConnectAckBuffer()
@@ -1426,23 +1504,37 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         Guid brainId,
         bool vector,
         CancellationToken cancellationToken)
+        => await EnsureOutputSubscriptionStateAsync(brainId, vector, subscribe: true, cancellationToken).ConfigureAwait(false);
+
+    private async Task EnsureOutputUnsubscriptionAsync(
+        Guid brainId,
+        bool vector,
+        CancellationToken cancellationToken)
+        => await EnsureOutputSubscriptionStateAsync(brainId, vector, subscribe: false, cancellationToken).ConfigureAwait(false);
+
+    private async Task EnsureOutputSubscriptionStateAsync(
+        Guid brainId,
+        bool vector,
+        bool subscribe,
+        CancellationToken cancellationToken)
     {
         var subscriberActor = PidLabel(_receiverPid, _system.Address);
         var deadline = DateTime.UtcNow + OutputSubscriptionReadyTimeout;
 
         while (true)
         {
+            var requestTimeout = subscribe ? _requestTimeout : OutputUnsubscriptionRequestTimeout;
             var ack = await ExecuteIoRequestWithReconnectAsync(
                     () => _system.Root.RequestAsync<IoCommandAck>(
                             _ioPid,
-                            CreateOutputSubscriptionMessage(brainId, vector, subscriberActor),
-                            _requestTimeout),
+                            CreateOutputSubscriptionMessage(brainId, vector, subscriberActor, subscribe),
+                            requestTimeout),
                     cancellationToken)
                 .ConfigureAwait(false);
             if (ack is null)
             {
                 throw new InvalidOperationException(
-                    $"{(vector ? "subscribe_outputs_vector" : "subscribe_outputs")} returned no response for brain {brainId}.");
+                    $"{ResolveOutputSubscriptionCommandName(vector, subscribe)} returned no response for brain {brainId}.");
             }
 
             if (!ack.Success)
@@ -1451,7 +1543,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                     $"{ack.Command} failed for brain {brainId}: {ack.Message}".Trim());
             }
 
-            if (!IsQueuedOutputSubscriptionAck(ack))
+            if (!IsQueuedOutputSubscriptionAck(ack) || !subscribe)
             {
                 return;
             }
@@ -1581,18 +1673,44 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         return $"{baseException.GetType().Name}: {message}";
     }
 
-    private static object CreateOutputSubscriptionMessage(Guid brainId, bool vector, string subscriberActor)
-        => vector
-            ? new SubscribeOutputsVector
+    private static object CreateOutputSubscriptionMessage(Guid brainId, bool vector, string subscriberActor, bool subscribe)
+    {
+        if (subscribe)
+        {
+            return vector
+                ? new SubscribeOutputsVector
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    SubscriberActor = subscriberActor
+                }
+                : new SubscribeOutputs
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    SubscriberActor = subscriberActor
+                };
+        }
+
+        return vector
+            ? new UnsubscribeOutputsVector
             {
                 BrainId = brainId.ToProtoUuid(),
                 SubscriberActor = subscriberActor
             }
-            : new SubscribeOutputs
+            : new UnsubscribeOutputs
             {
                 BrainId = brainId.ToProtoUuid(),
                 SubscriberActor = subscriberActor
             };
+    }
+
+    private static string ResolveOutputSubscriptionCommandName(bool vector, bool subscribe)
+        => (vector, subscribe) switch
+        {
+            (true, true) => "subscribe_outputs_vector",
+            (false, true) => "subscribe_outputs",
+            (true, false) => "unsubscribe_outputs_vector",
+            _ => "unsubscribe_outputs"
+        };
 
     private static bool IsQueuedOutputSubscriptionAck(IoCommandAck ack)
         => string.Equals(ack.Message?.Trim(), "queued", StringComparison.OrdinalIgnoreCase);

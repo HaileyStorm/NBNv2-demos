@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Threading.Channels;
 using Nbn.Demos.Basics.Environment;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
@@ -70,6 +71,47 @@ public sealed class BasicsRuntimeClientTests
             output.Values,
             value => Assert.Equal(10f, value),
             value => Assert.Equal(20f, value));
+    }
+
+    [Fact]
+    public async Task OutputVectorBuffer_DropsOldestEntries_WhenProducerOutrunsConsumer()
+    {
+        var port = GetFreeTcpPort();
+        var brainId = Guid.NewGuid();
+        var options = new BasicsRuntimeClientOptions
+        {
+            BindHost = "127.0.0.1",
+            Port = port
+        };
+
+        await using var client = await BasicsRuntimeClient.StartAsync(options);
+        Assert.Null(await client.WaitForOutputVectorAsync(brainId, afterTickExclusive: 0, TimeSpan.FromMilliseconds(1)));
+
+        var system = GetPrivateField<ActorSystem>(client, "_system");
+        var receiverPid = GetPrivateField<PID>(client, "_receiverPid");
+        for (var tick = 1UL; tick <= 300UL; tick++)
+        {
+            system.Root.Send(receiverPid, new OutputVectorEvent
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = tick,
+                Values = { (float)tick, 1f }
+            });
+        }
+
+        var buffers = GetPrivateField<ConcurrentDictionary<Guid, Channel<BasicsRuntimeOutputVector>>>(client, "_outputBuffers");
+        Assert.True(buffers.TryGetValue(brainId, out var channel));
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        var drained = new List<BasicsRuntimeOutputVector>();
+        while (channel!.Reader.TryRead(out var output))
+        {
+            drained.Add(output);
+        }
+
+        Assert.Equal(256, drained.Count);
+        Assert.Equal(45UL, drained[0].TickId);
+        Assert.Equal(300UL, drained[^1].TickId);
     }
 
     [Fact]
