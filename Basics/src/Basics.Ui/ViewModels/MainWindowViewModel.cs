@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net;
@@ -3594,11 +3595,14 @@ public sealed class MainWindowViewModel : ViewModelBase
     private sealed class BasicsExecutionRunLog : IDisposable
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+        private static readonly TimeSpan RuntimeProcessMemorySampleInterval = TimeSpan.FromSeconds(15);
         private readonly StreamWriter _writer;
         private readonly object _gate = new();
         private readonly BasicsExecutionPlanTraceRecord _planTrace;
         private readonly BasicsBuildTraceRecord _buildTrace;
         private readonly string _ioAddress;
+        private IReadOnlyList<RuntimeProcessMemoryTraceRecord> _lastRuntimeProcessMemory = Array.Empty<RuntimeProcessMemoryTraceRecord>();
+        private DateTimeOffset _nextRuntimeProcessMemorySampleUtc = DateTimeOffset.MinValue;
 
         private BasicsExecutionRunLog(
             string path,
@@ -3641,12 +3645,14 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         public void AppendRunStarted(BasicsEnvironmentPlan plan)
         {
+            var timestampUtc = DateTimeOffset.UtcNow;
             WriteRecord(new
             {
                 eventType = "run_started",
-                timestampUtc = DateTimeOffset.UtcNow,
+                timestampUtc,
                 traceSchemaVersion = BasicsTraceability.SchemaVersion,
                 ioAddress = _ioAddress,
+                runtimeProcessMemory = CaptureRuntimeProcessMemory(timestampUtc, force: true),
                 taskId = plan.SelectedTask.TaskId,
                 taskDisplayName = plan.SelectedTask.DisplayName,
                 outputObservationMode = plan.OutputObservationMode.ToString(),
@@ -3672,10 +3678,12 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         public void AppendSnapshot(BasicsExecutionSnapshot snapshot)
         {
+            var timestampUtc = DateTimeOffset.UtcNow;
             WriteRecord(new
             {
                 eventType = "snapshot",
-                timestampUtc = DateTimeOffset.UtcNow,
+                timestampUtc,
+                runtimeProcessMemory = CaptureRuntimeProcessMemory(timestampUtc, force: false),
                 snapshot.State,
                 snapshot.StatusText,
                 snapshot.DetailText,
@@ -3729,6 +3737,18 @@ public sealed class MainWindowViewModel : ViewModelBase
                         diagnostics = snapshot.BestCandidate.Diagnostics.ToArray()
                     }
             });
+        }
+
+        private IReadOnlyList<RuntimeProcessMemoryTraceRecord> CaptureRuntimeProcessMemory(DateTimeOffset timestampUtc, bool force)
+        {
+            if (!force && timestampUtc < _nextRuntimeProcessMemorySampleUtc)
+            {
+                return _lastRuntimeProcessMemory;
+            }
+
+            _lastRuntimeProcessMemory = RuntimeProcessMemoryTraceRecord.Capture(timestampUtc);
+            _nextRuntimeProcessMemorySampleUtc = timestampUtc + RuntimeProcessMemorySampleInterval;
+            return _lastRuntimeProcessMemory;
         }
 
         public void Dispose()
@@ -3794,6 +3814,129 @@ public sealed class MainWindowViewModel : ViewModelBase
                 .Select(ch => invalid.Contains(ch) || char.IsWhiteSpace(ch) ? '-' : ch)
                 .ToArray();
             return new string(chars);
+        }
+    }
+
+    private sealed record RuntimeProcessMemoryTraceRecord(
+        DateTimeOffset SampledAtUtc,
+        int ProcessId,
+        string ProcessName,
+        string RuntimeRole,
+        long? WorkingSetBytes,
+        long? PrivateMemoryBytes,
+        long? VirtualMemoryBytes,
+        bool MatchedCommandLine)
+    {
+        private static readonly string[] RuntimeRoleTokens =
+        {
+            "Nbn.Runtime.IO",
+            "Nbn.Runtime.WorkerNode",
+            "Nbn.Runtime.HiveMind",
+            "Nbn.Runtime.Reproduction",
+            "Nbn.Runtime.Speciation",
+            "Nbn.Tools.Workbench",
+            "Nbn.Demos.Basics.Ui",
+            "Basics.Ui"
+        };
+
+        public static IReadOnlyList<RuntimeProcessMemoryTraceRecord> Capture(DateTimeOffset sampledAtUtc)
+        {
+            var records = new List<RuntimeProcessMemoryTraceRecord>();
+            foreach (var process in Process.GetProcesses())
+            {
+                try
+                {
+                    var processName = process.ProcessName;
+                    var commandLine = TryReadLinuxCommandLine(process.Id);
+                    var role = ResolveRuntimeRole(processName, commandLine);
+                    if (role is null)
+                    {
+                        continue;
+                    }
+
+                    var matchedCommandLine = commandLine?.Contains(role, StringComparison.OrdinalIgnoreCase) ?? false;
+
+                    process.Refresh();
+                    records.Add(new RuntimeProcessMemoryTraceRecord(
+                        sampledAtUtc,
+                        process.Id,
+                        processName,
+                        role,
+                        TryReadInt64(() => process.WorkingSet64),
+                        TryReadInt64(() => process.PrivateMemorySize64),
+                        TryReadInt64(() => process.VirtualMemorySize64),
+                        matchedCommandLine));
+                }
+                catch
+                {
+                    // Process enumeration races with process exit; skip short-lived entries.
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+
+            return records
+                .OrderBy(static record => record.RuntimeRole, StringComparer.Ordinal)
+                .ThenBy(static record => record.ProcessId)
+                .ToArray();
+        }
+
+        private static string? ResolveRuntimeRole(string processName, string? commandLine)
+        {
+            foreach (var token in RuntimeRoleTokens)
+            {
+                if (processName.Contains(token, StringComparison.OrdinalIgnoreCase)
+                    || (commandLine?.Contains(token, StringComparison.OrdinalIgnoreCase) ?? false))
+                {
+                    return token;
+                }
+            }
+
+            return null;
+        }
+
+        private static long? TryReadInt64(Func<long> read)
+        {
+            try
+            {
+                return read();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string? TryReadLinuxCommandLine(int processId)
+        {
+            var path = $"/proc/{processId.ToString(CultureInfo.InvariantCulture)}/cmdline";
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            try
+            {
+                var bytes = File.ReadAllBytes(path);
+                if (bytes.Length == 0)
+                {
+                    return null;
+                }
+
+                var commandLine = System.Text.Encoding.UTF8.GetString(bytes).Replace('\0', ' ').Trim();
+                if (string.IsNullOrWhiteSpace(commandLine))
+                {
+                    return null;
+                }
+
+                return commandLine.Length <= 512 ? commandLine : commandLine[..512];
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

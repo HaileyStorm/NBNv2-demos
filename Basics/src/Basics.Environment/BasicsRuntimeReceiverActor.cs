@@ -45,14 +45,16 @@ internal sealed class BasicsRuntimeReceiverActor : IActor
                 SendToIo(context, new SubscribeOutputsVector
                 {
                     BrainId = subscribe.BrainId.ToProtoUuid(),
-                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                    SubscriberActor = PidLabel(context.Self, context.System.Address),
+                    DeliveryMode = OutputSubscriptionDeliveryMode.LatestOnly
                 });
                 break;
             case BasicsSubscribeOutputsCommand subscribe:
                 SendToIo(context, new SubscribeOutputs
                 {
                     BrainId = subscribe.BrainId.ToProtoUuid(),
-                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                    SubscriberActor = PidLabel(context.Self, context.System.Address),
+                    DeliveryMode = OutputSubscriptionDeliveryMode.Exact
                 });
                 break;
             case BasicsUnsubscribeOutputsVectorCommand unsubscribe:

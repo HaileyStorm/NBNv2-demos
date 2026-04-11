@@ -1681,12 +1681,14 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 ? new SubscribeOutputsVector
                 {
                     BrainId = brainId.ToProtoUuid(),
-                    SubscriberActor = subscriberActor
+                    SubscriberActor = subscriberActor,
+                    DeliveryMode = OutputSubscriptionDeliveryMode.LatestOnly
                 }
                 : new SubscribeOutputs
                 {
                     BrainId = brainId.ToProtoUuid(),
-                    SubscriberActor = subscriberActor
+                    SubscriberActor = subscriberActor,
+                    DeliveryMode = OutputSubscriptionDeliveryMode.Exact
                 };
         }
 

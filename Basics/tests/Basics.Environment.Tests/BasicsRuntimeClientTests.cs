@@ -146,6 +146,7 @@ public sealed class BasicsRuntimeClientTests
                 Assert.True(message.BrainId?.TryToGuid(out var observedBrainId) == true && observedBrainId == brainId);
                 Assert.False(string.IsNullOrWhiteSpace(message.SubscriberActor));
                 Assert.Contains(receiverPid.Id, message.SubscriberActor, StringComparison.Ordinal);
+                Assert.Equal(OutputSubscriptionDeliveryMode.LatestOnly, message.DeliveryMode);
             });
     }
 
