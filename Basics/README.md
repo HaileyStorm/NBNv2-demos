@@ -78,6 +78,18 @@ dotnet build Basics.sln -c Release
 dotnet test Basics.sln -c Release --no-restore
 ```
 
+## UI Run Logs
+
+The Basics UI writes JSONL run logs under `artifacts/ui-runs/`. Run-log snapshots are compact summaries rather than full chart-history dumps, runtime memory samples are only emitted on the configured sampling interval, and long runs rotate to `.partNNN.jsonl` segments between records when a segment reaches the configured size cap. A single oversized record may exceed the segment cap.
+
+Default UI log retention is enabled for future runs: unmarked `basics-ui-*.jsonl` files are pruned on run-log creation and rotation to keep unmarked logs near the default caps (`256 MiB` per segment, `4 GiB` total unmarked bytes, `32` unmarked files, `14` days). To preserve a selected log segment from automatic pruning, create a sibling marker named `<log-file>.keep`; marked logs do not count against automatic retention caps. For example:
+
+```bash
+touch artifacts/ui-runs/basics-ui-multiplication-20260413-162707.jsonl.keep
+```
+
+Advanced overrides are available through environment variables: `NBN_BASICS_UI_RUN_LOG_RETENTION_ENABLED`, `NBN_BASICS_UI_RUN_LOG_MAX_FILE_MB`, `NBN_BASICS_UI_RUN_LOG_MAX_TOTAL_MB`, `NBN_BASICS_UI_RUN_LOG_MAX_FILES`, `NBN_BASICS_UI_RUN_LOG_MAX_AGE_DAYS`, and `NBN_BASICS_UI_RUN_LOG_KEEP_MARKER_SUFFIX`.
+
 ## Live Harness
 
 Generate a sample config:

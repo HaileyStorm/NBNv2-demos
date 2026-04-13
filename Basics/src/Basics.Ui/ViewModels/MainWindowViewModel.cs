@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Avalonia;
 using Nbn.Demos.Basics.Environment;
@@ -3596,28 +3597,46 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private static readonly TimeSpan RuntimeProcessMemorySampleInterval = TimeSpan.FromSeconds(15);
-        private readonly StreamWriter _writer;
+        private static readonly int NewLineByteCount = Encoding.UTF8.GetByteCount(global::System.Environment.NewLine);
+        private StreamWriter _writer;
         private readonly object _gate = new();
         private readonly BasicsExecutionPlanTraceRecord _planTrace;
         private readonly BasicsBuildTraceRecord _buildTrace;
         private readonly string _ioAddress;
+        private readonly string _root;
+        private readonly string _taskSegment;
+        private readonly string _timestampSegment;
+        private readonly BasicsRunLogRetentionOptions _retentionOptions;
+        private readonly BasicsRunLogRetentionResult _retentionResult;
         private DateTimeOffset _nextRuntimeProcessMemorySampleUtc = DateTimeOffset.MinValue;
+        private int _segmentIndex;
+        private long _currentFileBytes;
 
         private BasicsExecutionRunLog(
+            string root,
+            string taskSegment,
+            string timestampSegment,
             string path,
             StreamWriter writer,
             BasicsExecutionPlanTraceRecord planTrace,
             BasicsBuildTraceRecord buildTrace,
-            string ioAddress)
+            string ioAddress,
+            BasicsRunLogRetentionOptions retentionOptions,
+            BasicsRunLogRetentionResult retentionResult)
         {
+            _root = root;
+            _taskSegment = taskSegment;
+            _timestampSegment = timestampSegment;
             Path = path;
             _writer = writer;
             _planTrace = planTrace;
             _buildTrace = buildTrace;
             _ioAddress = ioAddress;
+            _retentionOptions = retentionOptions;
+            _retentionResult = retentionResult;
         }
 
-        public string Path { get; }
+        public string Path { get; private set; }
 
         public static BasicsExecutionRunLog Create(
             BasicsEnvironmentPlan plan,
@@ -3628,18 +3647,22 @@ public sealed class MainWindowViewModel : ViewModelBase
             var root = ResolveRunLogRoot();
             Directory.CreateDirectory(root);
             var taskSegment = SanitizePathSegment(plan.SelectedTask.TaskId);
-            var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-            var path = System.IO.Path.Combine(root, $"basics-ui-{taskSegment}-{timestamp}.jsonl");
-            var writer = new StreamWriter(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read))
-            {
-                AutoFlush = true
-            };
+            var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fffffff", CultureInfo.InvariantCulture);
+            var retentionOptions = BasicsRunLogRetentionPolicy.FromEnvironment();
+            var retentionResult = BasicsRunLogRetentionPolicy.Apply(root, DateTimeOffset.UtcNow, retentionOptions);
+            var path = BuildRunLogPath(root, taskSegment, timestamp, segmentIndex: 0);
+            var writer = CreateWriter(path);
             return new BasicsExecutionRunLog(
+                root,
+                taskSegment,
+                timestamp,
                 path,
                 writer,
                 planTrace,
                 buildTrace,
-                ioAddress);
+                ioAddress,
+                retentionOptions,
+                retentionResult);
         }
 
         public void AppendRunStarted(BasicsEnvironmentPlan plan)
@@ -3651,6 +3674,14 @@ public sealed class MainWindowViewModel : ViewModelBase
                 timestampUtc,
                 traceSchemaVersion = BasicsTraceability.SchemaVersion,
                 ioAddress = _ioAddress,
+                runLog = new
+                {
+                    path = Path,
+                    rotationMaxFileBytes = _retentionOptions.MaxFileBytes,
+                    keepMarkerPath = Path + _retentionOptions.KeepMarkerSuffix,
+                    retentionOptions = _retentionOptions,
+                    retentionResult = _retentionResult
+                },
                 runtimeProcessMemory = CaptureRuntimeProcessMemory(timestampUtc, force: true),
                 taskId = plan.SelectedTask.TaskId,
                 taskDisplayName = plan.SelectedTask.DisplayName,
@@ -3786,7 +3817,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 var json = JsonSerializer.Serialize(record, JsonOptions);
                 lock (_gate)
                 {
-                    _writer.WriteLine(json);
+                    WriteJsonLineLocked(json, allowRotate: true);
                 }
             }
             catch
@@ -3794,6 +3825,62 @@ public sealed class MainWindowViewModel : ViewModelBase
                 // Best-effort run logging only.
             }
         }
+
+        private void WriteJsonLineLocked(string json, bool allowRotate)
+        {
+            var bytes = Encoding.UTF8.GetByteCount(json) + NewLineByteCount;
+            if (allowRotate
+                && _currentFileBytes > 0
+                && _currentFileBytes + bytes > _retentionOptions.MaxFileBytes)
+            {
+                RotateLocked();
+            }
+
+            _writer.WriteLine(json);
+            _currentFileBytes += bytes;
+        }
+
+        private void RotateLocked()
+        {
+            var previousPath = Path;
+            _writer.Dispose();
+            _segmentIndex++;
+            Path = BuildRunLogPath(_root, _taskSegment, _timestampSegment, _segmentIndex);
+            _writer = CreateWriter(Path);
+            _currentFileBytes = 0;
+            var timestampUtc = DateTimeOffset.UtcNow;
+            var retentionResult = BasicsRunLogRetentionPolicy.Apply(
+                _root,
+                timestampUtc,
+                _retentionOptions,
+                new HashSet<string>(StringComparer.Ordinal) { Path });
+
+            var json = JsonSerializer.Serialize(
+                new
+                {
+                    eventType = "run_log_rotated",
+                    timestampUtc,
+                    previousPath,
+                    path = Path,
+                    segmentIndex = _segmentIndex,
+                    rotationMaxFileBytes = _retentionOptions.MaxFileBytes,
+                    keepMarkerPath = Path + _retentionOptions.KeepMarkerSuffix,
+                    retentionResult
+                },
+                JsonOptions);
+            WriteJsonLineLocked(json, allowRotate: false);
+        }
+
+        private static StreamWriter CreateWriter(string path)
+            => new(new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+            {
+                AutoFlush = true
+            };
+
+        private static string BuildRunLogPath(string root, string taskSegment, string timestamp, int segmentIndex)
+            => segmentIndex <= 0
+                ? System.IO.Path.Combine(root, $"basics-ui-{taskSegment}-{timestamp}.jsonl")
+                : System.IO.Path.Combine(root, $"basics-ui-{taskSegment}-{timestamp}.part{segmentIndex:000}.jsonl");
 
         private static string ResolveRunLogRoot()
         {
