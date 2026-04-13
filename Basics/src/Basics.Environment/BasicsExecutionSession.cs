@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
@@ -892,6 +893,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     explicitSpeciesId: template.SpeciesId,
                     explicitSpeciesDisplayName: template.SpeciesDisplayName,
                     decisionReason: "basics_seed_template",
+                    decisionMetadataJson: null,
                     cancellationToken)
                 .ConfigureAwait(false);
             for (var copyIndex = 0; copyIndex < template.ExactCopies && population.Count < targetPopulation; copyIndex++)
@@ -1090,34 +1092,35 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
-            foreach (var childDefinition in ExtractChildDefinitions(seedResult))
+            foreach (var child in ExtractChildDefinitions(seedResult))
             {
                 if (children.Count >= targetChildCount)
                 {
                     break;
                 }
 
-                if (!seenDefinitionShas.Add(childDefinition.ToSha256Hex()))
+                if (!seenDefinitionShas.Add(child.Definition.ToSha256Hex()))
                 {
                     duplicateDefinitionCount++;
                     continue;
                 }
 
-                var childComplexity = await ResolveDefinitionComplexityAsync(childDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
-                if (!await IsAcceptableInitialSeedAsync(childDefinition, childComplexity, plan.SeedTemplate.InitialSeedShapeConstraints, cancellationToken).ConfigureAwait(false))
+                var childComplexity = await ResolveDefinitionComplexityAsync(child.Definition, knownShape: null, cancellationToken).ConfigureAwait(false);
+                if (!await IsAcceptableInitialSeedAsync(child.Definition, childComplexity, plan.SeedTemplate.InitialSeedShapeConstraints, cancellationToken).ConfigureAwait(false))
                 {
                     continue;
                 }
                 var membership = await CommitArtifactMembershipAsync(
-                        childDefinition,
+                        child.Definition,
                         new[] { CreateSpeciationParentRef(template.Definition), CreateSpeciationParentRef(template.Definition) },
                         explicitSpeciesId: null,
                         explicitSpeciesDisplayName: null,
                         decisionReason: "basics_seed_child",
+                        decisionMetadataJson: BuildSpeciationDecisionMetadataJson(child.Report),
                         cancellationToken)
                     .ConfigureAwait(false);
                 children.Add(new PopulationMember(
-                    childDefinition.Clone(),
+                    child.Definition.Clone(),
                     membership.SpeciesId,
                     membership.SpeciesDisplayName,
                     childComplexity,
@@ -2947,21 +2950,21 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ? runCount
                 : result.RequestedRunCount;
             onReproductionObserved?.Invoke(observedRunCount);
-            foreach (var childDefinition in ExtractChildDefinitions(result))
+            foreach (var child in ExtractChildDefinitions(result))
             {
                 if (nextGeneration.Count >= targetPopulation)
                 {
                     break;
                 }
 
-                if (!seenDefinitionShas.Add(childDefinition.ToSha256Hex()))
+                if (!seenDefinitionShas.Add(child.Definition.ToSha256Hex()))
                 {
                     duplicateChildDefinitionCount++;
                     continue;
                 }
-                var childComplexity = await ResolveDefinitionComplexityAsync(childDefinition, knownShape: null, cancellationToken).ConfigureAwait(false);
+                var childComplexity = await ResolveDefinitionComplexityAsync(child.Definition, knownShape: null, cancellationToken).ConfigureAwait(false);
                 var membership = await CommitArtifactMembershipAsync(
-                        childDefinition,
+                        child.Definition,
                         new[]
                         {
                             CreateSpeciationParentRef(parentA.Definition, parentA.ActiveBrainId),
@@ -2970,10 +2973,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         explicitSpeciesId: null,
                         explicitSpeciesDisplayName: null,
                         decisionReason: "basics_generation_child",
+                        decisionMetadataJson: BuildSpeciationDecisionMetadataJson(child.Report),
                         cancellationToken)
                     .ConfigureAwait(false);
                 var childMember = new PopulationMember(
-                    childDefinition.Clone(),
+                    child.Definition.Clone(),
                     membership.SpeciesId,
                     membership.SpeciesDisplayName,
                     childComplexity,
@@ -3502,6 +3506,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         string? explicitSpeciesId,
         string? explicitSpeciesDisplayName,
         string decisionReason,
+        string? decisionMetadataJson,
         CancellationToken cancellationToken)
     {
         var request = new ProtoSpec.SpeciationAssignRequest
@@ -3514,7 +3519,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             SpeciesId = explicitSpeciesId ?? string.Empty,
             SpeciesDisplayName = explicitSpeciesDisplayName ?? string.Empty,
             DecisionReason = decisionReason,
-            DecisionMetadataJson = "{}"
+            DecisionMetadataJson = string.IsNullOrWhiteSpace(decisionMetadataJson)
+                ? "{}"
+                : decisionMetadataJson
         };
 
         foreach (var parent in parents)
@@ -3558,12 +3565,19 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         };
 
     private static ProtoSpec.SpeciationParentRef CreateSpeciationParentRef(ArtifactRef definition, Guid activeBrainId)
-        => activeBrainId != Guid.Empty
+    {
+        if (HasArtifactRef(definition))
+        {
+            return CreateSpeciationParentRef(definition);
+        }
+
+        return activeBrainId != Guid.Empty
             ? new ProtoSpec.SpeciationParentRef
             {
                 BrainId = activeBrainId.ToProtoUuid()
             }
-            : CreateSpeciationParentRef(definition);
+            : new ProtoSpec.SpeciationParentRef();
+    }
 
     private static string ResolveSpeciationParentFallbackSpeciesId(ProtoSpec.SpeciationParentRef parent)
     {
@@ -3641,9 +3655,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return Math.Clamp(normalized * ceiling, 0.01f, ceiling);
     }
 
-    private static IReadOnlyList<ArtifactRef> ExtractChildDefinitions(Repro.ReproduceResult? result)
+    private static IReadOnlyList<ReproductionChildDefinition> ExtractChildDefinitions(Repro.ReproduceResult? result)
     {
-        var definitions = new List<ArtifactRef>();
+        var definitions = new List<ReproductionChildDefinition>();
         var seenDefinitionShas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (result is null)
         {
@@ -3652,19 +3666,49 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         if (HasArtifactRef(result.ChildDef) && seenDefinitionShas.Add(result.ChildDef.ToSha256Hex()))
         {
-            definitions.Add(result.ChildDef.Clone());
+            definitions.Add(new ReproductionChildDefinition(result.ChildDef.Clone(), result.Report?.Clone()));
         }
 
         foreach (var run in result.Runs)
         {
             if (HasArtifactRef(run.ChildDef) && seenDefinitionShas.Add(run.ChildDef.ToSha256Hex()))
             {
-                definitions.Add(run.ChildDef.Clone());
+                definitions.Add(new ReproductionChildDefinition(run.ChildDef.Clone(), run.Report?.Clone()));
             }
         }
 
         return definitions;
     }
+
+    private static string BuildSpeciationDecisionMetadataJson(Repro.SimilarityReport? report)
+    {
+        if (report is null)
+        {
+            return "{}";
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            lineage = new
+            {
+                lineage_similarity_score = ClampSimilarityScore(report.LineageSimilarityScore),
+                parent_a_similarity_score = ClampSimilarityScore(report.LineageParentASimilarityScore),
+                parent_b_similarity_score = ClampSimilarityScore(report.LineageParentBSimilarityScore)
+            },
+            similarity_score = ClampSimilarityScore(report.SimilarityScore),
+            function_score = ClampSimilarityScore(report.FunctionScore),
+            connectivity_score = ClampSimilarityScore(report.ConnectivityScore),
+            region_span_score = ClampSimilarityScore(report.RegionSpanScore),
+            report = new
+            {
+                compatible = report.Compatible,
+                abort_reason = report.AbortReason ?? string.Empty
+            }
+        });
+    }
+
+    private static float ClampSimilarityScore(float value)
+        => float.IsFinite(value) ? Math.Clamp(value, 0f, 1f) : 0f;
 
     private static bool HasArtifactRef(ArtifactRef? artifactRef)
         => artifactRef is not null && artifactRef.TryToSha256Bytes(out _);
@@ -4819,6 +4863,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         PopulationMember Member,
         float NormalizedFitnessHint,
         float NormalizedNoveltyHint);
+
+    private sealed record ReproductionChildDefinition(
+        ArtifactRef Definition,
+        Repro.SimilarityReport? Report);
 
     private readonly record struct CandidateSelection(
         PopulationMember Member,

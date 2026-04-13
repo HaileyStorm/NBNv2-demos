@@ -9,6 +9,7 @@ using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Validation;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Repro = Nbn.Proto.Repro;
 using System.Reflection;
 using System.Collections.Concurrent;
@@ -133,6 +134,10 @@ public sealed class BasicsExecutionSessionTests
             Assert.True(runtimeClient.SpeciationEpochStartedBeforeFirstReproduce);
             Assert.Empty(runtimeClient.SetOutputVectorSourceRequests);
             Assert.True(runtimeClient.VectorSubscriptionCount > 0);
+            var seedChildAssignment = Assert.Single(
+                runtimeClient.SpeciationAssignRequests,
+                request => string.Equals(request.DecisionReason, "basics_seed_child", StringComparison.Ordinal));
+            AssertSpeciationMetadataIncludesLineageScores(seedChildAssignment.DecisionMetadataJson);
             Assert.Contains(snapshots, snapshot => snapshot.State == BasicsExecutionState.Running);
             Assert.True(final.AccuracyHistory.Count >= 2);
         }
@@ -2512,7 +2517,7 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public void ExecutionSession_SpeciationParentRef_PrefersLiveBrainId_WhenAvailable()
+    public void ExecutionSession_SpeciationParentRef_PrefersArtifactRef_WhenDefinitionIsAvailable()
     {
         var helper = typeof(BasicsExecutionSession).GetMethod(
             "CreateSpeciationParentRef",
@@ -2525,13 +2530,112 @@ public sealed class BasicsExecutionSessionTests
         var artifact = new string('a', 64).ToArtifactRef(256, "application/x-nbn", "http://fake-store/parent");
         var liveBrainId = Guid.NewGuid();
 
-        var liveParent = Assert.IsType<SpeciationParentRef>(helper!.Invoke(null, new object[] { artifact, liveBrainId }));
-        Assert.Equal(SpeciationParentRef.ParentOneofCase.BrainId, liveParent.ParentCase);
-        Assert.Equal(liveBrainId, liveParent.BrainId.ToGuid());
-
-        var artifactParent = Assert.IsType<SpeciationParentRef>(helper.Invoke(null, new object[] { artifact, Guid.Empty }));
+        var artifactParent = Assert.IsType<SpeciationParentRef>(helper!.Invoke(null, new object[] { artifact, liveBrainId }));
         Assert.Equal(SpeciationParentRef.ParentOneofCase.ArtifactRef, artifactParent.ParentCase);
         Assert.Equal(artifact.ToSha256Hex(), artifactParent.ArtifactRef.ToSha256Hex());
+
+        var fallbackParent = Assert.IsType<SpeciationParentRef>(helper.Invoke(null, new object[] { new ArtifactRef(), liveBrainId }));
+        Assert.Equal(SpeciationParentRef.ParentOneofCase.BrainId, fallbackParent.ParentCase);
+        Assert.Equal(liveBrainId, fallbackParent.BrainId.ToGuid());
+    }
+
+    [Fact]
+    public async Task ExecutionSession_GenerationChildSpeciationAssignments_UseArtifactParentsAndLineageMetadata()
+    {
+        await using var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "zero",
+            UseUniqueReproductionChildDefinitions = true
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var seedBytes = runtimeClient.CreateDefinitionBytes("zero");
+            var final = await session.RunAsync(
+                CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        TargetAccuracy = 1.1f,
+                        TargetFitness = 1.1f,
+                        MaximumGenerations = 2
+                    }) with
+                {
+                    InitialBrainSeeds =
+                    [
+                        new BasicsInitialBrainSeed(
+                            "zero-seed",
+                            seedBytes,
+                            DuplicateForReproduction: false,
+                            BasicsDefinitionAnalyzer.Analyze(seedBytes).Complexity)
+                    ],
+                    SizingOverrides = new BasicsSizingOverrides
+                    {
+                        InitialPopulationCount = 2,
+                        MinimumPopulationCount = 2,
+                        MaximumPopulationCount = 3
+                    }
+                },
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.True(
+                final.State is BasicsExecutionState.Stopped or BasicsExecutionState.Succeeded,
+                $"Expected a clean terminal state, observed {final.State}.");
+            var generationChildAssignments = runtimeClient.SpeciationAssignRequests
+                .Where(static request => string.Equals(request.DecisionReason, "basics_generation_child", StringComparison.Ordinal))
+                .ToArray();
+            Assert.NotEmpty(generationChildAssignments);
+            Assert.All(generationChildAssignments, request =>
+            {
+                Assert.All(
+                    request.Parents,
+                    parent => Assert.Equal(SpeciationParentRef.ParentOneofCase.ArtifactRef, parent.ParentCase));
+                AssertSpeciationMetadataIncludesLineageScores(request.DecisionMetadataJson);
+            });
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public void ExecutionSession_SpeciationMetadata_SanitizesNonFiniteSimilarityScores()
+    {
+        var helper = typeof(BasicsExecutionSession).GetMethod(
+            "BuildSpeciationDecisionMetadataJson",
+            BindingFlags.NonPublic | BindingFlags.Static,
+            binder: null,
+            types: new[] { typeof(Repro.SimilarityReport) },
+            modifiers: null);
+        Assert.NotNull(helper);
+
+        var json = Assert.IsType<string>(helper!.Invoke(null, new object[]
+        {
+            new Repro.SimilarityReport
+            {
+                SimilarityScore = float.NaN,
+                FunctionScore = float.PositiveInfinity,
+                ConnectivityScore = float.NegativeInfinity,
+                RegionSpanScore = float.NaN,
+                LineageSimilarityScore = float.NaN,
+                LineageParentASimilarityScore = float.PositiveInfinity,
+                LineageParentBSimilarityScore = float.NegativeInfinity
+            }
+        }));
+
+        using var metadata = JsonDocument.Parse(json);
+        var lineage = metadata.RootElement.GetProperty("lineage");
+        Assert.Equal(0f, lineage.GetProperty("lineage_similarity_score").GetSingle());
+        Assert.Equal(0f, lineage.GetProperty("parent_a_similarity_score").GetSingle());
+        Assert.Equal(0f, lineage.GetProperty("parent_b_similarity_score").GetSingle());
+        Assert.Equal(0f, metadata.RootElement.GetProperty("similarity_score").GetSingle());
+        Assert.Equal(0f, metadata.RootElement.GetProperty("function_score").GetSingle());
+        Assert.Equal(0f, metadata.RootElement.GetProperty("connectivity_score").GetSingle());
+        Assert.Equal(0f, metadata.RootElement.GetProperty("region_span_score").GetSingle());
     }
 
     private static BasicsEnvironmentPlan CreatePlan(
@@ -2564,6 +2668,15 @@ public sealed class BasicsExecutionSessionTests
                 Metrics: BasicsMetricsContract.Default,
             StopCriteria: stopCriteria ?? new BasicsExecutionStopCriteria(),
             PlannedAtUtc: DateTimeOffset.UtcNow);
+    }
+
+    private static void AssertSpeciationMetadataIncludesLineageScores(string metadataJson)
+    {
+        using var metadata = JsonDocument.Parse(metadataJson);
+        var lineage = metadata.RootElement.GetProperty("lineage");
+        Assert.True(lineage.GetProperty("lineage_similarity_score").GetSingle() > 0f);
+        Assert.True(lineage.GetProperty("parent_a_similarity_score").GetSingle() > 0f);
+        Assert.True(lineage.GetProperty("parent_b_similarity_score").GetSingle() > 0f);
     }
 
     private static BasicsExecutionSession CreateSession(
@@ -2663,6 +2776,7 @@ public sealed class BasicsExecutionSessionTests
         public TimeSpan ResumeOutputActivationDelay { get; init; }
         public TimeSpan ReproduceDelay { get; init; }
         public string DefaultBehavior { get; init; } = "zero";
+        public bool UseUniqueReproductionChildDefinitions { get; init; }
         public bool OnlyEmitOutputVectorOnChange { get; init; }
         public int ReadySignalDelayTicks { get; init; } = 1;
         public float PreReadyOutputValue { get; init; }
@@ -3270,16 +3384,21 @@ public sealed class BasicsExecutionSessionTests
                 var behavior = ReproduceCallCount >= 2 ? "and" : DefaultBehavior;
                 var child = ReuseSingleChildArtifactOnReproduce
                     ? (_reusedReproduceChildArtifact ??= CreateStoredDefinition(_childIndex++, behavior).Artifact).Clone()
-                    : CreateStoredDefinition(_childIndex++, behavior).Artifact;
+                    : UseUniqueReproductionChildDefinitions
+                        ? CreateUniqueStoredDefinition(_childIndex++, behavior).Artifact
+                        : CreateStoredDefinition(_childIndex++, behavior).Artifact;
+                var report = CreateSimilarityReport(0.72f + (runIndex * 0.01f));
                 result.Runs.Add(new Repro.ReproduceRunOutcome
                 {
                     RunIndex = (uint)runIndex,
                     ChildDef = child.Clone(),
-                    Spawned = false
+                    Spawned = false,
+                    Report = report.Clone()
                 });
                 if (runIndex == 0)
                 {
                     result.ChildDef = child.Clone();
+                    result.Report = report.Clone();
                 }
             }
 
@@ -3306,6 +3425,19 @@ public sealed class BasicsExecutionSessionTests
                 RequestedRunCount = 1
             });
         }
+
+        private static Repro.SimilarityReport CreateSimilarityReport(float lineageSimilarity)
+            => new()
+            {
+                Compatible = true,
+                RegionSpanScore = 1f,
+                FunctionScore = 0.82f,
+                ConnectivityScore = 0.76f,
+                SimilarityScore = Math.Clamp(lineageSimilarity, 0f, 1f),
+                LineageSimilarityScore = Math.Clamp(lineageSimilarity, 0f, 1f),
+                LineageParentASimilarityScore = Math.Clamp(lineageSimilarity + 0.02f, 0f, 1f),
+                LineageParentBSimilarityScore = Math.Clamp(lineageSimilarity - 0.02f, 0f, 1f)
+            };
 
         public Task<SpeciationAssignResponse?> AssignSpeciationAsync(
             SpeciationAssignRequest request,
@@ -3402,6 +3534,22 @@ public sealed class BasicsExecutionSessionTests
                         MinInternalNeuronCount = 2,
                         MinAxonCount = 5
                     }
+            };
+            var build = BasicsTemplateArtifactBuilder.Build(template);
+            var artifact = StoreArtifact(build.Bytes, "application/x-nbn");
+            _behaviorByArtifactSha[artifact.ToSha256Hex()] = behavior;
+            return (build.Bytes, artifact);
+        }
+
+        private (byte[] Bytes, ArtifactRef Artifact) CreateUniqueStoredDefinition(int index, string behavior)
+        {
+            var template = BasicsSeedTemplateContract.CreateDefault() with
+            {
+                InitialSeedShapeConstraints = new BasicsSeedShapeConstraints
+                {
+                    MinInternalNeuronCount = Math.Max(1, index + 1),
+                    MinAxonCount = Math.Max(3, index + 4)
+                }
             };
             var build = BasicsTemplateArtifactBuilder.Build(template);
             var artifact = StoreArtifact(build.Bytes, "application/x-nbn");
