@@ -3601,7 +3601,6 @@ public sealed class MainWindowViewModel : ViewModelBase
         private readonly BasicsExecutionPlanTraceRecord _planTrace;
         private readonly BasicsBuildTraceRecord _buildTrace;
         private readonly string _ioAddress;
-        private IReadOnlyList<RuntimeProcessMemoryTraceRecord> _lastRuntimeProcessMemory = Array.Empty<RuntimeProcessMemoryTraceRecord>();
         private DateTimeOffset _nextRuntimeProcessMemorySampleUtc = DateTimeOffset.MinValue;
 
         private BasicsExecutionRunLog(
@@ -3702,10 +3701,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 snapshot.OffspringBestFitness,
                 snapshot.BestFitness,
                 snapshot.MeanFitness,
-                offspringAccuracyHistory = snapshot.OffspringAccuracyHistory.ToArray(),
-                accuracyHistory = snapshot.AccuracyHistory.ToArray(),
-                offspringFitnessHistory = snapshot.OffspringFitnessHistory.ToArray(),
-                bestFitnessHistory = snapshot.BestFitnessHistory.ToArray(),
+                historySummary = BuildSnapshotHistorySummary(snapshot),
                 latestBatchTiming = snapshot.LatestBatchTiming,
                 latestGenerationTiming = snapshot.LatestGenerationTiming,
                 bootstrapCandidateTraces = snapshot.BootstrapCandidateTraces.Select(trace => new
@@ -3739,16 +3735,40 @@ public sealed class MainWindowViewModel : ViewModelBase
             });
         }
 
-        private IReadOnlyList<RuntimeProcessMemoryTraceRecord> CaptureRuntimeProcessMemory(DateTimeOffset timestampUtc, bool force)
+        private IReadOnlyList<RuntimeProcessMemoryTraceRecord>? CaptureRuntimeProcessMemory(DateTimeOffset timestampUtc, bool force)
         {
             if (!force && timestampUtc < _nextRuntimeProcessMemorySampleUtc)
             {
-                return _lastRuntimeProcessMemory;
+                return null;
             }
 
-            _lastRuntimeProcessMemory = RuntimeProcessMemoryTraceRecord.Capture(timestampUtc);
             _nextRuntimeProcessMemorySampleUtc = timestampUtc + RuntimeProcessMemorySampleInterval;
-            return _lastRuntimeProcessMemory;
+            return RuntimeProcessMemoryTraceRecord.Capture(timestampUtc);
+        }
+
+        private static SnapshotHistoryTraceRecord BuildSnapshotHistorySummary(BasicsExecutionSnapshot snapshot)
+            => new(
+                OffspringAccuracy: BuildHistorySeriesTrace(snapshot.OffspringAccuracyHistory),
+                BestAccuracy: BuildHistorySeriesTrace(snapshot.AccuracyHistory),
+                OffspringBalancedAccuracy: BuildHistorySeriesTrace(snapshot.OffspringBalancedAccuracyHistory),
+                BestBalancedAccuracy: BuildHistorySeriesTrace(snapshot.BalancedAccuracyHistory),
+                OffspringEdgeAccuracy: BuildHistorySeriesTrace(snapshot.OffspringEdgeAccuracyHistory),
+                OffspringInteriorAccuracy: BuildHistorySeriesTrace(snapshot.OffspringInteriorAccuracyHistory),
+                OffspringFitness: BuildHistorySeriesTrace(snapshot.OffspringFitnessHistory),
+                BestFitness: BuildHistorySeriesTrace(snapshot.BestFitnessHistory));
+
+        private static HistorySeriesTraceRecord BuildHistorySeriesTrace(IReadOnlyList<float> history)
+        {
+            if (history.Count == 0)
+            {
+                return new HistorySeriesTraceRecord(0, null, null, null);
+            }
+
+            return new HistorySeriesTraceRecord(
+                Count: history.Count,
+                Latest: history[^1],
+                Minimum: history.Min(),
+                Maximum: history.Max());
         }
 
         public void Dispose()
@@ -3816,6 +3836,22 @@ public sealed class MainWindowViewModel : ViewModelBase
             return new string(chars);
         }
     }
+
+    private sealed record SnapshotHistoryTraceRecord(
+        HistorySeriesTraceRecord OffspringAccuracy,
+        HistorySeriesTraceRecord BestAccuracy,
+        HistorySeriesTraceRecord OffspringBalancedAccuracy,
+        HistorySeriesTraceRecord BestBalancedAccuracy,
+        HistorySeriesTraceRecord OffspringEdgeAccuracy,
+        HistorySeriesTraceRecord OffspringInteriorAccuracy,
+        HistorySeriesTraceRecord OffspringFitness,
+        HistorySeriesTraceRecord BestFitness);
+
+    private sealed record HistorySeriesTraceRecord(
+        int Count,
+        float? Latest,
+        float? Minimum,
+        float? Maximum);
 
     private sealed record RuntimeProcessMemoryTraceRecord(
         DateTimeOffset SampledAtUtc,

@@ -77,6 +77,14 @@
 - Keep demo-specific docs near the demo root; do not create duplicate copies of canonical NBN contracts here.
 - If a demo needs generated client code or vendored schema snapshots, document the source path in `../NBNv2` and the regeneration command.
 
+## Demo artifact and run-log safety
+
+- Basics UI run logs under `Basics/artifacts/ui-runs/*.jsonl` can become very large and contain long single-line snapshots with cumulative histories and memory samples.
+- Before inspecting demo artifacts, check file sizes first. Do not run broad `rg`/`grep` searches over live or large JSONL run logs.
+- Inspect current runs with bounded commands such as `tail -n <small N> Basics/artifacts/ui-runs/<run>.jsonl | jq -r '...'`, projecting only the fields needed for the question.
+- If searching older runs is necessary, narrow by file name and modification time first, and exclude or size-cap very large JSONL files. Avoid recursive searches over `Basics/artifacts` unless the command is explicitly bounded.
+- For common diagnostics such as `failure`, `timeout`, `ready_window_exhausted`, or `memory`, prefer structured `jq` filters over raw text search so repeated full-history snapshot lines do not explode match output or memory use.
+
 ## External World interface fundamentals
 
 - External World integration is actor-based: clients interact with NBN through Proto.Actor remoting over gRPC using NBN protobuf message types.
