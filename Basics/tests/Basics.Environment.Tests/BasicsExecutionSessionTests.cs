@@ -1103,6 +1103,46 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task SelectBestCandidateSummary_PrefersHigherBalancedAccuracy_WhenCompositeSignalIsLower()
+    {
+        await using var runtimeClient = new FakeBasicsRuntimeClient();
+        var method = typeof(BasicsExecutionSession).GetMethod("SelectBestCandidateSummary", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var edgeHeavyBaseline = CreateBestCandidateSummary(
+            runtimeClient,
+            "multiplication",
+            accuracy: 0.4489796f,
+            fitness: 0.46092618f,
+            scoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+            {
+                ["task_accuracy"] = 0.4489796f,
+                ["balanced_tolerance_accuracy"] = 0.38583332f,
+                ["edge_tolerance_accuracy"] = 0.5833333f,
+                ["interior_tolerance_accuracy"] = 0.32f,
+                ["ready_confidence"] = 1f
+            });
+        var balancedRecord = CreateBestCandidateSummary(
+            runtimeClient,
+            "multiplication",
+            accuracy: 0.42857143f,
+            fitness: 0.49584308f,
+            scoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+            {
+                ["task_accuracy"] = 0.42857143f,
+                ["balanced_tolerance_accuracy"] = 0.43416664f,
+                ["edge_tolerance_accuracy"] = 0.25f,
+                ["interior_tolerance_accuracy"] = 0.49555555f,
+                ["ready_confidence"] = 1f
+            });
+
+        var selected = Assert.IsType<BasicsExecutionBestCandidateSummary>(
+            method!.Invoke(null, new object?[] { edgeHeavyBaseline, balancedRecord }));
+
+        Assert.Equal(balancedRecord.ArtifactSha256, selected.ArtifactSha256);
+    }
+
+    [Fact]
     public async Task SelectBestCandidateSummary_UsesBehaviorOccupancy_AsBoundedTieBreaker()
     {
         await using var runtimeClient = new FakeBasicsRuntimeClient();

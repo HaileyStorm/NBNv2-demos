@@ -4603,18 +4603,18 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return viabilityComparison;
         }
 
+        var recordScoreComparison = ResolveCandidateRecordScore(candidate)
+            .CompareTo(ResolveCandidateRecordScore(baseline));
+        if (recordScoreComparison != 0)
+        {
+            return recordScoreComparison;
+        }
+
         var selectionSignalComparison = ResolveCandidateSelectionSignal(candidate)
             .CompareTo(ResolveCandidateSelectionSignal(baseline));
         if (selectionSignalComparison != 0)
         {
             return selectionSignalComparison;
-        }
-
-        var selectionAccuracyComparison = ResolveCandidateSelectionAccuracy(candidate)
-            .CompareTo(ResolveCandidateSelectionAccuracy(baseline));
-        if (selectionAccuracyComparison != 0)
-        {
-            return selectionAccuracyComparison;
         }
 
         var fitnessComparison = candidate.Fitness.CompareTo(baseline.Fitness);
@@ -5022,6 +5022,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
     private static float ResolveCandidateSelectionSignal(BasicsExecutionBestCandidateSummary candidate)
         => ResolveCandidateSelectionSignal(candidate.Fitness, candidate.Accuracy, candidate.ScoreBreakdown);
+
+    private static float ResolveCandidateRecordScore(BasicsExecutionBestCandidateSummary candidate)
+        => Math.Clamp(
+            ResolveReadyConfidenceMultiplier(candidate.ScoreBreakdown)
+            * ResolveCandidateSelectionAccuracy(candidate),
+            0f,
+            1f);
 
     private static float ResolveParentSelectionSignal(BasicsTaskEvaluationResult? evaluation)
         => evaluation is null
