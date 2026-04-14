@@ -5,6 +5,7 @@ namespace Nbn.Demos.Basics.Tasks;
 internal static class BasicsTaskPluginScoring
 {
     private const float TargetProximityScale = 8f;
+    private const float ReadyConfidenceFitnessFloor = 0.05f;
 
     public static BasicsTaskEvaluationResult EvaluateBooleanDataset(
         BasicsTaskContract contract,
@@ -370,6 +371,7 @@ internal static class BasicsTaskPluginScoring
             ["mean_absolute_error"] = meanAbsoluteError,
             ["mean_squared_error"] = meanSquaredError,
             ["target_proximity_fitness"] = targetProximityFitness,
+            ["ready_confidence"] = ComputeReadyConfidence(outcomes),
             ["dataset_coverage"] = 1f
         };
 
@@ -387,7 +389,7 @@ internal static class BasicsTaskPluginScoring
         float accuracy,
         IReadOnlyDictionary<string, float> breakdown)
     {
-        var fitness = ComputeSharedFitness(accuracy, breakdown);
+        var fitness = ApplyReadyConfidenceFitness(ComputeSharedFitness(accuracy, breakdown), breakdown);
 
         return new BasicsTaskEvaluationResult(
             Fitness: fitness,
@@ -408,10 +410,10 @@ internal static class BasicsTaskPluginScoring
         var unitProductScore = 1f - Math.Clamp(breakdown["unit_product_gap"], 0f, 1f);
         var midrangeScore = 1f - Math.Clamp(breakdown["midrange_mean_absolute_error"], 0f, 1f);
         var structuredRegressionScore = (0.55f * unitProductScore) + (0.45f * midrangeScore);
-        var fitness = Math.Clamp(
+        var fitness = ApplyReadyConfidenceFitness(Math.Clamp(
             sharedFitness * (0.35f + (0.65f * structuredRegressionScore)),
             0f,
-            1f);
+            1f), breakdown);
 
         return new BasicsTaskEvaluationResult(
             Fitness: fitness,
@@ -450,10 +452,10 @@ internal static class BasicsTaskPluginScoring
             + (0.20f * midrangeScore),
             0f,
             1f);
-        var fitness = Math.Clamp(
+        var fitness = ApplyReadyConfidenceFitness(Math.Clamp(
             sharedFitness * (0.25f + (0.75f * structuredRegressionScore)),
             0f,
-            1f);
+            1f), breakdown);
 
         return new BasicsTaskEvaluationResult(
             Fitness: fitness,
@@ -503,6 +505,7 @@ internal static class BasicsTaskPluginScoring
             ["mean_absolute_error"] = 1f,
             ["mean_squared_error"] = 1f,
             ["target_proximity_fitness"] = 0f,
+            ["ready_confidence"] = 0f,
             ["dataset_coverage"] = 0f
         };
 
@@ -523,4 +526,26 @@ internal static class BasicsTaskPluginScoring
         BasicsTaskSample Sample,
         BasicsTaskObservation Observation,
         float Delta);
+
+    private static float ComputeReadyConfidence(IReadOnlyList<DeterministicScalarOutcome> outcomes)
+        => outcomes.Count == 0
+            ? 0f
+            : Math.Clamp(
+                outcomes.Average(static outcome => ClampUnitFinite(outcome.Observation.ReadyConfidence)),
+                0f,
+                1f);
+
+    private static float ApplyReadyConfidenceFitness(
+        float fitness,
+        IReadOnlyDictionary<string, float> breakdown)
+    {
+        var readyConfidence = breakdown.TryGetValue("ready_confidence", out var value)
+            ? ClampUnitFinite(value)
+            : 1f;
+        var multiplier = ReadyConfidenceFitnessFloor + ((1f - ReadyConfidenceFitnessFloor) * readyConfidence);
+        return Math.Clamp(fitness * multiplier, 0f, 1f);
+    }
+
+    private static float ClampUnitFinite(float value)
+        => float.IsFinite(value) ? Math.Clamp(value, 0f, 1f) : 0f;
 }

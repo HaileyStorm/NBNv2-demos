@@ -28,6 +28,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan DefaultBreedingProgressPublishInterval = TimeSpan.FromMilliseconds(250);
     private const uint ValueOutputIndex = 0;
     private const uint ReadyOutputIndex = 1;
+    private const float ReadyConfidenceSelectionFloor = 0.05f;
     private const int MaxMemberEvaluationAttempts = 3;
     private const int MinimumPopulationSize = 2;
 
@@ -2234,6 +2235,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         var tickCursor = afterTickExclusive;
         var vectorsSeen = 0;
+        BasicsRuntimeOutputVector? bestFallbackOutput = null;
+        var bestFallbackReadyConfidence = 0f;
         for (var observedTicks = 0; observedTicks < outputSamplingPolicy.MaxReadyWindowTicks; observedTicks++)
         {
             var output = await _runtimeClient.WaitForOutputVectorAsync(
@@ -2252,10 +2255,24 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
             tickCursor = output!.TickId;
             vectorsSeen++;
-            if (output.Values[(int)ReadyOutputIndex] >= outputSamplingPolicy.VectorReadyThreshold)
+            var readyConfidence = ResolveReadyConfidence(output);
+            if (readyConfidence >= outputSamplingPolicy.VectorReadyThreshold)
             {
                 return new ObservationAttemptResult(CreateObservation(output, vectorsSeen), null);
             }
+
+            if (readyConfidence > bestFallbackReadyConfidence || bestFallbackOutput is null)
+            {
+                bestFallbackOutput = output;
+                bestFallbackReadyConfidence = readyConfidence;
+            }
+        }
+
+        if (bestFallbackOutput is not null)
+        {
+            return new ObservationAttemptResult(
+                CreateObservation(bestFallbackOutput, vectorsSeen, bestFallbackReadyConfidence),
+                null);
         }
 
         return new ObservationAttemptResult(
@@ -2275,6 +2292,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var readyEventsSeen = 0;
         var vectorsByTick = new Dictionary<ulong, BasicsRuntimeOutputVector>();
         var readyTicks = new HashSet<ulong>();
+        BasicsRuntimeOutputVector? bestFallbackOutput = null;
+        var bestFallbackReadyConfidence = 0f;
         using var observationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var observationToken = observationCts.Token;
         var timeout = ResolveObservationTimeout(BasicsOutputObservationMode.EventedOutput);
@@ -2335,6 +2354,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     readyEventCursor);
                 if (failureDetail is not null)
                 {
+                    if (bestFallbackOutput is not null
+                        && IsVectorMissingFailure(failureDetail)
+                        && bestFallbackReadyConfidence >= outputSamplingPolicy.VectorReadyThreshold)
+                    {
+                        return new ObservationAttemptResult(
+                            CreateObservation(bestFallbackOutput, Math.Max(1, observedTicks)),
+                            null);
+                    }
+
                     return new ObservationAttemptResult(
                         null,
                         failureDetail);
@@ -2343,6 +2371,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 vectorsByTick[output!.TickId] = output;
                 vectorCursor = output.TickId;
                 observedTicks++;
+                var readyConfidence = ResolveReadyConfidence(output);
+                if (readyConfidence > bestFallbackReadyConfidence || bestFallbackOutput is null)
+                {
+                    bestFallbackOutput = output;
+                    bestFallbackReadyConfidence = readyConfidence;
+                }
+
                 if (TryResolveEarliestReadyObservation(vectorsByTick, readyTicks, out var readyObservation))
                 {
                     return new ObservationAttemptResult(readyObservation, null);
@@ -2356,6 +2391,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         timeout,
                         observationToken);
                 }
+            }
+
+            if (bestFallbackOutput is not null)
+            {
+                return new ObservationAttemptResult(
+                    CreateObservation(bestFallbackOutput, Math.Max(1, observedTicks), bestFallbackReadyConfidence),
+                    null);
             }
 
             return new ObservationAttemptResult(
@@ -2395,11 +2437,23 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static float[] CreateNeutralInputVector(uint inputWidth)
         => new float[checked((int)inputWidth)];
 
-    private static BasicsTaskObservation CreateObservation(BasicsRuntimeOutputVector output, int readyTickCount)
+    private static BasicsTaskObservation CreateObservation(
+        BasicsRuntimeOutputVector output,
+        int readyTickCount,
+        float readyConfidence = 1f)
         => new(
             output.TickId,
             output.Values[(int)ValueOutputIndex],
-            checked((float)Math.Max(1, readyTickCount)));
+            checked((float)Math.Max(1, readyTickCount)),
+            ClampUnitFinite(readyConfidence));
+
+    private static float ResolveReadyConfidence(BasicsRuntimeOutputVector output)
+        => output.Values.Count > (int)ReadyOutputIndex
+            ? ClampUnitFinite(output.Values[(int)ReadyOutputIndex])
+            : 0f;
+
+    private static bool IsVectorMissingFailure(string failureDetail)
+        => failureDetail.StartsWith("vector_missing", StringComparison.Ordinal);
 
     private static bool TryResolveEarliestReadyObservation(
         IReadOnlyDictionary<ulong, BasicsRuntimeOutputVector> vectorsByTick,
@@ -2450,7 +2504,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return new BasicsTaskObservation(
             TickId: observations[^1].TickId,
             OutputValue: observations.Average(static observation => observation.OutputValue),
-            ReadyTickCount: observations.Average(static observation => observation.ReadyTickCount));
+            ReadyTickCount: observations.Average(static observation => observation.ReadyTickCount),
+            ReadyConfidence: observations.Average(static observation => ClampUnitFinite(observation.ReadyConfidence)));
     }
 
     private static BasicsTaskEvaluationResult ApplyReadyTickMetrics(
@@ -4786,22 +4841,34 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         var selectionAccuracy = ResolveCandidateSelectionAccuracy(fallbackAccuracy, scoreBreakdown);
         var normalizedFitness = Math.Clamp(fitness, 0f, 1f);
+        var readyMultiplier = ResolveReadyConfidenceMultiplier(scoreBreakdown);
         if (scoreBreakdown.ContainsKey("balanced_tolerance_accuracy"))
         {
             var edgeAccuracy = ResolveAccuracyBreakdownMetric(scoreBreakdown, "edge_tolerance_accuracy", selectionAccuracy);
-            return Math.Clamp(
+            return Math.Clamp(readyMultiplier * (
                 (0.65f * selectionAccuracy)
                 + (0.25f * edgeAccuracy)
-                + (0.10f * normalizedFitness),
+                + (0.10f * normalizedFitness)),
                 0f,
                 1f);
         }
 
-        return Math.Clamp(
-            (0.75f * selectionAccuracy) + (0.25f * normalizedFitness),
+        return Math.Clamp(readyMultiplier * (
+            (0.75f * selectionAccuracy) + (0.25f * normalizedFitness)),
             0f,
             1f);
     }
+
+    private static float ResolveReadyConfidenceMultiplier(IReadOnlyDictionary<string, float> scoreBreakdown)
+    {
+        var readyConfidence = scoreBreakdown.TryGetValue("ready_confidence", out var value)
+            ? ClampUnitFinite(value)
+            : 1f;
+        return ReadyConfidenceSelectionFloor + ((1f - ReadyConfidenceSelectionFloor) * readyConfidence);
+    }
+
+    private static float ClampUnitFinite(float value)
+        => float.IsFinite(value) ? Math.Clamp(value, 0f, 1f) : 0f;
 
     private static float ResolveAccuracyBreakdownMetric(
         IReadOnlyDictionary<string, float> scoreBreakdown,

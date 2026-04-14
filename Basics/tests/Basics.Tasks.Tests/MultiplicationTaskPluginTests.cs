@@ -133,6 +133,54 @@ public sealed class MultiplicationTaskPluginTests
         Assert.True(strict.Fitness < relaxed.Fitness);
     }
 
+    [Fact]
+    public void Evaluate_PenalizesLowReadyConfidence()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var ready = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset
+                .Select((sample, index) => new BasicsTaskObservation((ulong)(index + 1), sample.ExpectedOutput))
+                .ToArray());
+        var almostNeverReady = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset
+                .Select((sample, index) => new BasicsTaskObservation(
+                    (ulong)(index + 1),
+                    sample.ExpectedOutput,
+                    ReadyTickCount: 1f,
+                    ReadyConfidence: 0.25f))
+                .ToArray());
+
+        Assert.Equal(1f, almostNeverReady.Accuracy);
+        Assert.Equal(0.25f, almostNeverReady.ScoreBreakdown["ready_confidence"]);
+        Assert.True(almostNeverReady.Fitness < ready.Fitness);
+        Assert.InRange(almostNeverReady.Fitness, 0.28f, 0.30f);
+    }
+
+    [Fact]
+    public void Evaluate_TreatsNonFiniteReadyConfidenceAsNotReady()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var result = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset
+                .Select((sample, index) => new BasicsTaskObservation(
+                    (ulong)(index + 1),
+                    sample.ExpectedOutput,
+                    ReadyTickCount: 1f,
+                    ReadyConfidence: float.NaN))
+                .ToArray());
+
+        Assert.True(float.IsFinite(result.Fitness));
+        Assert.Equal(1f, result.Accuracy);
+        Assert.Equal(0f, result.ScoreBreakdown["ready_confidence"]);
+        Assert.InRange(result.Fitness, 0.04f, 0.06f);
+    }
+
     private static BasicsTaskEvaluationContext CreateValidContext()
         => new(BasicsIoGeometry.InputWidth, BasicsIoGeometry.OutputWidth, TickAligned: true);
 }

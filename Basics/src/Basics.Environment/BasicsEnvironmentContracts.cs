@@ -751,7 +751,11 @@ public readonly record struct BasicsTaskSample(
     ulong DelayTicks = 0,
     string Label = "");
 
-public readonly record struct BasicsTaskObservation(ulong TickId, float OutputValue, float ReadyTickCount = 0f);
+public readonly record struct BasicsTaskObservation(
+    ulong TickId,
+    float OutputValue,
+    float ReadyTickCount = 0f,
+    float ReadyConfidence = 1f);
 
 public sealed record BasicsTaskEvaluationResult(
     float Fitness,

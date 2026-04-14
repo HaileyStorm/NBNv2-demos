@@ -437,7 +437,7 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public async Task ExecutionSession_EventedOutput_FailsWhenReadyEventIsMissing()
+    public async Task ExecutionSession_EventedOutput_UsesReadyVector_WhenReadyEventIsMissing()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
         {
@@ -454,8 +454,8 @@ public sealed class BasicsExecutionSessionTests
                 _ => { },
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Failed, final.State);
-            Assert.Contains("output_timeout_or_width_mismatch", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.Equal(1f, final.BestCandidate?.ScoreBreakdown["ready_confidence"]);
         }
         finally
         {
@@ -555,7 +555,7 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public async Task ExecutionSession_EventedOutput_DoesNotRetryReadyWindowExhaustedBrains()
+    public async Task ExecutionSession_EventedOutput_UsesPartialReadyVector_WhenReadyWindowExpires()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
         {
@@ -587,10 +587,10 @@ public sealed class BasicsExecutionSessionTests
                 snapshots.Add,
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Failed, final.State);
-            Assert.Contains("ready_window_exhausted", final.EvaluationFailureSummary, StringComparison.Ordinal);
-            Assert.Contains("ready_timeout", final.LatestBatchTiming?.FailureSummary, StringComparison.Ordinal);
-            Assert.Equal(2, runtimeClient.SpawnRequestCount);
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.Equal(0f, final.BestCandidate?.ScoreBreakdown["ready_confidence"]);
+            Assert.DoesNotContain("ready_window_exhausted", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.True(runtimeClient.SpawnRequestCount >= 2);
             Assert.DoesNotContain(
                 snapshots,
                 snapshot => snapshot.State == BasicsExecutionState.Running
@@ -644,7 +644,7 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public async Task ExecutionSession_FailsWhenReadySignalMissesConfiguredWindow()
+    public async Task ExecutionSession_ScoresLowConfidenceOutput_WhenReadySignalMissesConfiguredWindow()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
         {
@@ -668,9 +668,119 @@ public sealed class BasicsExecutionSessionTests
                 _ => { },
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.Equal(0, final.EvaluationFailureCount);
+            Assert.Equal(0f, final.BestCandidate?.ScoreBreakdown["ready_confidence"]);
+            Assert.DoesNotContain("ready_timeout", final.LatestBatchTiming?.FailureSummary ?? string.Empty, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_FailsWhenOutputStreamStopsBeforeReadyWindowCompletes()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            ReadySignalDelayTicks = 3,
+            PreReadyOutputValue = 0f,
+            MaxOutputVectorsPerInput = 1
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential) with
+                {
+                    OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                    {
+                        MaxReadyWindowTicks = 2
+                    }
+                },
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
             Assert.Equal(BasicsExecutionState.Failed, final.State);
-            Assert.Contains("output_timeout_or_width_mismatch", final.EvaluationFailureSummary, StringComparison.Ordinal);
-            Assert.Contains("ready_timeout", final.LatestBatchTiming?.FailureSummary, StringComparison.Ordinal);
+            Assert.Contains("vector_missing", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.True(final.EvaluationFailureCount > 0);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_EventedOutput_FailsWhenOutputStreamStopsBeforeReadyWindowCompletes()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            ReadySignalDelayTicks = 3,
+            PreReadyOutputValue = 0f,
+            MaxOutputVectorsPerInput = 1
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.EventedOutput) with
+                {
+                    OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                    {
+                        MaxReadyWindowTicks = 2
+                    }
+                },
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Contains("vector_missing", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.True(final.EvaluationFailureCount > 0);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_TreatsNonFiniteReadyLaneAsLowConfidence()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            ReadySignalDelayTicks = 2,
+            PreReadyOutputValue = 0f,
+            PreReadyReadyValue = float.PositiveInfinity
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential) with
+                {
+                    OutputSamplingPolicy = new BasicsOutputSamplingPolicy
+                    {
+                        MaxReadyWindowTicks = 1
+                    }
+                },
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.Equal(0, final.EvaluationFailureCount);
+            Assert.Equal(0f, final.BestCandidate?.ScoreBreakdown["ready_confidence"]);
+            Assert.True(float.IsFinite(final.BestFitness));
         }
         finally
         {
@@ -986,6 +1096,46 @@ public sealed class BasicsExecutionSessionTests
             method!.Invoke(null, new object?[] { baseline, challenger }));
 
         Assert.Equal(challenger.ArtifactSha256, selected.ArtifactSha256);
+    }
+
+    [Fact]
+    public async Task SelectBestCandidateSummary_PenalizesLowReadyConfidence()
+    {
+        await using var runtimeClient = new FakeBasicsRuntimeClient();
+        var method = typeof(BasicsExecutionSession).GetMethod("SelectBestCandidateSummary", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var notReady = CreateBestCandidateSummary(
+            runtimeClient,
+            "multiplication",
+            accuracy: 0.90f,
+            fitness: 0.90f,
+            scoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+            {
+                ["task_accuracy"] = 0.90f,
+                ["balanced_tolerance_accuracy"] = 0.90f,
+                ["edge_tolerance_accuracy"] = 0.90f,
+                ["interior_tolerance_accuracy"] = 0.90f,
+                ["ready_confidence"] = 0f
+            });
+        var ready = CreateBestCandidateSummary(
+            runtimeClient,
+            "multiplication",
+            accuracy: 0.70f,
+            fitness: 0.70f,
+            scoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+            {
+                ["task_accuracy"] = 0.70f,
+                ["balanced_tolerance_accuracy"] = 0.70f,
+                ["edge_tolerance_accuracy"] = 0.70f,
+                ["interior_tolerance_accuracy"] = 0.70f,
+                ["ready_confidence"] = 1f
+            });
+
+        var selected = Assert.IsType<BasicsExecutionBestCandidateSummary>(
+            method!.Invoke(null, new object?[] { notReady, ready }));
+
+        Assert.Equal(ready.ArtifactSha256, selected.ArtifactSha256);
     }
 
     [Fact]
@@ -2864,6 +3014,7 @@ public sealed class BasicsExecutionSessionTests
         public int ReadySignalDelayTicks { get; init; } = 1;
         public float PreReadyOutputValue { get; init; }
         public float PreReadyReadyValue { get; init; }
+        public int? MaxOutputVectorsPerInput { get; init; }
         public bool SuppressOutputVectors { get; init; }
         public bool SuppressReadyOutputEvents { get; init; }
         public bool SuppressPreReadyReadyOutputEvents { get; init; }
@@ -3126,6 +3277,7 @@ public sealed class BasicsExecutionSessionTests
             var readyDelayTicks = Math.Max(1, ReadySignalDelayTicks);
             var outputQueue = IsOutputActive(brainId) ? _outputs[brainId] : _delayedOutputs[brainId];
             var outputEventQueue = IsOutputActive(brainId) ? _outputEvents[brainId] : _delayedOutputEvents[brainId];
+            var emittedVectorCount = 0;
 
             for (var offset = 1; offset <= readyDelayTicks; offset++)
             {
@@ -3138,6 +3290,8 @@ public sealed class BasicsExecutionSessionTests
                     vector = vector.Take(Math.Max(0, Math.Min(outputVectorWidth, vector.Length))).ToArray();
                 }
                 if (!SuppressOutputVectors
+                    && (MaxOutputVectorsPerInput is not int maxOutputVectorsPerInput
+                        || emittedVectorCount < maxOutputVectorsPerInput)
                     && (!OnlyEmitOutputVectorOnChange
                         || !_lastVectorOutputByBrain.TryGetValue(brainId, out var previousOutput)
                         || previousOutput.Value != value
@@ -3145,6 +3299,7 @@ public sealed class BasicsExecutionSessionTests
                         || ready >= 0.5f))
                 {
                     outputQueue.Enqueue(new BasicsRuntimeOutputVector(brainId, tick, vector));
+                    emittedVectorCount++;
                 }
 
                 _lastVectorOutputByBrain[brainId] = (value, ready);
