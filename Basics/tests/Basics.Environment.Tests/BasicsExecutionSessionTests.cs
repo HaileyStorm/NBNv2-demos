@@ -1085,8 +1085,67 @@ public sealed class BasicsExecutionSessionTests
             Array.Empty<BasicsExecutionBootstrapCandidateTrace>());
         Assert.NotNull(generationMetrics);
 
-        var improved = Assert.IsType<bool>(method!.Invoke(null, new object?[] { generationMetrics, 0.75f, 0.70f, previousBest }));
+        var improved = Assert.IsType<bool>(method!.Invoke(null, new object?[] { generationMetrics, 0.75f, previousBest }));
         Assert.True(improved);
+    }
+
+    [Fact]
+    public async Task DidGenerationImprove_IgnoresRawAccuracyGain_WhenBalancedSelectionRegresses()
+    {
+        await using var runtimeClient = new FakeBasicsRuntimeClient();
+        var generationMetricsType = typeof(BasicsExecutionSession).GetNestedType("GenerationMetrics", BindingFlags.NonPublic);
+        var method = typeof(BasicsExecutionSession).GetMethod("DidGenerationImprove", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(generationMetricsType);
+        Assert.NotNull(method);
+
+        var previousBest = CreateBestCandidateSummary(
+            runtimeClient,
+            "multiplication",
+            accuracy: 0.70f,
+            fitness: 0.70f,
+            scoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+            {
+                ["task_accuracy"] = 0.70f,
+                ["balanced_tolerance_accuracy"] = 0.80f,
+                ["edge_tolerance_accuracy"] = 0.78f,
+                ["interior_tolerance_accuracy"] = 0.82f
+            });
+        var trackedBestCandidate = CreateBestCandidateSummary(
+            runtimeClient,
+            "multiplication",
+            accuracy: 0.85f,
+            fitness: 0.75f,
+            scoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+            {
+                ["task_accuracy"] = 0.85f,
+                ["balanced_tolerance_accuracy"] = 0.62f,
+                ["edge_tolerance_accuracy"] = 0.35f,
+                ["interior_tolerance_accuracy"] = 0.89f
+            });
+        var generationMetrics = Activator.CreateInstance(
+            generationMetricsType!,
+            0.85f,
+            0.85f,
+            0.62f,
+            0.62f,
+            0.35f,
+            0.89f,
+            0.75f,
+            0.75f,
+            1,
+            0,
+            0.75d,
+            1,
+            0f,
+            trackedBestCandidate,
+            trackedBestCandidate,
+            0,
+            string.Empty,
+            Array.Empty<BasicsExecutionBootstrapCandidateTrace>());
+        Assert.NotNull(generationMetrics);
+
+        var improved = Assert.IsType<bool>(method!.Invoke(null, new object?[] { generationMetrics, 0.70f, previousBest }));
+        Assert.False(improved);
     }
 
     [Fact]
@@ -1749,7 +1808,7 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public async Task ExecutionSession_PreservesAccuracyAndFitnessHistories_InEvaluationProgressSnapshots()
+    public async Task ExecutionSession_OnlyPublishesHistories_WhenGenerationCompletes()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
         {
@@ -1781,26 +1840,31 @@ public sealed class BasicsExecutionSessionTests
                 snapshots.Where(snapshot =>
                     snapshot.State == BasicsExecutionState.Running
                     && snapshot.StatusText.Contains("Generation 1 evaluated.", StringComparison.Ordinal)));
-            var generationTwoEvaluationSnapshot = snapshots.FirstOrDefault(snapshot =>
+            var generationTwoProgressSnapshot = snapshots.FirstOrDefault(snapshot =>
                 snapshot.State == BasicsExecutionState.Running
-                && snapshot.StatusText.Contains("Evaluating generation 2...", StringComparison.Ordinal)
-                && snapshot.OffspringAccuracyHistory.Count > 0);
+                && snapshot.StatusText.Contains("Evaluating generation 2...", StringComparison.Ordinal));
+            var generationTwoSummary = Assert.Single(
+                snapshots.Where(snapshot =>
+                    snapshot.State == BasicsExecutionState.Running
+                    && snapshot.StatusText.Contains("Generation 2 evaluated.", StringComparison.Ordinal)));
 
             Assert.True(generationOneSummary.OffspringBestAccuracy > 0f);
             Assert.True(generationOneSummary.OffspringBestFitness > generationOneSummary.OffspringBestAccuracy);
-            Assert.NotNull(generationTwoEvaluationSnapshot);
+            Assert.NotNull(generationTwoProgressSnapshot);
+            Assert.Empty(generationTwoProgressSnapshot!.OffspringAccuracyHistory);
+            Assert.Empty(generationTwoProgressSnapshot.AccuracyHistory);
             Assert.Equal(
                 generationOneSummary.OffspringBestAccuracy,
-                generationTwoEvaluationSnapshot!.OffspringAccuracyHistory[^1]);
+                generationTwoSummary.OffspringAccuracyHistory[^2]);
             Assert.Equal(
                 generationOneSummary.BestAccuracy,
-                generationTwoEvaluationSnapshot.AccuracyHistory[^1]);
+                generationTwoSummary.AccuracyHistory[^2]);
             Assert.Equal(
                 generationOneSummary.OffspringBestFitness,
-                generationTwoEvaluationSnapshot.OffspringFitnessHistory[^1]);
+                generationTwoSummary.OffspringFitnessHistory[^2]);
             Assert.Equal(
                 generationOneSummary.BestFitness,
-                generationTwoEvaluationSnapshot.BestFitnessHistory[^1]);
+                generationTwoSummary.BestFitnessHistory[^2]);
         }
         finally
         {

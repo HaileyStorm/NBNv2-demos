@@ -2310,15 +2310,17 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         var displayedAccuracy = ResolveLatestMetric(snapshot.OffspringAccuracyHistory, snapshot.OffspringBestAccuracy);
         var displayedBestAccuracy = ResolvePeakMetric(snapshot.AccuracyHistory, snapshot.BestAccuracy);
-        var displayedBalancedAccuracy = ResolveLatestMetric(snapshot.OffspringBalancedAccuracyHistory, 0f);
-        var displayedEdgeAccuracy = ResolveLatestMetric(snapshot.OffspringEdgeAccuracyHistory, 0f);
-        var displayedInteriorAccuracy = ResolveLatestMetric(snapshot.OffspringInteriorAccuracyHistory, 0f);
+        var displayedBalancedAccuracy = ResolveLatestMetric(_balancedAccuracyHistory, 0f);
+        var displayedEdgeAccuracy = ResolveLatestMetric(_edgeAccuracyHistory, 0f);
+        var displayedInteriorAccuracy = ResolveLatestMetric(_interiorAccuracyHistory, 0f);
         var displayedOffspringFitness = ResolveLatestMetric(snapshot.OffspringFitnessHistory, snapshot.OffspringBestFitness);
         var displayedBestFitness = ResolvePeakMetric(snapshot.BestFitnessHistory, snapshot.BestFitness);
         var bestBrainBalancedAccuracy = ResolveBestCandidateAccuracyMetric(snapshot.BestCandidate, "balanced_tolerance_accuracy");
         var bestBrainEdgeAccuracy = ResolveBestCandidateAccuracyMetric(snapshot.BestCandidate, "edge_tolerance_accuracy");
         var bestBrainInteriorAccuracy = ResolveBestCandidateAccuracyMetric(snapshot.BestCandidate, "interior_tolerance_accuracy");
-        var hasPartitionedAccuracy = snapshot.OffspringBalancedAccuracyHistory.Count > 0
+        var hasPartitionedAccuracy = _balancedAccuracyHistory.Count > 0
+            || _edgeAccuracyHistory.Count > 0
+            || _interiorAccuracyHistory.Count > 0
             || bestBrainBalancedAccuracy.HasValue
             || bestBrainEdgeAccuracy.HasValue
             || bestBrainInteriorAccuracy.HasValue;
@@ -3259,6 +3261,11 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private void ReplaceHistory(List<float> target, IReadOnlyList<float> source)
     {
+        if (source.Count == 0)
+        {
+            return;
+        }
+
         target.Clear();
         target.AddRange(source);
     }

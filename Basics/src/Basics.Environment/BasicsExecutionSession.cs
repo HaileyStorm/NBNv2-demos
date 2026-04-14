@@ -298,7 +298,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 }
 
                 var previousBestCandidate = bestCandidateSoFar;
-                var generationImproved = DidGenerationImprove(generationMetrics, bestAccuracySoFar, bestFitnessSoFar, bestCandidateSoFar);
+                var generationImproved = DidGenerationImprove(generationMetrics, bestAccuracySoFar, bestCandidateSoFar);
                 UpdateBestSoFar(generationMetrics, ref bestAccuracySoFar, ref bestFitnessSoFar, ref bestCandidateSoFar);
                 bestCandidateSoFar = await EnsureBestCandidateSnapshotAsync(previousBestCandidate, bestCandidateSoFar, cancellationToken).ConfigureAwait(false);
                 stalledGenerationCount = generationImproved ? 0 : stalledGenerationCount + 1;
@@ -1256,7 +1256,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     overallBestFitness: overallBestFitness,
                     overallBestCandidate: overallBestCandidate,
                     latestBatchTiming: completedBatchTimings,
-                    latestGenerationTiming: BuildGenerationTimingSummary(generation, batchTimings)));
+                    latestGenerationTiming: BuildGenerationTimingSummary(generation, batchTimings),
+                    includeHistories: false));
             }
 
             PublishBatchProgress(force: true);
@@ -1367,7 +1368,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     overallBestFitness: overallBestFitness,
                 overallBestCandidate: overallBestCandidate,
                 latestBatchTiming: batchTiming,
-                latestGenerationTiming: BuildGenerationTimingSummary(generation, batchTimings)));
+                latestGenerationTiming: BuildGenerationTimingSummary(generation, batchTimings),
+                includeHistories: false));
         }
 
         return new PopulationEvaluationResult(
@@ -2834,7 +2836,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         Action<uint>? onReproductionObserved)
     {
         var ranked = population
-            .OrderByDescending(member => member.LastEvaluation?.Fitness ?? 0f)
+            .OrderByDescending(member => ResolveParentSelectionSignal(member.LastEvaluation))
+            .ThenByDescending(member => member.LastEvaluation?.Fitness ?? 0f)
+            .ThenByDescending(member => ResolveCandidateSelectionAccuracyOrDefault(member.LastEvaluation))
             .ThenByDescending(member => member.LastEvaluation?.Accuracy ?? 0f)
             .ToArray();
         if (ranked.Length == 0)
@@ -2875,7 +2879,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation, minimumPopulation);
         }
 
-        var bestFitness = Math.Max(0.0001f, ranked.Max(member => member.LastEvaluation?.Fitness ?? 0f));
+        var bestSelectionSignal = Math.Max(0.0001f, ranked.Max(member => ResolveParentSelectionSignal(member.LastEvaluation)));
         var compatibilityCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         var queuedPairKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var queuedPairs = new Queue<QueuedBreedingPair>();
@@ -2884,7 +2888,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 population,
                 plan,
                 adaptiveBoostSteps,
-                bestFitness,
+                bestSelectionSignal,
                 queuedPairs,
                 queuedPairKeys,
                 compatibilityCache,
@@ -2915,7 +2919,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             {
                 parentA = parentPool[attempt % parentPool.Count];
                 parentB = SelectPairParent(parentPool, parentA, attempt);
-                normalizedFitness = ResolveNormalizedFitnessHint(parentA, parentB, bestFitness);
+                normalizedFitness = ResolveNormalizedFitnessHint(parentA, parentB, bestSelectionSignal);
                 normalizedNovelty = ResolveNormalizedNoveltyHint(parentA, parentB, population);
                 pairingReason = "ranked parent pool";
             }
@@ -3005,7 +3009,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             targetPopulation,
                             plan,
                             adaptiveBoostSteps,
-                            bestFitness,
+                            bestSelectionSignal,
                             queuedPairs,
                             queuedPairKeys,
                             compatibilityCache,
@@ -3084,7 +3088,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var dedupedPopulation = population
             .GroupBy(member => member.Definition.ToSha256Hex(), StringComparer.OrdinalIgnoreCase)
             .Select(static group => group
-                .OrderByDescending(static member => member.LastEvaluation?.Fitness ?? 0f)
+                .OrderByDescending(static member => ResolveParentSelectionSignal(member.LastEvaluation))
+                .ThenByDescending(static member => member.LastEvaluation?.Fitness ?? 0f)
+                .ThenByDescending(static member => ResolveCandidateSelectionAccuracyOrDefault(member.LastEvaluation))
                 .ThenByDescending(static member => member.LastEvaluation?.Accuracy ?? 0f)
                 .First())
             .ToArray();
@@ -3092,7 +3098,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var speciesCounts = dedupedPopulation
             .GroupBy(member => NormalizeSpeciesId(member.SpeciesId))
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
-        var maxFitness = Math.Max(0.0001f, dedupedPopulation.Max(member => member.LastEvaluation?.Fitness ?? 0f));
+        var maxSelectionSignal = Math.Max(0.0001f, dedupedPopulation.Max(member => ResolveParentSelectionSignal(member.LastEvaluation)));
         var maxSpeciesCount = Math.Max(1, speciesCounts.Values.DefaultIfEmpty(1).Max());
 
         var ranked = dedupedPopulation
@@ -3104,12 +3110,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 var speciesBalance = 1f - (speciesCount / (float)maxSpeciesCount);
                 var score = BasicsReproductionBudgetPlanner.ScoreParentCandidate(
                     policy,
-                    normalizedFitness: (member.LastEvaluation?.Fitness ?? 0f) / maxFitness,
+                    normalizedFitness: ResolveParentSelectionSignal(member.LastEvaluation) / maxSelectionSignal,
                     normalizedNovelty: novelty,
                     normalizedSpeciesBalance: speciesBalance);
                 return new RankedParent(member, score);
             })
             .OrderByDescending(entry => entry.Score.WeightedScore)
+            .ThenByDescending(entry => ResolveCandidateSelectionAccuracyOrDefault(entry.Member.LastEvaluation))
+            .ThenByDescending(entry => ResolveParentSelectionSignal(entry.Member.LastEvaluation))
             .ThenByDescending(entry => entry.Member.LastEvaluation?.Accuracy ?? 0f)
             .ToArray();
 
@@ -3160,7 +3168,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<PopulationMember> population,
         BasicsEnvironmentPlan plan,
         int adaptiveBoostSteps,
-        float bestFitness,
+        float bestSelectionSignal,
         Queue<QueuedBreedingPair> queuedPairs,
         HashSet<string> queuedPairKeys,
         Dictionary<string, bool> compatibilityCache,
@@ -3180,7 +3188,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 await TryEnqueueBreedingPairAsync(
                         parentA,
                         parentB,
-                        ResolveNormalizedFitnessHint(parentA, parentB, bestFitness),
+                        ResolveNormalizedFitnessHint(parentA, parentB, bestSelectionSignal),
                         ResolveNormalizedNoveltyHint(parentA, parentB, population),
                         "elite cross queue",
                         plan,
@@ -3202,7 +3210,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int targetPopulation,
         BasicsEnvironmentPlan plan,
         int adaptiveBoostSteps,
-        float bestFitness,
+        float bestSelectionSignal,
         Queue<QueuedBreedingPair> queuedPairs,
         HashSet<string> queuedPairKeys,
         Dictionary<string, bool> compatibilityCache,
@@ -3212,7 +3220,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         foreach (var elite in carryForwardMembers.Take(elitePartnerCount))
         {
             var normalizedFitness = Math.Clamp(
-                (frontierChild.NormalizedFitnessHint + ResolveNormalizedFitnessHint(elite, bestFitness)) / 2f,
+                (frontierChild.NormalizedFitnessHint + ResolveNormalizedFitnessHint(elite, bestSelectionSignal)) / 2f,
                 0f,
                 1f);
             var normalizedNovelty = Math.Max(
@@ -3309,14 +3317,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static float ResolveNormalizedFitnessHint(
         PopulationMember parentA,
         PopulationMember parentB,
-        float bestFitness)
+        float bestSelectionSignal)
         => Math.Clamp(
-            (((parentA.LastEvaluation?.Fitness ?? 0f) + (parentB.LastEvaluation?.Fitness ?? 0f)) / 2f) / Math.Max(0.0001f, bestFitness),
+            ((ResolveParentSelectionSignal(parentA.LastEvaluation) + ResolveParentSelectionSignal(parentB.LastEvaluation)) / 2f) / Math.Max(0.0001f, bestSelectionSignal),
             0f,
             1f);
 
-    private static float ResolveNormalizedFitnessHint(PopulationMember parent, float bestFitness)
-        => Math.Clamp((parent.LastEvaluation?.Fitness ?? 0f) / Math.Max(0.0001f, bestFitness), 0f, 1f);
+    private static float ResolveNormalizedFitnessHint(PopulationMember parent, float bestSelectionSignal)
+        => Math.Clamp(ResolveParentSelectionSignal(parent.LastEvaluation) / Math.Max(0.0001f, bestSelectionSignal), 0f, 1f);
 
     private float ResolveNormalizedNoveltyHint(
         PopulationMember parentA,
@@ -4270,18 +4278,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static bool DidGenerationImprove(
         GenerationMetrics generationMetrics,
         float bestAccuracySoFar,
-        float bestFitnessSoFar,
         BasicsExecutionBestCandidateSummary? bestCandidateSoFar)
     {
-        if (generationMetrics.BestAccuracy > bestAccuracySoFar + 0.0001f
-            || generationMetrics.BestFitness > bestFitnessSoFar + 0.0001f)
+        if (generationMetrics.TrackedBestCandidate is not null)
         {
-            return true;
+            return bestCandidateSoFar is null
+                   || CompareCandidateSummary(generationMetrics.TrackedBestCandidate, bestCandidateSoFar) > 0;
         }
 
-        return generationMetrics.TrackedBestCandidate is not null
-               && (bestCandidateSoFar is null
-                   || CompareCandidateSummary(generationMetrics.TrackedBestCandidate, bestCandidateSoFar) > 0);
+        return generationMetrics.BestAccuracy > bestAccuracySoFar + 0.0001f;
     }
 
     private static BasicsExecutionBestCandidateSummary? SelectBestCandidateSummary(
@@ -4311,6 +4316,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         if (viabilityComparison != 0)
         {
             return viabilityComparison;
+        }
+
+        var selectionSignalComparison = ResolveCandidateSelectionSignal(candidate)
+            .CompareTo(ResolveCandidateSelectionSignal(baseline));
+        if (selectionSignalComparison != 0)
+        {
+            return selectionSignalComparison;
         }
 
         var selectionAccuracyComparison = ResolveCandidateSelectionAccuracy(candidate)
@@ -4424,7 +4436,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         float overallBestFitness = 0f,
         BasicsExecutionBestCandidateSummary? overallBestCandidate = null,
         BasicsExecutionBatchTimingSummary? latestBatchTiming = null,
-        BasicsExecutionGenerationTimingSummary? latestGenerationTiming = null)
+        BasicsExecutionGenerationTimingSummary? latestGenerationTiming = null,
+        bool includeHistories = true)
     {
         var metrics = BuildGenerationMetrics(population, stopCriteria, includeWinnerRuntimeState, generation);
         var resolvedBestAccuracy = Math.Max(metrics.BestAccuracy, Math.Max(overallBestAccuracy, accuracyHistory.DefaultIfEmpty(0f).Max()));
@@ -4452,14 +4465,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             effectiveTemplateDefinition?.Clone(),
             seedShape,
             CloneBestCandidate(resolvedBestCandidate),
-            offspringAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
-            accuracyHistory.ToArray(),
-            offspringBalancedAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
-            balancedAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
-            offspringEdgeAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
-            offspringInteriorAccuracyHistory?.ToArray() ?? Array.Empty<float>(),
-            offspringFitnessHistory?.ToArray() ?? Array.Empty<float>(),
-            fitnessHistory.ToArray(),
+            includeHistories ? offspringAccuracyHistory?.ToArray() ?? Array.Empty<float>() : Array.Empty<float>(),
+            includeHistories ? accuracyHistory.ToArray() : Array.Empty<float>(),
+            includeHistories ? offspringBalancedAccuracyHistory?.ToArray() ?? Array.Empty<float>() : Array.Empty<float>(),
+            includeHistories ? balancedAccuracyHistory?.ToArray() ?? Array.Empty<float>() : Array.Empty<float>(),
+            includeHistories ? offspringEdgeAccuracyHistory?.ToArray() ?? Array.Empty<float>() : Array.Empty<float>(),
+            includeHistories ? offspringInteriorAccuracyHistory?.ToArray() ?? Array.Empty<float>() : Array.Empty<float>(),
+            includeHistories ? offspringFitnessHistory?.ToArray() ?? Array.Empty<float>() : Array.Empty<float>(),
+            includeHistories ? fitnessHistory.ToArray() : Array.Empty<float>(),
             latestBatchTiming,
             latestGenerationTiming)
         {
@@ -4666,9 +4679,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         return candidates
-            .OrderByDescending(candidate => candidate.Evaluation.Fitness)
+            .OrderByDescending(candidate => candidate.Evaluation.Diagnostics.Count == 0)
+            .ThenByDescending(candidate => ResolveParentSelectionSignal(candidate.Evaluation))
             .ThenByDescending(candidate => ResolveCandidateSelectionAccuracy(candidate.Evaluation))
             .ThenByDescending(candidate => candidate.Evaluation.Accuracy)
+            .ThenByDescending(candidate => candidate.Evaluation.Fitness)
             .ThenBy(candidate => candidate.Member.Complexity?.InternalNeuronCount ?? int.MaxValue)
             .ThenBy(candidate => candidate.Member.Complexity?.AxonCount ?? int.MaxValue)
             .ThenBy(candidate => candidate.Member.Complexity?.ActiveInternalRegionCount ?? int.MaxValue)
@@ -4679,6 +4694,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static CandidateSelection SelectTrackedBestCandidate(IReadOnlyList<CandidateSelection> candidates)
         => candidates
             .OrderByDescending(candidate => candidate.Evaluation.Diagnostics.Count == 0)
+            .ThenByDescending(candidate => ResolveParentSelectionSignal(candidate.Evaluation))
             .ThenByDescending(candidate => ResolveCandidateSelectionAccuracy(candidate.Evaluation))
             .ThenByDescending(candidate => candidate.Evaluation.Accuracy)
             .ThenByDescending(candidate => candidate.Evaluation.Fitness)
@@ -4706,6 +4722,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static float ResolveCandidateSelectionAccuracy(BasicsTaskEvaluationResult evaluation)
         => ResolveCandidateSelectionAccuracy(evaluation.Accuracy, evaluation.ScoreBreakdown);
 
+    private static float ResolveCandidateSelectionAccuracyOrDefault(BasicsTaskEvaluationResult? evaluation)
+        => evaluation is null ? 0f : ResolveCandidateSelectionAccuracy(evaluation);
+
     private static float ResolveCandidateSelectionAccuracy(BasicsExecutionBestCandidateSummary candidate)
         => ResolveCandidateSelectionAccuracy(candidate.Accuracy, candidate.ScoreBreakdown);
 
@@ -4715,6 +4734,46 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         => scoreBreakdown.TryGetValue("balanced_tolerance_accuracy", out var balancedAccuracy)
             ? Math.Clamp(balancedAccuracy, 0f, 1f)
             : Math.Clamp(fallbackAccuracy, 0f, 1f);
+
+    private static float ResolveCandidateSelectionSignal(BasicsExecutionBestCandidateSummary candidate)
+        => ResolveCandidateSelectionSignal(candidate.Fitness, candidate.Accuracy, candidate.ScoreBreakdown);
+
+    private static float ResolveParentSelectionSignal(BasicsTaskEvaluationResult? evaluation)
+        => evaluation is null
+            ? 0f
+            : ResolveCandidateSelectionSignal(evaluation.Fitness, evaluation.Accuracy, evaluation.ScoreBreakdown);
+
+    private static float ResolveCandidateSelectionSignal(
+        float fitness,
+        float fallbackAccuracy,
+        IReadOnlyDictionary<string, float> scoreBreakdown)
+    {
+        var selectionAccuracy = ResolveCandidateSelectionAccuracy(fallbackAccuracy, scoreBreakdown);
+        var normalizedFitness = Math.Clamp(fitness, 0f, 1f);
+        if (scoreBreakdown.ContainsKey("balanced_tolerance_accuracy"))
+        {
+            var edgeAccuracy = ResolveAccuracyBreakdownMetric(scoreBreakdown, "edge_tolerance_accuracy", selectionAccuracy);
+            return Math.Clamp(
+                (0.65f * selectionAccuracy)
+                + (0.25f * edgeAccuracy)
+                + (0.10f * normalizedFitness),
+                0f,
+                1f);
+        }
+
+        return Math.Clamp(
+            (0.75f * selectionAccuracy) + (0.25f * normalizedFitness),
+            0f,
+            1f);
+    }
+
+    private static float ResolveAccuracyBreakdownMetric(
+        IReadOnlyDictionary<string, float> scoreBreakdown,
+        string key,
+        float fallbackValue)
+        => scoreBreakdown.TryGetValue(key, out var value)
+            ? Math.Clamp(value, 0f, 1f)
+            : Math.Clamp(fallbackValue, 0f, 1f);
 
     private static string BuildGenerationDetail(
         int generation,
