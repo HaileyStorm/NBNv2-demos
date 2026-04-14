@@ -1116,7 +1116,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         explicitSpeciesId: null,
                         explicitSpeciesDisplayName: null,
                         decisionReason: "basics_seed_child",
-                        decisionMetadataJson: BuildSpeciationDecisionMetadataJson(child.Report),
+                        decisionMetadataJson: BuildSpeciationDecisionMetadataJson(child.Report, child.MutationSummary),
                         cancellationToken)
                     .ConfigureAwait(false);
                 children.Add(new PopulationMember(
@@ -2848,6 +2848,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         var adaptiveBoostSteps = BasicsDiversityTuning.ResolveAdaptiveBoostSteps(plan.AdaptiveDiversity, stalledGenerationCount);
         var effectivePreset = BasicsDiversityTuning.ResolveEffectivePreset(plan.DiversityPreset, adaptiveBoostSteps);
+        var effectiveVariationBand = BasicsDiversityTuning.ResolveEffectiveVariationBand(
+            plan.SeedTemplate.InitialVariationBand,
+            plan.DiversityPreset,
+            adaptiveBoostSteps);
         var effectiveScheduling = BasicsDiversityTuning.ApplyAdaptiveBoost(plan.Scheduling, adaptiveBoostSteps);
         var eliteCount = ranked.Length == 1
             ? 1
@@ -2935,7 +2939,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 nextGeneration.Count);
 
             var reproduceConfig = plan.Reproduction.Config.Clone();
-            ApplyVariationBand(reproduceConfig, plan.SeedTemplate.InitialVariationBand);
+            ApplyVariationBand(reproduceConfig, effectiveVariationBand);
             BasicsDiversityTuning.ApplyAdaptiveBoost(reproduceConfig, adaptiveBoostSteps);
             reproduceConfig.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
             var result = await _runtimeClient.ReproduceByArtifactsAsync(
@@ -2977,7 +2981,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         explicitSpeciesId: null,
                         explicitSpeciesDisplayName: null,
                         decisionReason: "basics_generation_child",
-                        decisionMetadataJson: BuildSpeciationDecisionMetadataJson(child.Report),
+                        decisionMetadataJson: BuildSpeciationDecisionMetadataJson(child.Report, child.MutationSummary),
                         cancellationToken)
                     .ConfigureAwait(false);
                 var childMember = new PopulationMember(
@@ -3446,7 +3450,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         var reproduceConfig = plan.Reproduction.Config.Clone();
-        ApplyVariationBand(reproduceConfig, plan.SeedTemplate.InitialVariationBand);
+        var effectiveVariationBand = BasicsDiversityTuning.ResolveEffectiveVariationBand(
+            plan.SeedTemplate.InitialVariationBand,
+            plan.DiversityPreset,
+            adaptiveBoostSteps);
+        ApplyVariationBand(reproduceConfig, effectiveVariationBand);
         BasicsDiversityTuning.ApplyAdaptiveBoost(reproduceConfig, adaptiveBoostSteps);
         reproduceConfig.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
 
@@ -3674,25 +3682,38 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         if (HasArtifactRef(result.ChildDef) && seenDefinitionShas.Add(result.ChildDef.ToSha256Hex()))
         {
-            definitions.Add(new ReproductionChildDefinition(result.ChildDef.Clone(), result.Report?.Clone()));
+            definitions.Add(new ReproductionChildDefinition(
+                result.ChildDef.Clone(),
+                result.Report?.Clone(),
+                result.Summary?.Clone()));
         }
 
         foreach (var run in result.Runs)
         {
             if (HasArtifactRef(run.ChildDef) && seenDefinitionShas.Add(run.ChildDef.ToSha256Hex()))
             {
-                definitions.Add(new ReproductionChildDefinition(run.ChildDef.Clone(), run.Report?.Clone()));
+                definitions.Add(new ReproductionChildDefinition(
+                    run.ChildDef.Clone(),
+                    run.Report?.Clone(),
+                    run.Summary?.Clone()));
             }
         }
 
         return definitions;
     }
 
-    private static string BuildSpeciationDecisionMetadataJson(Repro.SimilarityReport? report)
+    private static string BuildSpeciationDecisionMetadataJson(
+        Repro.SimilarityReport? report,
+        Repro.MutationSummary? mutationSummary = null)
     {
         if (report is null)
         {
-            return "{}";
+            return mutationSummary is null
+                ? "{}"
+                : JsonSerializer.Serialize(new
+                {
+                    mutation_summary = BuildMutationSummaryMetadata(mutationSummary)
+                });
         }
 
         return JsonSerializer.Serialize(new
@@ -3711,9 +3732,24 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             {
                 compatible = report.Compatible,
                 abort_reason = report.AbortReason ?? string.Empty
-            }
+            },
+            mutation_summary = BuildMutationSummaryMetadata(mutationSummary)
         });
     }
+
+    private static object? BuildMutationSummaryMetadata(Repro.MutationSummary? mutationSummary)
+        => mutationSummary is null
+            ? null
+            : new
+            {
+                neurons_added = mutationSummary.NeuronsAdded,
+                neurons_removed = mutationSummary.NeuronsRemoved,
+                axons_added = mutationSummary.AxonsAdded,
+                axons_removed = mutationSummary.AxonsRemoved,
+                axons_rerouted = mutationSummary.AxonsRerouted,
+                functions_mutated = mutationSummary.FunctionsMutated,
+                strength_codes_changed = mutationSummary.StrengthCodesChanged
+            };
 
     private static float ClampSimilarityScore(float value)
         => float.IsFinite(value) ? Math.Clamp(value, 0f, 1f) : 0f;
@@ -4925,7 +4961,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
     private sealed record ReproductionChildDefinition(
         ArtifactRef Definition,
-        Repro.SimilarityReport? Report);
+        Repro.SimilarityReport? Report,
+        Repro.MutationSummary? MutationSummary);
 
     private readonly record struct CandidateSelection(
         PopulationMember Member,

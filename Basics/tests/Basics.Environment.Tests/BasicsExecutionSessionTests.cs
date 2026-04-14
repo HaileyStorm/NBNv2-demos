@@ -2658,6 +2658,7 @@ public sealed class BasicsExecutionSessionTests
                     request.Parents,
                     parent => Assert.Equal(SpeciationParentRef.ParentOneofCase.ArtifactRef, parent.ParentCase));
                 AssertSpeciationMetadataIncludesLineageScores(request.DecisionMetadataJson);
+                AssertSpeciationMetadataIncludesMutationSummary(request.DecisionMetadataJson);
             });
         }
         finally
@@ -2673,7 +2674,7 @@ public sealed class BasicsExecutionSessionTests
             "BuildSpeciationDecisionMetadataJson",
             BindingFlags.NonPublic | BindingFlags.Static,
             binder: null,
-            types: new[] { typeof(Repro.SimilarityReport) },
+            types: new[] { typeof(Repro.SimilarityReport), typeof(Repro.MutationSummary) },
             modifiers: null);
         Assert.NotNull(helper);
 
@@ -2688,6 +2689,12 @@ public sealed class BasicsExecutionSessionTests
                 LineageSimilarityScore = float.NaN,
                 LineageParentASimilarityScore = float.PositiveInfinity,
                 LineageParentBSimilarityScore = float.NegativeInfinity
+            },
+            new Repro.MutationSummary
+            {
+                AxonsAdded = 2,
+                FunctionsMutated = 1,
+                StrengthCodesChanged = 3
             }
         }));
 
@@ -2700,6 +2707,10 @@ public sealed class BasicsExecutionSessionTests
         Assert.Equal(0f, metadata.RootElement.GetProperty("function_score").GetSingle());
         Assert.Equal(0f, metadata.RootElement.GetProperty("connectivity_score").GetSingle());
         Assert.Equal(0f, metadata.RootElement.GetProperty("region_span_score").GetSingle());
+        var mutationSummary = metadata.RootElement.GetProperty("mutation_summary");
+        Assert.Equal(2u, mutationSummary.GetProperty("axons_added").GetUInt32());
+        Assert.Equal(1u, mutationSummary.GetProperty("functions_mutated").GetUInt32());
+        Assert.Equal(3u, mutationSummary.GetProperty("strength_codes_changed").GetUInt32());
     }
 
     private static BasicsEnvironmentPlan CreatePlan(
@@ -2741,6 +2752,14 @@ public sealed class BasicsExecutionSessionTests
         Assert.True(lineage.GetProperty("lineage_similarity_score").GetSingle() > 0f);
         Assert.True(lineage.GetProperty("parent_a_similarity_score").GetSingle() > 0f);
         Assert.True(lineage.GetProperty("parent_b_similarity_score").GetSingle() > 0f);
+    }
+
+    private static void AssertSpeciationMetadataIncludesMutationSummary(string metadataJson)
+    {
+        using var metadata = JsonDocument.Parse(metadataJson);
+        var mutationSummary = metadata.RootElement.GetProperty("mutation_summary");
+        Assert.True(mutationSummary.GetProperty("axons_added").GetUInt32() > 0u);
+        Assert.True(mutationSummary.GetProperty("strength_codes_changed").GetUInt32() > 0u);
     }
 
     private static BasicsExecutionSession CreateSession(
@@ -3452,17 +3471,24 @@ public sealed class BasicsExecutionSessionTests
                         ? CreateUniqueStoredDefinition(_childIndex++, behavior).Artifact
                         : CreateStoredDefinition(_childIndex++, behavior).Artifact;
                 var report = CreateSimilarityReport(0.72f + (runIndex * 0.01f));
+                var summary = new Repro.MutationSummary
+                {
+                    AxonsAdded = (uint)(runIndex + 1),
+                    StrengthCodesChanged = (uint)(runIndex + 2)
+                };
                 result.Runs.Add(new Repro.ReproduceRunOutcome
                 {
                     RunIndex = (uint)runIndex,
                     ChildDef = child.Clone(),
                     Spawned = false,
-                    Report = report.Clone()
+                    Report = report.Clone(),
+                    Summary = summary.Clone()
                 });
                 if (runIndex == 0)
                 {
                     result.ChildDef = child.Clone();
                     result.Report = report.Clone();
+                    result.Summary = summary.Clone();
                 }
             }
 

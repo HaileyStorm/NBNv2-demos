@@ -193,6 +193,30 @@ public static class BasicsDiversityTuning
     public static BasicsDiversityPreset ResolveEffectivePreset(BasicsDiversityPreset basePreset, int boostSteps)
         => (BasicsDiversityPreset)Math.Min((int)BasicsDiversityPreset.Extreme, (int)basePreset + Math.Max(0, boostSteps));
 
+    public static BasicsSeedVariationBand ResolveEffectiveVariationBand(
+        BasicsSeedVariationBand baseBand,
+        BasicsDiversityPreset basePreset,
+        int boostSteps)
+    {
+        ArgumentNullException.ThrowIfNull(baseBand);
+        if (boostSteps <= 0)
+        {
+            return baseBand;
+        }
+
+        var boostedBand = CreateVariationBand(ResolveEffectivePreset(basePreset, boostSteps));
+        return baseBand with
+        {
+            MaxInternalNeuronDelta = Math.Max(baseBand.MaxInternalNeuronDelta, boostedBand.MaxInternalNeuronDelta),
+            MaxAxonDelta = Math.Max(baseBand.MaxAxonDelta, boostedBand.MaxAxonDelta),
+            MaxStrengthCodeDelta = Math.Max(baseBand.MaxStrengthCodeDelta, boostedBand.MaxStrengthCodeDelta),
+            MaxParameterCodeDelta = Math.Max(baseBand.MaxParameterCodeDelta, boostedBand.MaxParameterCodeDelta),
+            AllowFunctionMutation = baseBand.AllowFunctionMutation || boostedBand.AllowFunctionMutation,
+            AllowAxonReroute = baseBand.AllowAxonReroute || boostedBand.AllowAxonReroute,
+            AllowRegionSetChange = baseBand.AllowRegionSetChange || boostedBand.AllowRegionSetChange
+        };
+    }
+
     public static BasicsReproductionSchedulingPolicy ApplyAdaptiveBoost(
         BasicsReproductionSchedulingPolicy policy,
         int boostSteps)

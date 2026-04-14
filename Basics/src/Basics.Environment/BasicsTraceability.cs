@@ -68,6 +68,15 @@ public sealed record BasicsAdaptiveDiversityTraceRecord(
     bool Enabled,
     int StallGenerationWindow);
 
+public sealed record BasicsSeedVariationBandTraceRecord(
+    int MaxInternalNeuronDelta,
+    int MaxAxonDelta,
+    int MaxStrengthCodeDelta,
+    int MaxParameterCodeDelta,
+    bool AllowFunctionMutation,
+    bool AllowAxonReroute,
+    bool AllowRegionSetChange);
+
 public sealed record BasicsSizingOverridesTraceRecord(
     int? InitialPopulationCount,
     int? MinimumPopulationCount,
@@ -133,6 +142,7 @@ public sealed record BasicsExecutionPlanTraceRecord(
     BasicsOutputSamplingPolicyTraceRecord OutputSamplingPolicy,
     string DiversityPreset,
     BasicsAdaptiveDiversityTraceRecord AdaptiveDiversity,
+    BasicsSeedVariationBandTraceRecord VariationBand,
     BasicsSizingOverridesTraceRecord SizingOverrides,
     BasicsSchedulingTraceRecord Scheduling,
     BasicsReproductionTraceRecord Reproduction,
@@ -142,7 +152,7 @@ public sealed record BasicsExecutionPlanTraceRecord(
 
 public static class BasicsTraceability
 {
-    public const int SchemaVersion = 2;
+    public const int SchemaVersion = 3;
 
     public static BasicsExecutionPlanTraceRecord BuildPlanTrace(BasicsEnvironmentPlan plan)
     {
@@ -189,6 +199,14 @@ public static class BasicsTraceability
             AdaptiveDiversity: new BasicsAdaptiveDiversityTraceRecord(
                 plan.AdaptiveDiversity.Enabled,
                 plan.AdaptiveDiversity.StallGenerationWindow),
+            VariationBand: new BasicsSeedVariationBandTraceRecord(
+                plan.SeedTemplate.InitialVariationBand.MaxInternalNeuronDelta,
+                plan.SeedTemplate.InitialVariationBand.MaxAxonDelta,
+                plan.SeedTemplate.InitialVariationBand.MaxStrengthCodeDelta,
+                plan.SeedTemplate.InitialVariationBand.MaxParameterCodeDelta,
+                plan.SeedTemplate.InitialVariationBand.AllowFunctionMutation,
+                plan.SeedTemplate.InitialVariationBand.AllowAxonReroute,
+                plan.SeedTemplate.InitialVariationBand.AllowRegionSetChange),
             SizingOverrides: new BasicsSizingOverridesTraceRecord(
                 plan.SizingOverrides.InitialPopulationCount,
                 plan.SizingOverrides.MinimumPopulationCount,

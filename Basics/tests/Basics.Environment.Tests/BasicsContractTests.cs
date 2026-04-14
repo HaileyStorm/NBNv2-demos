@@ -110,6 +110,25 @@ public sealed class BasicsContractTests
     }
 
     [Fact]
+    public void DiversityTuning_AdaptiveBoost_WidensLowVariationBand()
+    {
+        var low = BasicsDiversityTuning.CreateVariationBand(BasicsDiversityPreset.Low);
+
+        var boosted = BasicsDiversityTuning.ResolveEffectiveVariationBand(
+            low,
+            BasicsDiversityPreset.Low,
+            boostSteps: 3);
+
+        Assert.Equal(4, boosted.MaxInternalNeuronDelta);
+        Assert.Equal(14, boosted.MaxAxonDelta);
+        Assert.Equal(8, boosted.MaxStrengthCodeDelta);
+        Assert.Equal(8, boosted.MaxParameterCodeDelta);
+        Assert.True(boosted.AllowFunctionMutation);
+        Assert.True(boosted.AllowAxonReroute);
+        Assert.False(boosted.AllowRegionSetChange);
+    }
+
+    [Fact]
     public void ExecutionStopCriteria_DefaultsToUnlimitedGenerations()
     {
         var criteria = new BasicsExecutionStopCriteria();

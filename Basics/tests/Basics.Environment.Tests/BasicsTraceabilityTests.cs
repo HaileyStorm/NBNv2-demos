@@ -114,6 +114,9 @@ public sealed class BasicsTraceabilityTests
         Assert.Equal("Low", trace.DiversityPreset);
         Assert.True(trace.AdaptiveDiversity.Enabled);
         Assert.Equal(250, trace.AdaptiveDiversity.StallGenerationWindow);
+        Assert.Equal(2, trace.VariationBand.MaxInternalNeuronDelta);
+        Assert.Equal(8, trace.VariationBand.MaxAxonDelta);
+        Assert.True(trace.VariationBand.AllowAxonReroute);
         Assert.Equal(7, trace.TaskSettings.Multiplication.UniqueInputValueCount);
         Assert.Equal(0.02f, trace.TaskSettings.Multiplication.AccuracyTolerance);
         Assert.Equal(48, trace.SizingOverrides.InitialPopulationCount);
