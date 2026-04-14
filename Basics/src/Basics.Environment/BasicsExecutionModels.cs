@@ -144,6 +144,13 @@ public sealed record BasicsExecutionBatchTimingSummary(
     double AveragePlacementWaitSeconds,
     double AverageSetupSeconds,
     double AverageObservationSeconds,
+    double AverageObservationAttemptCount,
+    double AverageObservationSecondsPerAttempt,
+    double AverageObservationPauseSeconds,
+    double AverageObservationResetSeconds,
+    double AverageObservationInputSeconds,
+    double AverageObservationResumeSeconds,
+    double AverageObservationWaitSeconds,
     string FailureSummary);
 
 public sealed record BasicsExecutionGenerationTimingSummary(
@@ -159,6 +166,13 @@ public sealed record BasicsExecutionGenerationTimingSummary(
     double AveragePlacementWaitSeconds,
     double AverageSetupSeconds,
     double AverageObservationSeconds,
+    double AverageObservationAttemptCount,
+    double AverageObservationSecondsPerAttempt,
+    double AverageObservationPauseSeconds,
+    double AverageObservationResetSeconds,
+    double AverageObservationInputSeconds,
+    double AverageObservationResumeSeconds,
+    double AverageObservationWaitSeconds,
     string FailureSummary);
 
 public sealed record BasicsExecutionSnapshot(

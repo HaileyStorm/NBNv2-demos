@@ -208,7 +208,7 @@ internal sealed record HarnessEnvironmentConfig
     public string TaskId { get; init; } = "and";
     public string OutputObservationMode { get; init; } = "continuous-potential";
     public int MaxReadyWindowTicks { get; init; } = 4;
-    public int SampleRepeatCount { get; init; } = 3;
+    public int SampleRepeatCount { get; init; } = 1;
     public string StrengthSource { get; init; } = "base-only";
     public HarnessTemplateConfig Template { get; init; } = new();
     public HarnessSizingConfig Sizing { get; init; } = new();

@@ -58,7 +58,7 @@ public static class BasicsTaskExecutionProfiles
         OutputSamplingPolicy: new BasicsOutputSamplingPolicy
         {
             MaxReadyWindowTicks = 4,
-            SampleRepeatCount = 3
+            SampleRepeatCount = 1
         },
         DiversityPreset: BasicsDiversityPreset.Low,
         AdaptiveDiversity: new BasicsAdaptiveDiversityOptions
@@ -111,7 +111,7 @@ public static class BasicsTaskExecutionProfiles
         OutputSamplingPolicy = new BasicsOutputSamplingPolicy
         {
             MaxReadyWindowTicks = 4,
-            SampleRepeatCount = 3
+            SampleRepeatCount = 1
         },
         DiversityPreset = BasicsDiversityPreset.High,
         AdaptiveDiversity = new BasicsAdaptiveDiversityOptions
@@ -154,8 +154,8 @@ public static class BasicsTaskExecutionProfiles
         OutputObservationMode = BasicsOutputObservationMode.EventedOutput,
         OutputSamplingPolicy = new BasicsOutputSamplingPolicy
         {
-            MaxReadyWindowTicks = 5,
-            SampleRepeatCount = 3
+            MaxReadyWindowTicks = 4,
+            SampleRepeatCount = 1
         },
         AdaptiveDiversity = new BasicsAdaptiveDiversityOptions
         {

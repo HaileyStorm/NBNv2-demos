@@ -171,12 +171,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _adaptiveDiversityEnabled = true;
     private string _adaptiveDiversityStallGenerationWindowText = "4";
     private string _maxReadyWindowTicksText = "4";
-    private string _sampleRepeatCountText = "3";
+    private string _sampleRepeatCountText = "1";
     private string _booleanLowInputValueText = "0.0";
     private string _booleanHighInputValueText = "1.0";
     private string _gtUniqueInputValuesText = "3";
-    private string _multiplicationUniqueInputValuesText = "5";
-    private string _multiplicationToleranceText = "0.05";
+    private string _multiplicationUniqueInputValuesText = "7";
+    private string _multiplicationToleranceText = "0.03";
     private string _fitnessWeightText = "0.55";
     private string _diversityWeightText = "0.35";
     private string _speciesBalanceWeightText = "0.15";
@@ -778,7 +778,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
             if (ShowMultiplicationTaskSettings)
             {
-                var count = TryParsePositiveInt(MultiplicationUniqueInputValuesText, fallbackValue: 5);
+                var count = TryParsePositiveInt(MultiplicationUniqueInputValuesText, fallbackValue: 7);
                 var interiorAxisCount = Math.Max(0, count - 2);
                 var interiorCount = interiorAxisCount * interiorAxisCount;
                 var edgeCount = count <= 2 ? count * count : Math.Min((count * count) - interiorCount, Math.Max(4, interiorCount));
@@ -2540,7 +2540,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 : FormatRuntimeSeconds(snapshot.LatestBatchTiming.AverageSetupSeconds),
             snapshot.LatestBatchTiming is null
                 ? "Instrumentation appears after the first evaluated batch."
-                : "Average setup-to-ready time per brain: brain-info/configure/subscribe/prime.");
+                : "Average setup time per brain: brain-info/configure/subscribe before observation starts.");
         UpdateMetricSummary(
             BasicsMetricId.LatestObservationDuration,
             snapshot.LatestBatchTiming is null
@@ -2548,7 +2548,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 : FormatRuntimeSeconds(snapshot.LatestBatchTiming.AverageObservationSeconds),
             snapshot.LatestBatchTiming is null
                 ? "Instrumentation appears after the first evaluated batch."
-                : "Average sample-observation time per brain; long waits here usually mean output timeouts/retries.");
+                : BuildObservationMetricDetail(snapshot.LatestBatchTiming));
 
         if (CanUseBestCandidateForExport(snapshot.BestCandidate))
         {
@@ -3457,7 +3457,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static string BuildBatchTimingStatus(BasicsExecutionBatchTimingSummary timing)
     {
-        var detail = $"Last batch {timing.BatchIndex}/{timing.BatchCount}: total {FormatRuntimeSeconds(timing.BatchDurationSeconds)}, queue {FormatRuntimeSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn {FormatRuntimeSeconds(timing.AverageSpawnRequestSeconds)}/brain, placement {FormatRuntimeSeconds(timing.AveragePlacementWaitSeconds)}/brain, setup {FormatRuntimeSeconds(timing.AverageSetupSeconds)}/brain, observe {FormatRuntimeSeconds(timing.AverageObservationSeconds)}/brain.";
+        var detail = $"Last batch {timing.BatchIndex}/{timing.BatchCount}: total {FormatRuntimeSeconds(timing.BatchDurationSeconds)}, queue {FormatRuntimeSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn {FormatRuntimeSeconds(timing.AverageSpawnRequestSeconds)}/brain, placement {FormatRuntimeSeconds(timing.AveragePlacementWaitSeconds)}/brain, setup {FormatRuntimeSeconds(timing.AverageSetupSeconds)}/brain, {FormatObservationTiming(timing)}.";
         if (!string.IsNullOrWhiteSpace(timing.FailureSummary))
         {
             detail += $" Failures: {timing.FailureSummary}.";
@@ -3468,7 +3468,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static string BuildGenerationTimingStatus(BasicsExecutionGenerationTimingSummary timing)
     {
-        var detail = $"Generation timing: total {FormatRuntimeSeconds(timing.TotalDurationSeconds)}, avg batch {FormatRuntimeSeconds(timing.AverageBatchDurationSeconds)}, placement {FormatRuntimeSeconds(timing.AveragePlacementWaitSeconds)}/brain, setup {FormatRuntimeSeconds(timing.AverageSetupSeconds)}/brain, observe {FormatRuntimeSeconds(timing.AverageObservationSeconds)}/brain.";
+        var detail = $"Generation timing: total {FormatRuntimeSeconds(timing.TotalDurationSeconds)}, avg batch {FormatRuntimeSeconds(timing.AverageBatchDurationSeconds)}, placement {FormatRuntimeSeconds(timing.AveragePlacementWaitSeconds)}/brain, setup {FormatRuntimeSeconds(timing.AverageSetupSeconds)}/brain, {FormatObservationTiming(timing)}.";
         if (!string.IsNullOrWhiteSpace(timing.FailureSummary))
         {
             detail += $" Failures: {timing.FailureSummary}.";
@@ -3481,6 +3481,18 @@ public sealed class MainWindowViewModel : ViewModelBase
         => seconds >= 10d
             ? $"{seconds:0.0}s"
             : $"{seconds:0.00}s";
+
+    private static string FormatRuntimeMilliseconds(double seconds)
+        => $"{seconds * 1000d:0.#}ms";
+
+    private static string BuildObservationMetricDetail(BasicsExecutionBatchTimingSummary timing)
+        => $"Average observation wall time per brain, including neutral prime plus sample attempts; {timing.AverageObservationAttemptCount:0.#} sample attempts/brain, {FormatRuntimeMilliseconds(timing.AverageObservationSecondsPerAttempt)}/attempt including prime overhead. Breakdown/brain: pause {FormatRuntimeMilliseconds(timing.AverageObservationPauseSeconds)}, reset {FormatRuntimeMilliseconds(timing.AverageObservationResetSeconds)}, input {FormatRuntimeMilliseconds(timing.AverageObservationInputSeconds)}, resume {FormatRuntimeMilliseconds(timing.AverageObservationResumeSeconds)}, wait {FormatRuntimeMilliseconds(timing.AverageObservationWaitSeconds)}.";
+
+    private static string FormatObservationTiming(BasicsExecutionBatchTimingSummary timing)
+        => $"observe {FormatRuntimeSeconds(timing.AverageObservationSeconds)}/brain all-samples+prime ({timing.AverageObservationAttemptCount:0.#} sample attempts, {FormatRuntimeMilliseconds(timing.AverageObservationSecondsPerAttempt)}/attempt; pause {FormatRuntimeMilliseconds(timing.AverageObservationPauseSeconds)}, reset {FormatRuntimeMilliseconds(timing.AverageObservationResetSeconds)}, input {FormatRuntimeMilliseconds(timing.AverageObservationInputSeconds)}, resume {FormatRuntimeMilliseconds(timing.AverageObservationResumeSeconds)}, wait {FormatRuntimeMilliseconds(timing.AverageObservationWaitSeconds)})";
+
+    private static string FormatObservationTiming(BasicsExecutionGenerationTimingSummary timing)
+        => $"observe {FormatRuntimeSeconds(timing.AverageObservationSeconds)}/brain all-samples+prime ({timing.AverageObservationAttemptCount:0.#} sample attempts, {FormatRuntimeMilliseconds(timing.AverageObservationSecondsPerAttempt)}/attempt; pause {FormatRuntimeMilliseconds(timing.AverageObservationPauseSeconds)}, reset {FormatRuntimeMilliseconds(timing.AverageObservationResetSeconds)}, input {FormatRuntimeMilliseconds(timing.AverageObservationInputSeconds)}, resume {FormatRuntimeMilliseconds(timing.AverageObservationResumeSeconds)}, wait {FormatRuntimeMilliseconds(timing.AverageObservationWaitSeconds)})";
 
     private static IEnumerable<TaskOption> BuildTasks()
     {
@@ -3558,7 +3570,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         yield return new MetricSummaryItemViewModel(BasicsMetricId.CapacityUtilization, "Capacity score", "—", "Filled from IO capacity planning.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.LatestBatchDuration, "Last batch", "—", "Instrumentation appears after the first evaluated batch.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.LatestSetupDuration, "Setup/brain", "—", "Average brain-info/configure/subscribe/prime time per evaluated batch.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.LatestObservationDuration, "Observe/brain", "—", "Average sample-observation time per evaluated batch.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.LatestObservationDuration, "Observe all/brain", "—", "Average observation time per evaluated brain, including neutral prime plus all sample attempts.");
     }
 
     private static IEnumerable<MetricSummaryItemViewModel> BuildBestBrainMetricSummaryItems()

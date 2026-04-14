@@ -43,7 +43,30 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private readonly TimeSpan _evaluationProgressPublishInterval;
     private readonly TimeSpan _breedingProgressPublishInterval;
 
-    private readonly record struct ObservationAttemptResult(BasicsTaskObservation? Observation, string? FailureDetail);
+    private readonly record struct ObservationAttemptResult(
+        BasicsTaskObservation? Observation,
+        string? FailureDetail,
+        ObservationTiming Timing = default);
+
+    private readonly record struct PrimeObservationResult(string? FailureDetail, ObservationTiming Timing);
+
+    private readonly record struct ObservationTiming(
+        TimeSpan Pause,
+        TimeSpan Reset,
+        TimeSpan Input,
+        TimeSpan Resume,
+        TimeSpan Wait,
+        int AttemptedSampleCount)
+    {
+        public ObservationTiming Add(ObservationTiming other)
+            => new(
+                Pause + other.Pause,
+                Reset + other.Reset,
+                Input + other.Input,
+                Resume + other.Resume,
+                Wait + other.Wait,
+                AttemptedSampleCount + other.AttemptedSampleCount);
+    }
 
     public BasicsExecutionSession(
         IBasicsRuntimeClient runtimeClient,
@@ -1400,6 +1423,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var placementWaitTotal = TimeSpan.Zero;
         var setupTotal = TimeSpan.Zero;
         var observationTotal = TimeSpan.Zero;
+        var observationTimingTotal = default(ObservationTiming);
         var totalElapsed = TimeSpan.Zero;
 
         MemberEvaluationResult? lastResult = null;
@@ -1435,6 +1459,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 placementWaitTotal += result.Telemetry.PlacementWait;
                 setupTotal += result.Telemetry.Setup;
                 observationTotal += result.Telemetry.Observation;
+                observationTimingTotal = observationTimingTotal.Add(result.Telemetry.ObservationTiming);
                 totalElapsed += result.Telemetry.Total;
                 lastResult = result;
 
@@ -1447,7 +1472,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         placementWaitTotal,
                         setupTotal,
                         observationTotal,
-                        totalElapsed);
+                        totalElapsed,
+                        observationTimingTotal);
                 }
 
                 if (result.Member.ActiveBrainId != Guid.Empty)
@@ -1468,7 +1494,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 placementWaitTotal,
                 setupTotal,
                 observationTotal,
-                totalElapsed);
+                totalElapsed,
+                observationTimingTotal);
         }
         finally
         {
@@ -1503,6 +1530,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var placementWait = TimeSpan.Zero;
         var setup = TimeSpan.Zero;
         var observation = TimeSpan.Zero;
+        var observationTiming = default(ObservationTiming);
         PopulationMember resultMember = member;
         try
         {
@@ -1644,21 +1672,22 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
             // Spawned evaluation brains start paused. Prime the output path while still paused so
             // the first scored sample does not race either cold resume or sample-input delivery.
-            var activationFailure = await PrimeOutputObservationAsync(
+            var activationResult = await PrimeOutputObservationAsync(
                     brainId,
                     taskPlugin.Contract.InputWidth,
                     cancellationToken)
                 .ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(activationFailure))
+            observationTiming = observationTiming.Add(activationResult.Timing);
+            if (!string.IsNullOrWhiteSpace(activationResult.FailureDetail))
             {
                 resultMember = member with
                 {
-                    LastEvaluation = CreateTransportFailure($"output_timeout_or_width_mismatch:{activationFailure}"),
+                    LastEvaluation = CreateTransportFailure($"output_timeout_or_width_mismatch:{activationResult.FailureDetail}"),
                     EvaluationGeneration = generation,
                     ActiveBrainId = brainId
                 };
                 observation = observationStopwatch.Elapsed;
-                return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, placementWait, setup, observation, totalStopwatch.Elapsed);
+                return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, placementWait, setup, observation, totalStopwatch.Elapsed, observationTiming);
             }
 
             var observations = new List<BasicsTaskObservation>();
@@ -1680,6 +1709,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             outputSamplingPolicy,
                             cancellationToken)
                         .ConfigureAwait(false);
+                    observationTiming = observationTiming.Add(sampleObservation.Timing);
                     if (sampleObservation.Observation is null)
                     {
                         var failureDetail = string.IsNullOrWhiteSpace(sampleObservation.FailureDetail)
@@ -1692,7 +1722,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             ActiveBrainId = brainId
                         };
                         observation = observationStopwatch.Elapsed;
-                        return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, placementWait, setup, observation, totalStopwatch.Elapsed);
+                        return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, placementWait, setup, observation, totalStopwatch.Elapsed, observationTiming);
                     }
 
                     repeatedObservations.Add(sampleObservation.Observation.Value);
@@ -1720,7 +1750,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 EvaluationGeneration = generation,
                 ActiveBrainId = brainId
             };
-            return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, placementWait, setup, observation, totalStopwatch.Elapsed);
+            return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, placementWait, setup, observation, totalStopwatch.Elapsed, observationTiming);
         }
         catch (OperationCanceledException)
         {
@@ -1926,7 +1956,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         TimeSpan placementWait,
         TimeSpan setup,
         TimeSpan observation,
-        TimeSpan total)
+        TimeSpan total,
+        ObservationTiming observationTiming = default)
         => new(
             member,
             new MemberEvaluationTelemetry(
@@ -1936,6 +1967,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 setup,
                 observation,
                 total,
+                observationTiming,
                 ResolveFailureCategory(member.LastEvaluation)));
 
     private static string BuildBatchStartDetail(
@@ -1951,12 +1983,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return detail;
         }
 
-        return $"{detail} Previous batch {FormatSeconds(previousBatch.BatchDurationSeconds)} total; queue {FormatSeconds(previousBatch.AverageQueueWaitSeconds)}/brain, spawn {FormatSeconds(previousBatch.AverageSpawnRequestSeconds)}/brain, placement {FormatSeconds(previousBatch.AveragePlacementWaitSeconds)}/brain, setup {FormatSeconds(previousBatch.AverageSetupSeconds)}/brain, observe {FormatSeconds(previousBatch.AverageObservationSeconds)}/brain.";
+        return $"{detail} Previous batch {FormatSeconds(previousBatch.BatchDurationSeconds)} total; queue {FormatSeconds(previousBatch.AverageQueueWaitSeconds)}/brain, spawn {FormatSeconds(previousBatch.AverageSpawnRequestSeconds)}/brain, placement {FormatSeconds(previousBatch.AveragePlacementWaitSeconds)}/brain, setup {FormatSeconds(previousBatch.AverageSetupSeconds)}/brain, {FormatObservationTiming(previousBatch)}.";
     }
 
     private static string BuildBatchCompletionDetail(BasicsExecutionBatchTimingSummary timing)
     {
-        var detail = $"Batch {timing.BatchIndex}/{timing.BatchCount} finished in {FormatSeconds(timing.BatchDurationSeconds)}; queue {FormatSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn {FormatSeconds(timing.AverageSpawnRequestSeconds)}/brain, placement {FormatSeconds(timing.AveragePlacementWaitSeconds)}/brain, setup {FormatSeconds(timing.AverageSetupSeconds)}/brain, observe {FormatSeconds(timing.AverageObservationSeconds)}/brain.";
+        var detail = $"Batch {timing.BatchIndex}/{timing.BatchCount} finished in {FormatSeconds(timing.BatchDurationSeconds)}; queue {FormatSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn {FormatSeconds(timing.AverageSpawnRequestSeconds)}/brain, placement {FormatSeconds(timing.AveragePlacementWaitSeconds)}/brain, setup {FormatSeconds(timing.AverageSetupSeconds)}/brain, {FormatObservationTiming(timing)}.";
         if (!string.IsNullOrWhiteSpace(timing.FailureSummary))
         {
             detail = $"{detail} Failures: {timing.FailureSummary}.";
@@ -1992,7 +2024,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return detail;
         }
 
-        return $"{detail} Previous batch {FormatSeconds(previousBatch.BatchDurationSeconds)} total; queue {FormatSeconds(previousBatch.AverageQueueWaitSeconds)}/brain, spawn {FormatSeconds(previousBatch.AverageSpawnRequestSeconds)}/brain, placement {FormatSeconds(previousBatch.AveragePlacementWaitSeconds)}/brain, setup {FormatSeconds(previousBatch.AverageSetupSeconds)}/brain, observe {FormatSeconds(previousBatch.AverageObservationSeconds)}/brain.";
+        return $"{detail} Previous batch {FormatSeconds(previousBatch.BatchDurationSeconds)} total; queue {FormatSeconds(previousBatch.AverageQueueWaitSeconds)}/brain, spawn {FormatSeconds(previousBatch.AverageSpawnRequestSeconds)}/brain, placement {FormatSeconds(previousBatch.AveragePlacementWaitSeconds)}/brain, setup {FormatSeconds(previousBatch.AverageSetupSeconds)}/brain, {FormatObservationTiming(previousBatch)}.";
     }
 
     private static string BuildInFlightBrainProgressDetail(IReadOnlyList<InFlightBrainProgress>? inFlightBrains)
@@ -2051,6 +2083,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 0d,
                 0d,
                 0d,
+                0d,
+                0d,
+                0d,
+                0d,
+                0d,
+                0d,
+                0d,
                 string.Empty);
         }
 
@@ -2076,6 +2115,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             results.Average(static result => result.Telemetry.PlacementWait.TotalSeconds),
             results.Average(static result => result.Telemetry.Setup.TotalSeconds),
             results.Average(static result => result.Telemetry.Observation.TotalSeconds),
+            results.Average(static result => result.Telemetry.ObservationTiming.AttemptedSampleCount),
+            ResolveAverageObservationSecondsPerAttempt(results),
+            results.Average(static result => result.Telemetry.ObservationTiming.Pause.TotalSeconds),
+            results.Average(static result => result.Telemetry.ObservationTiming.Reset.TotalSeconds),
+            results.Average(static result => result.Telemetry.ObservationTiming.Input.TotalSeconds),
+            results.Average(static result => result.Telemetry.ObservationTiming.Resume.TotalSeconds),
+            results.Average(static result => result.Telemetry.ObservationTiming.Wait.TotalSeconds),
             string.Join("; ", failures));
     }
 
@@ -2096,17 +2142,59 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             batchTimings.Sum(static timing => timing.FailedBrainCount),
             batchTimings.Sum(static timing => timing.BatchDurationSeconds),
             batchTimings.Average(static timing => timing.BatchDurationSeconds),
-            batchTimings.Average(static timing => timing.AverageQueueWaitSeconds),
-            batchTimings.Average(static timing => timing.AverageSpawnRequestSeconds),
-            batchTimings.Average(static timing => timing.AveragePlacementWaitSeconds),
-            batchTimings.Average(static timing => timing.AverageSetupSeconds),
-            batchTimings.Average(static timing => timing.AverageObservationSeconds),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AverageQueueWaitSeconds),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AverageSpawnRequestSeconds),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AveragePlacementWaitSeconds),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AverageSetupSeconds),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AverageObservationSeconds),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AverageObservationAttemptCount),
+            ResolveAverageObservationSecondsPerAttempt(batchTimings),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AverageObservationPauseSeconds),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AverageObservationResetSeconds),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AverageObservationInputSeconds),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AverageObservationResumeSeconds),
+            WeightedAverageByBrain(batchTimings, static timing => timing.AverageObservationWaitSeconds),
             string.Join(
                 "; ",
                 batchTimings
                     .Select(static timing => timing.FailureSummary)
                     .Where(static value => !string.IsNullOrWhiteSpace(value))
                     .Distinct(StringComparer.Ordinal)));
+    }
+
+    private static double ResolveAverageObservationSecondsPerAttempt(IReadOnlyList<MemberEvaluationResult> results)
+    {
+        var attemptedSamples = results.Sum(static result => result.Telemetry.ObservationTiming.AttemptedSampleCount);
+        if (attemptedSamples <= 0)
+        {
+            return 0d;
+        }
+
+        return results.Sum(static result => result.Telemetry.Observation.TotalSeconds) / attemptedSamples;
+    }
+
+    private static double ResolveAverageObservationSecondsPerAttempt(IReadOnlyList<BasicsExecutionBatchTimingSummary> timings)
+    {
+        var attemptedSamples = timings.Sum(static timing => timing.AverageObservationAttemptCount * timing.BrainCount);
+        if (attemptedSamples <= 0d)
+        {
+            return 0d;
+        }
+
+        return timings.Sum(static timing => timing.AverageObservationSeconds * timing.BrainCount) / attemptedSamples;
+    }
+
+    private static double WeightedAverageByBrain(
+        IReadOnlyList<BasicsExecutionBatchTimingSummary> timings,
+        Func<BasicsExecutionBatchTimingSummary, double> selector)
+    {
+        var brainCount = timings.Sum(static timing => timing.BrainCount);
+        if (brainCount <= 0)
+        {
+            return 0d;
+        }
+
+        return timings.Sum(timing => selector(timing) * timing.BrainCount) / brainCount;
     }
 
     private static string ResolveFailureCategory(BasicsTaskEvaluationResult? evaluation)
@@ -2144,6 +2232,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             ? $"{seconds:0.0}s"
             : $"{seconds:0.00}s";
 
+    private static string FormatMilliseconds(double seconds)
+        => $"{seconds * 1000d:0.#}ms";
+
+    private static string FormatObservationTiming(BasicsExecutionBatchTimingSummary timing)
+        => $"observe {FormatSeconds(timing.AverageObservationSeconds)}/brain all-samples+prime ({timing.AverageObservationAttemptCount:0.#} sample attempts, {FormatMilliseconds(timing.AverageObservationSecondsPerAttempt)}/attempt; pause {FormatMilliseconds(timing.AverageObservationPauseSeconds)}, reset {FormatMilliseconds(timing.AverageObservationResetSeconds)}, input {FormatMilliseconds(timing.AverageObservationInputSeconds)}, resume {FormatMilliseconds(timing.AverageObservationResumeSeconds)}, wait {FormatMilliseconds(timing.AverageObservationWaitSeconds)})";
+
+    private static string FormatObservationTiming(BasicsExecutionGenerationTimingSummary timing)
+        => $"observe {FormatSeconds(timing.AverageObservationSeconds)}/brain all-samples+prime ({timing.AverageObservationAttemptCount:0.#} sample attempts, {FormatMilliseconds(timing.AverageObservationSecondsPerAttempt)}/attempt; pause {FormatMilliseconds(timing.AverageObservationPauseSeconds)}, reset {FormatMilliseconds(timing.AverageObservationResetSeconds)}, input {FormatMilliseconds(timing.AverageObservationInputSeconds)}, resume {FormatMilliseconds(timing.AverageObservationResumeSeconds)}, wait {FormatMilliseconds(timing.AverageObservationWaitSeconds)})";
+
     private async Task<ObservationAttemptResult> ObserveSampleAsync(
         Guid brainId,
         BasicsTaskSample sample,
@@ -2152,28 +2249,37 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         BasicsOutputSamplingPolicy outputSamplingPolicy,
         CancellationToken cancellationToken)
     {
+        var pauseStopwatch = Stopwatch.StartNew();
         var pauseAck = await _runtimeClient.PauseBrainAsync(
                 brainId,
                 reason: "basics_sample_boundary",
                 cancellationToken)
             .ConfigureAwait(false);
         ValidateIoCommandAck(pauseAck, brainId, "pause_brain");
+        var pause = pauseStopwatch.Elapsed;
 
+        var resetStopwatch = Stopwatch.StartNew();
         await ResetBrainRuntimeStateForSampleAsync(brainId, cancellationToken).ConfigureAwait(false);
+        var reset = resetStopwatch.Elapsed;
 
         _runtimeClient.ResetOutputBuffer(brainId);
         _runtimeClient.ResetOutputEventBuffer(brainId);
 
+        var inputStopwatch = Stopwatch.StartNew();
         await _runtimeClient.SendInputVectorAsync(
                 brainId,
                 new[] { sample.InputA, sample.InputB },
                 cancellationToken)
             .ConfigureAwait(false);
+        var input = inputStopwatch.Elapsed;
 
+        var resumeStopwatch = Stopwatch.StartNew();
         var resumeAck = await _runtimeClient.ResumeBrainAsync(brainId, cancellationToken).ConfigureAwait(false);
         ValidateIoCommandAck(resumeAck, brainId, "resume_brain");
+        var resume = resumeStopwatch.Elapsed;
 
-        return outputObservationMode == BasicsOutputObservationMode.EventedOutput
+        var waitStopwatch = Stopwatch.StartNew();
+        var result = outputObservationMode == BasicsOutputObservationMode.EventedOutput
             ? await WaitForReadyEventObservationAsync(
                     brainId,
                     lastTick,
@@ -2187,43 +2293,67 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     outputSamplingPolicy,
                     cancellationToken)
                 .ConfigureAwait(false);
+        var wait = waitStopwatch.Elapsed;
+        var timing = new ObservationTiming(
+            pause,
+            reset,
+            input,
+            resume,
+            wait,
+            1);
+        return result with { Timing = timing };
     }
 
-    private async Task<string?> PrimeOutputObservationAsync(
+    private async Task<PrimeObservationResult> PrimeOutputObservationAsync(
         Guid brainId,
         uint inputWidth,
         CancellationToken cancellationToken)
     {
         if (brainId == Guid.Empty || inputWidth == 0)
         {
-            return null;
+            return new PrimeObservationResult(null, default);
         }
 
+        var resetStopwatch = Stopwatch.StartNew();
         await ResetBrainRuntimeStateForSampleAsync(brainId, cancellationToken).ConfigureAwait(false);
+        var reset = resetStopwatch.Elapsed;
 
         _runtimeClient.ResetOutputBuffer(brainId);
         _runtimeClient.ResetOutputEventBuffer(brainId);
+        var inputStopwatch = Stopwatch.StartNew();
         await _runtimeClient.SendInputVectorAsync(
                 brainId,
                 CreateNeutralInputVector(inputWidth),
                 cancellationToken)
             .ConfigureAwait(false);
+        var input = inputStopwatch.Elapsed;
 
+        var resumeStopwatch = Stopwatch.StartNew();
         var resumeAck = await _runtimeClient.ResumeBrainAsync(brainId, cancellationToken).ConfigureAwait(false);
         ValidateIoCommandAck(resumeAck, brainId, "resume_brain");
+        var resume = resumeStopwatch.Elapsed;
 
+        var waitStopwatch = Stopwatch.StartNew();
         var output = await _runtimeClient.WaitForOutputVectorAsync(
                 brainId,
                 afterTickExclusive: 0,
                 InitialBrainActivationTimeout,
                 cancellationToken)
             .ConfigureAwait(false);
+        var wait = waitStopwatch.Elapsed;
+        var timing = new ObservationTiming(
+            TimeSpan.Zero,
+            reset,
+            input,
+            resume,
+            wait,
+            0);
         var failureDetail = ClassifyObservationVectorFailure(output, 0, lastTick: 0);
         if (failureDetail is not null)
         {
-            return $"startup_{failureDetail}";
+            return new PrimeObservationResult($"startup_{failureDetail}", timing);
         }
-        return null;
+        return new PrimeObservationResult(null, timing);
     }
 
     private async Task<ObservationAttemptResult> WaitForReadyVectorObservationAsync(
@@ -4912,7 +5042,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         if (timing is not null)
         {
-            summary += $" Timing: total={FormatSeconds(timing.TotalDurationSeconds)}, avg_batch={FormatSeconds(timing.AverageBatchDurationSeconds)}, queue={FormatSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn={FormatSeconds(timing.AverageSpawnRequestSeconds)}/brain, placement={FormatSeconds(timing.AveragePlacementWaitSeconds)}/brain, setup={FormatSeconds(timing.AverageSetupSeconds)}/brain, observe={FormatSeconds(timing.AverageObservationSeconds)}/brain.";
+            summary += $" Timing: total={FormatSeconds(timing.TotalDurationSeconds)}, avg_batch={FormatSeconds(timing.AverageBatchDurationSeconds)}, queue={FormatSeconds(timing.AverageQueueWaitSeconds)}/brain, spawn={FormatSeconds(timing.AverageSpawnRequestSeconds)}/brain, placement={FormatSeconds(timing.AveragePlacementWaitSeconds)}/brain, setup={FormatSeconds(timing.AverageSetupSeconds)}/brain, {FormatObservationTiming(timing)}.";
         }
 
         return summary;
@@ -5082,6 +5212,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         TimeSpan Setup,
         TimeSpan Observation,
         TimeSpan Total,
+        ObservationTiming ObservationTiming,
         string FailureCategory);
 
     private readonly record struct MemberEvaluationResult(

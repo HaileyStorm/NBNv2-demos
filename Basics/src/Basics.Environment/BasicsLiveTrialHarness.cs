@@ -210,7 +210,9 @@ public sealed record BasicsLiveTrialSnapshotRecord(
     float MeanFitness,
     BasicsLiveTrialBestCandidateRecord? BestCandidate,
     IReadOnlyList<float> AccuracyHistory,
-    IReadOnlyList<float> BestFitnessHistory)
+    IReadOnlyList<float> BestFitnessHistory,
+    BasicsExecutionBatchTimingSummary? LatestBatchTiming = null,
+    BasicsExecutionGenerationTimingSummary? LatestGenerationTiming = null)
 {
     public IReadOnlyList<BasicsExecutionBootstrapCandidateTrace> BootstrapCandidateTraces { get; init; } = Array.Empty<BasicsExecutionBootstrapCandidateTrace>();
 }
@@ -745,7 +747,9 @@ public sealed class BasicsLiveTrialHarness
                     BootstrapOrigin = snapshot.BestCandidate.BootstrapOrigin
                 },
             AccuracyHistory: snapshot.AccuracyHistory.ToArray(),
-            BestFitnessHistory: snapshot.BestFitnessHistory.ToArray())
+            BestFitnessHistory: snapshot.BestFitnessHistory.ToArray(),
+            LatestBatchTiming: snapshot.LatestBatchTiming,
+            LatestGenerationTiming: snapshot.LatestGenerationTiming)
         {
             BootstrapCandidateTraces = snapshot.BootstrapCandidateTraces
                 .Select(trace => new BasicsExecutionBootstrapCandidateTrace(

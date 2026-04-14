@@ -222,11 +222,41 @@ public sealed class BasicsContractTests
     }
 
     [Fact]
-    public void OutputSamplingPolicy_DefaultsToThreeSampleRepeats()
+    public void OutputSamplingPolicy_DefaultsToSingleSampleRepeat()
     {
         var policy = new BasicsOutputSamplingPolicy();
 
-        Assert.Equal(3, policy.SampleRepeatCount);
+        Assert.Equal(1, policy.SampleRepeatCount);
+    }
+
+    [Fact]
+    public void ReproductionBudgetPlanner_ClampsRunCountByMinMaxAndCapacity()
+    {
+        var policy = new BasicsRunAllocationPolicy
+        {
+            MinRunsPerPair = 2,
+            MaxRunsPerPair = 8,
+            FitnessExponent = 1d,
+            DiversityBoost = 0d
+        };
+
+        Assert.Equal(2u, BasicsReproductionBudgetPlanner.ResolveRunCount(policy, capacityBound: 1, normalizedFitness: 1f, normalizedNovelty: 1f));
+        Assert.Equal(8u, BasicsReproductionBudgetPlanner.ResolveRunCount(policy, capacityBound: 0, normalizedFitness: 1f, normalizedNovelty: 1f));
+        Assert.Equal(8u, BasicsReproductionBudgetPlanner.ResolveRunCount(policy, capacityBound: 12, normalizedFitness: 1f, normalizedNovelty: 1f));
+        Assert.Equal(2u, BasicsReproductionBudgetPlanner.ResolveRunCount(policy, capacityBound: 8, normalizedFitness: 0f, normalizedNovelty: 0f));
+    }
+
+    [Fact]
+    public void ReproductionBudgetPlanner_UsesConstantRunCount_WhenMinEqualsMax()
+    {
+        var policy = new BasicsRunAllocationPolicy
+        {
+            MinRunsPerPair = 3,
+            MaxRunsPerPair = 3
+        };
+
+        Assert.Equal(3u, BasicsReproductionBudgetPlanner.ResolveRunCount(policy, capacityBound: 0, normalizedFitness: 0f, normalizedNovelty: 0f));
+        Assert.Equal(3u, BasicsReproductionBudgetPlanner.ResolveRunCount(policy, capacityBound: 32, normalizedFitness: 1f, normalizedNovelty: 1f));
     }
 
     [Fact]

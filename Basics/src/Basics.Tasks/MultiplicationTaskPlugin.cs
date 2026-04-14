@@ -14,7 +14,7 @@ public sealed class MultiplicationTaskPlugin : IBasicsTaskPlugin
         InputWidth: BasicsIoGeometry.InputWidth,
         OutputWidth: BasicsIoGeometry.OutputWidth,
         UsesTickAlignedEvaluation: true,
-        Description: "Bounded scalar multiplication over a deterministic stratified grid in [0,1], keeping all interior samples and a capped boundary subset, with normalized output equal to a*b and tolerance accuracy measured at +/-0.05.");
+        Description: "Bounded scalar multiplication over a deterministic stratified grid in [0,1], keeping all interior samples and a capped boundary subset, with normalized output equal to a*b and tolerance accuracy measured at the configured tolerance.");
 
     public MultiplicationTaskPlugin(BasicsMultiplicationTaskSettings? settings = null)
     {

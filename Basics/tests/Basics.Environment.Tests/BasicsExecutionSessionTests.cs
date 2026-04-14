@@ -547,6 +547,10 @@ public sealed class BasicsExecutionSessionTests
                 final.EvaluationFailureSummary,
                 StringComparison.Ordinal);
             Assert.True(runtimeClient.SpawnRequestCount > 2, $"Expected vector-missing failures to retry, observed {runtimeClient.SpawnRequestCount} spawn request(s).");
+            Assert.NotNull(final.LatestBatchTiming);
+            Assert.Equal(0d, final.LatestBatchTiming!.AverageObservationAttemptCount);
+            Assert.Equal(0d, final.LatestBatchTiming.AverageObservationSecondsPerAttempt);
+            Assert.True(final.LatestBatchTiming.AverageObservationWaitSeconds > 0d);
         }
         finally
         {
@@ -2673,8 +2677,13 @@ public sealed class BasicsExecutionSessionTests
                 $"Expected a successful terminal state, but observed {final.State}.");
             Assert.NotNull(final.LatestBatchTiming);
             Assert.True(final.LatestBatchTiming!.AveragePlacementWaitSeconds > 0.01d);
+            Assert.True(final.LatestBatchTiming.AverageObservationAttemptCount >= 4d);
+            Assert.True(final.LatestBatchTiming.AverageObservationSecondsPerAttempt > 0d);
+            Assert.True(final.LatestBatchTiming.AverageObservationResetSeconds > 0d);
+            Assert.True(final.LatestBatchTiming.AverageObservationWaitSeconds > 0d);
             Assert.NotNull(final.LatestGenerationTiming);
             Assert.True(final.LatestGenerationTiming!.AveragePlacementWaitSeconds > 0.01d);
+            Assert.True(final.LatestGenerationTiming.AverageObservationSecondsPerAttempt > 0d);
         }
         finally
         {
