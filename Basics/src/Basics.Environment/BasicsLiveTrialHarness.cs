@@ -261,6 +261,7 @@ public sealed class BasicsLiveTrialHarness
 {
     private const int EventedReadyWindowTuningStep = 4;
     private const int EventedReadyWindowAutoTuneCap = 16;
+    private const int MaxRetainedTrialSnapshotRecords = 4096;
 
     private readonly Func<BasicsRuntimeClientOptions, CancellationToken, Task<IBasicsRuntimeClient>> _runtimeClientFactory;
     private readonly Func<IBasicsRuntimeClient, BasicsTemplatePublishingOptions, IBasicsExecutionRunner> _executionRunnerFactory;
@@ -325,7 +326,8 @@ public sealed class BasicsLiveTrialHarness
             var stopwatch = Stopwatch.StartNew();
             BasicsEnvironmentPlan? plan = null;
             BasicsLiveTrialSnapshotRecord? terminalSnapshot = null;
-            var snapshotRecords = new List<BasicsLiveTrialSnapshotRecord>();
+            var snapshotRecords = new Queue<BasicsLiveTrialSnapshotRecord>();
+            var observedSnapshotCount = 0;
             string outcomeDetail;
             BasicsLiveTrialOutcome outcome;
             BasicsLiveTuningDecision? tuningDecision = null;
@@ -374,7 +376,13 @@ public sealed class BasicsLiveTrialHarness
                                         var record = CreateSnapshotRecord(snapshot);
                                         lock (snapshotRecords)
                                         {
-                                            snapshotRecords.Add(record);
+                                            observedSnapshotCount++;
+                                            snapshotRecords.Enqueue(record);
+                                            while (snapshotRecords.Count > MaxRetainedTrialSnapshotRecords)
+                                            {
+                                                snapshotRecords.Dequeue();
+                                            }
+
                                             lastSnapshot = record;
                                         }
 
@@ -488,7 +496,7 @@ public sealed class BasicsLiveTrialHarness
                 AppliedConfiguration: trialConfiguration,
                 PlanSummary: plan is null ? null : CreatePlanSummary(plan),
                 TerminalSnapshot: terminalSnapshot,
-                SnapshotCount: snapshotRecords.Count,
+                SnapshotCount: observedSnapshotCount,
                 Snapshots: snapshotRecords.ToArray(),
                 MeetsStabilityCriteria: meetsCriteria,
                 SuccessfulTrialStreakAfterCompletion: successfulTrialStreak,

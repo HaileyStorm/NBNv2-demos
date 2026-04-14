@@ -134,6 +134,69 @@ public sealed class MultiplicationTaskPluginTests
     }
 
     [Fact]
+    public void Evaluate_AddsBehaviorOccupancyMetrics_WithoutRewardingCollapsedOutput()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var exact = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset.Select((sample, index) => new BasicsTaskObservation((ulong)(index + 1), sample.ExpectedOutput)).ToArray());
+        var collapsed = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset.Select((_, index) => new BasicsTaskObservation((ulong)(index + 1), 0f)).ToArray());
+
+        Assert.True(exact.ScoreBreakdown["behavior_output_entropy"] > collapsed.ScoreBreakdown["behavior_output_entropy"]);
+        Assert.True(exact.ScoreBreakdown["behavior_response_diversity"] > collapsed.ScoreBreakdown["behavior_response_diversity"]);
+        Assert.True(exact.ScoreBreakdown["behavior_selection_signal"] > collapsed.ScoreBreakdown["behavior_selection_signal"]);
+        Assert.Equal(0f, collapsed.ScoreBreakdown["behavior_response_diversity"]);
+        Assert.Equal(0f, collapsed.ScoreBreakdown["behavior_selection_signal"]);
+    }
+
+    [Fact]
+    public void Evaluate_GatesNoisyBehaviorOccupancy_WhenReadyConfidenceIsZero()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var noisyNotReady = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset
+                .Select((_, index) => new BasicsTaskObservation(
+                    (ulong)(index + 1),
+                    index % 2 == 0 ? 0f : 1f,
+                    ReadyTickCount: 1f,
+                    ReadyConfidence: 0f))
+                .ToArray());
+
+        Assert.True(noisyNotReady.ScoreBreakdown["behavior_output_entropy"] > 0f);
+        Assert.Equal(0f, noisyNotReady.ScoreBreakdown["behavior_occupancy_signal"]);
+        Assert.Equal(0f, noisyNotReady.ScoreBreakdown["behavior_auxiliary_fitness"]);
+        Assert.Equal(0f, noisyNotReady.ScoreBreakdown["behavior_selection_signal"]);
+    }
+
+    [Fact]
+    public void Evaluate_StagesBehaviorSelectionPressure_UntilBalancedAccuracyIsUseful()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var edgeOnly = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset
+                .Select((sample, index) => new BasicsTaskObservation((ulong)(index + 1), Math.Min(sample.InputA, sample.InputB)))
+                .ToArray());
+        var exact = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset.Select((sample, index) => new BasicsTaskObservation((ulong)(index + 1), sample.ExpectedOutput)).ToArray());
+
+        Assert.True(edgeOnly.ScoreBreakdown["behavior_auxiliary_fitness"] > 0f);
+        Assert.Equal(0f, edgeOnly.ScoreBreakdown["behavior_stage_gate"]);
+        Assert.Equal(0f, edgeOnly.ScoreBreakdown["behavior_selection_signal"]);
+        Assert.Equal(1f, exact.ScoreBreakdown["behavior_stage_gate"]);
+        Assert.True(exact.ScoreBreakdown["behavior_selection_signal"] > 0f);
+    }
+
+    [Fact]
     public void Evaluate_PenalizesLowReadyConfidence()
     {
         var dataset = _plugin.BuildDeterministicDataset();

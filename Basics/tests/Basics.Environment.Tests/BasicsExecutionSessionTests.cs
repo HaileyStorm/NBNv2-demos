@@ -1103,6 +1103,58 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task SelectBestCandidateSummary_UsesBehaviorOccupancy_AsBoundedTieBreaker()
+    {
+        await using var runtimeClient = new FakeBasicsRuntimeClient();
+        var method = typeof(BasicsExecutionSession).GetMethod("SelectBestCandidateSummary", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var lowOccupancy = CreateBestCandidateSummary(
+            runtimeClient,
+            "multiplication",
+            accuracy: 0.70f,
+            fitness: 0.70f,
+            scoreBreakdown: CreateMultiplicationSelectionBreakdown(0.70f, 0.70f, behaviorSelectionSignal: 0f));
+        var highOccupancy = CreateBestCandidateSummary(
+            runtimeClient,
+            "multiplication",
+            accuracy: 0.70f,
+            fitness: 0.70f,
+            scoreBreakdown: CreateMultiplicationSelectionBreakdown(0.70f, 0.70f, behaviorSelectionSignal: 1f));
+
+        var selected = Assert.IsType<BasicsExecutionBestCandidateSummary>(
+            method!.Invoke(null, new object?[] { lowOccupancy, highOccupancy }));
+
+        Assert.Equal(highOccupancy.ArtifactSha256, selected.ArtifactSha256);
+    }
+
+    [Fact]
+    public async Task SelectBestCandidateSummary_DoesNotLetBehaviorOccupancy_OverrideMeaningfulAccuracyLoss()
+    {
+        await using var runtimeClient = new FakeBasicsRuntimeClient();
+        var method = typeof(BasicsExecutionSession).GetMethod("SelectBestCandidateSummary", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var higherAccuracy = CreateBestCandidateSummary(
+            runtimeClient,
+            "multiplication",
+            accuracy: 0.80f,
+            fitness: 0.70f,
+            scoreBreakdown: CreateMultiplicationSelectionBreakdown(0.80f, 0.80f, behaviorSelectionSignal: 0f));
+        var behaviorOnly = CreateBestCandidateSummary(
+            runtimeClient,
+            "multiplication",
+            accuracy: 0.78f,
+            fitness: 0.70f,
+            scoreBreakdown: CreateMultiplicationSelectionBreakdown(0.78f, 0.78f, behaviorSelectionSignal: 1f));
+
+        var selected = Assert.IsType<BasicsExecutionBestCandidateSummary>(
+            method!.Invoke(null, new object?[] { higherAccuracy, behaviorOnly }));
+
+        Assert.Equal(higherAccuracy.ArtifactSha256, selected.ArtifactSha256);
+    }
+
+    [Fact]
     public async Task SelectBestCandidateSummary_PenalizesLowReadyConfidence()
     {
         await using var runtimeClient = new FakeBasicsRuntimeClient();
@@ -1954,6 +2006,33 @@ public sealed class BasicsExecutionSessionTests
                 snapshots,
                 snapshot => snapshot.StatusText.Contains("Generation 2 evaluated.", StringComparison.Ordinal)
                             && snapshot.PopulationCount == 1);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_StopsRetainedOnlySuccessorPopulation_WhenRunIsUnbounded()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            ReturnNoChildrenStartingAtReproduceCallNumber = 2
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential),
+                new AndTaskPlugin(),
+                onSnapshot: null,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.Equal(1, final.Generation);
+            Assert.Contains("no unevaluated offspring", final.DetailText, StringComparison.Ordinal);
         }
         finally
         {
@@ -2972,6 +3051,20 @@ public sealed class BasicsExecutionSessionTests
                 }
                 : new Dictionary<string, float>(scoreBreakdown, StringComparer.Ordinal),
             Diagnostics: Array.Empty<string>());
+
+    private static IReadOnlyDictionary<string, float> CreateMultiplicationSelectionBreakdown(
+        float balancedAccuracy,
+        float edgeAccuracy,
+        float behaviorSelectionSignal)
+        => new Dictionary<string, float>(StringComparer.Ordinal)
+        {
+            ["task_accuracy"] = balancedAccuracy,
+            ["balanced_tolerance_accuracy"] = balancedAccuracy,
+            ["edge_tolerance_accuracy"] = edgeAccuracy,
+            ["interior_tolerance_accuracy"] = balancedAccuracy,
+            ["ready_confidence"] = 1f,
+            ["behavior_selection_signal"] = behaviorSelectionSignal
+        };
 
     private sealed class FakeBasicsRuntimeClient : IBasicsRuntimeClient
     {

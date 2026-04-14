@@ -404,6 +404,35 @@ public sealed class BasicsLiveTrialHarnessTests
         Assert.Equal(1f, trial.Snapshots[^1].BestCandidate!.ScoreBreakdown["dataset_coverage"]);
     }
 
+    [Fact]
+    public async Task LiveTrialHarness_CapsRetainedSnapshots_ButPreservesObservedCountAndLatestSnapshot()
+    {
+        var snapshots = Enumerable.Range(1, 5_000)
+            .Select(index => CreateSnapshot(
+                index == 5_000 ? BasicsExecutionState.Succeeded : BasicsExecutionState.Running,
+                statusText: $"Generation {index} evaluated.",
+                detailText: "Snapshot retention stress.",
+                generation: index,
+                speciesCount: 1,
+                bestAccuracy: index == 5_000 ? 1f : 0.5f,
+                bestFitness: index == 5_000 ? 1f : 0.5f))
+            .ToArray();
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient()),
+            executionRunnerFactory: (_, _) => new ScriptedExecutionRunner(snapshots));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1),
+            new AndTaskPlugin());
+
+        var trial = Assert.Single(report.Trials);
+        Assert.Equal(5_000, trial.SnapshotCount);
+        Assert.Equal(4_096, trial.Snapshots.Count);
+        Assert.True(trial.Snapshots[0].Generation > 1);
+        Assert.Equal(5_000, trial.Snapshots[^1].Generation);
+        Assert.Equal(5_000, trial.TerminalSnapshot!.Generation);
+    }
+
     private static BasicsLiveTrialHarnessOptions CreateOptions(
         int maxTrialCount,
         int requiredSuccessfulTrials,

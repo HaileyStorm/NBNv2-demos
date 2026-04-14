@@ -537,6 +537,39 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         offspringFitnessHistory);
                 }
 
+                if (nextGeneration.All(CanReuseEvaluation)
+                    && !CanCompleteRetainedOnlyGeneration(plan.StopCriteria, generation))
+                {
+                    return CreateFinalSnapshot(
+                        plan.StopCriteria,
+                        publishSnapshot,
+                        BasicsExecutionState.Stopped,
+                        "Execution stopped.",
+                        $"Generation {generation} produced no unevaluated offspring; successor population only contained retained evaluations.",
+                        speciationEpochId,
+                        generation,
+                        population,
+                        0,
+                        reproductionCalls,
+                        reproductionRunsObserved,
+                        effectiveTemplateDefinition,
+                        seedShape,
+                        accuracyHistory,
+                        fitnessHistory,
+                        lastObservedSnapshot,
+                        bestAccuracySoFar,
+                        bestFitnessSoFar,
+                        bestCandidateSoFar,
+                        evaluationResult.LatestBatchTiming,
+                        evaluationResult.GenerationTiming,
+                        offspringAccuracyHistory,
+                        offspringBalancedAccuracyHistory,
+                        balancedAccuracyHistory,
+                        offspringEdgeAccuracyHistory,
+                        offspringInteriorAccuracyHistory,
+                        offspringFitnessHistory);
+                }
+
                 population = nextGeneration;
             }
 
@@ -2227,6 +2260,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static bool CanReuseEvaluation(PopulationMember member)
         => member.LastEvaluation is not null && member.LastEvaluation.Diagnostics.Count == 0;
 
+    private static bool CanCompleteRetainedOnlyGeneration(BasicsExecutionStopCriteria stopCriteria, int currentGeneration)
+        => stopCriteria.MaximumGenerations.HasValue
+           && currentGeneration + 1 >= stopCriteria.MaximumGenerations.Value;
+
     private static string FormatSeconds(double seconds)
         => seconds >= 10d
             ? $"{seconds:0.0}s"
@@ -3295,7 +3332,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             {
                 var speciesId = NormalizeSpeciesId(member.SpeciesId);
                 var speciesCount = speciesCounts.TryGetValue(speciesId, out var count) ? count : 1;
-                var novelty = 1f - (speciesCount / (float)dedupedPopulation.Length);
+                var speciesNovelty = 1f - (speciesCount / (float)dedupedPopulation.Length);
+                var novelty = ResolveSelectionNovelty(member, dedupedPopulation, speciesNovelty);
                 var speciesBalance = 1f - (speciesCount / (float)maxSpeciesCount);
                 var score = BasicsReproductionBudgetPlanner.ScoreParentCandidate(
                     policy,
@@ -3414,7 +3452,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 1f);
             var normalizedNovelty = Math.Max(
                 frontierChild.NormalizedNoveltyHint,
-                ComputeNovelty(elite, population));
+                ResolveSelectionNovelty(elite, population));
             await TryEnqueueBreedingPairAsync(
                     frontierChild.Member,
                     elite,
@@ -3520,8 +3558,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         PopulationMember parentB,
         IReadOnlyList<PopulationMember> population)
         => Math.Max(
-            ComputeNovelty(parentA, population),
-            ComputeNovelty(parentB, population));
+            ResolveSelectionNovelty(parentA, population),
+            ResolveSelectionNovelty(parentB, population));
 
     private static int ResolveWithinGenerationChildFrontierCap(int targetPopulation)
         => Math.Clamp(targetPopulation / 3, 0, 4);
@@ -3699,6 +3737,32 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var speciesCount = population.Count(candidate =>
             string.Equals(NormalizeSpeciesId(candidate.SpeciesId), NormalizeSpeciesId(member.SpeciesId), StringComparison.OrdinalIgnoreCase));
         return Math.Clamp(1f - (speciesCount / (float)population.Count), 0f, 1f);
+    }
+
+    private float ResolveSelectionNovelty(PopulationMember member, IReadOnlyList<PopulationMember> population)
+        => ResolveSelectionNovelty(member, population, ComputeNovelty(member, population));
+
+    private static float ResolveSelectionNovelty(
+        PopulationMember member,
+        IReadOnlyList<PopulationMember> population,
+        float speciesNovelty)
+    {
+        var normalizedSpeciesNovelty = Math.Clamp(speciesNovelty, 0f, 1f);
+        if (population.Count <= 1
+            || member.LastEvaluation is null
+            || !IsBehaviorOccupancyEnabled()
+            || !member.LastEvaluation.ScoreBreakdown.ContainsKey("balanced_tolerance_accuracy"))
+        {
+            return normalizedSpeciesNovelty;
+        }
+
+        var behaviorNovelty = ResolveBehaviorSelectionSignal(member.LastEvaluation.ScoreBreakdown);
+        if (behaviorNovelty <= 0f)
+        {
+            return normalizedSpeciesNovelty;
+        }
+
+        return Math.Clamp((0.75f * normalizedSpeciesNovelty) + (0.25f * behaviorNovelty), 0f, 1f);
     }
 
     private async Task<(string SpeciesId, string SpeciesDisplayName)> CommitArtifactMembershipAsync(
@@ -4975,6 +5039,18 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         if (scoreBreakdown.ContainsKey("balanced_tolerance_accuracy"))
         {
             var edgeAccuracy = ResolveAccuracyBreakdownMetric(scoreBreakdown, "edge_tolerance_accuracy", selectionAccuracy);
+            if (IsBehaviorOccupancyEnabled() && scoreBreakdown.ContainsKey("behavior_selection_signal"))
+            {
+                var behaviorSignal = ResolveBehaviorSelectionSignal(scoreBreakdown);
+                return Math.Clamp(readyMultiplier * (
+                    (0.63f * selectionAccuracy)
+                    + (0.27f * edgeAccuracy)
+                    + (0.085f * normalizedFitness)
+                    + (0.015f * behaviorSignal)),
+                    0f,
+                    1f);
+            }
+
             return Math.Clamp(readyMultiplier * (
                 (0.65f * selectionAccuracy)
                 + (0.25f * edgeAccuracy)
@@ -4995,6 +5071,19 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             ? ClampUnitFinite(value)
             : 1f;
         return ReadyConfidenceSelectionFloor + ((1f - ReadyConfidenceSelectionFloor) * readyConfidence);
+    }
+
+    private static float ResolveBehaviorSelectionSignal(IReadOnlyDictionary<string, float> scoreBreakdown)
+        => scoreBreakdown.TryGetValue("behavior_selection_signal", out var value)
+            ? ClampUnitFinite(value)
+            : 0f;
+
+    private static bool IsBehaviorOccupancyEnabled()
+    {
+        var value = System.Environment.GetEnvironmentVariable("NBN_BASICS_BEHAVIOR_OCCUPANCY");
+        return !string.Equals(value, "0", StringComparison.OrdinalIgnoreCase)
+               && !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)
+               && !string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
     }
 
     private static float ClampUnitFinite(float value)
