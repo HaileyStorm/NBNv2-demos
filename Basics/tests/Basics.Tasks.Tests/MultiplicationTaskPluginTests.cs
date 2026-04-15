@@ -197,6 +197,29 @@ public sealed class MultiplicationTaskPluginTests
     }
 
     [Fact]
+    public void Evaluate_PartiallyActivatesBehaviorSelectionPressure_AtPlateauBalancedAccuracy()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var correctInteriorCount = 0;
+        var plateau = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset.Select((sample, index) =>
+                {
+                    var isEdge = sample.InputA is 0f or 1f || sample.InputB is 0f or 1f;
+                    var shouldBeCorrect = isEdge || correctInteriorCount++ < 5;
+                    return new BasicsTaskObservation(
+                        (ulong)(index + 1),
+                        shouldBeCorrect ? sample.ExpectedOutput : 0f);
+                })
+                .ToArray());
+
+        Assert.InRange(plateau.ScoreBreakdown["balanced_tolerance_accuracy"], 0.35f, 0.50f);
+        Assert.InRange(plateau.ScoreBreakdown["behavior_stage_gate"], 0f, 1f);
+        Assert.True(plateau.ScoreBreakdown["behavior_selection_signal"] > 0f);
+    }
+
+    [Fact]
     public void Evaluate_PenalizesLowReadyConfidence()
     {
         var dataset = _plugin.BuildDeterministicDataset();

@@ -8,8 +8,8 @@ internal static class BasicsTaskPluginScoring
     private const float ReadyConfidenceFitnessFloor = 0.05f;
     private const int BehaviorBinCount = 8;
     private const float BehaviorFitnessBonusWeight = 0.04f;
-    private const float BehaviorStageGateStart = 0.45f;
-    private const float BehaviorStageGateFull = 0.70f;
+    private const float BehaviorStageGateStart = 0.35f;
+    private const float BehaviorStageGateFull = 0.50f;
 
     public static BasicsTaskEvaluationResult EvaluateBooleanDataset(
         BasicsTaskContract contract,
