@@ -177,6 +177,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _gtUniqueInputValuesText = "3";
     private string _multiplicationUniqueInputValuesText = "7";
     private string _multiplicationToleranceText = "0.03";
+    private bool _multiplicationBehaviorOccupancyEnabled = true;
+    private string _multiplicationBehaviorRampStartText = "0.35";
+    private string _multiplicationBehaviorRampFullText = "0.50";
     private string _fitnessWeightText = "0.55";
     private string _diversityWeightText = "0.35";
     private string _speciesBalanceWeightText = "0.15";
@@ -746,6 +749,42 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    public bool MultiplicationBehaviorOccupancyEnabled
+    {
+        get => _multiplicationBehaviorOccupancyEnabled;
+        set
+        {
+            if (SetProperty(ref _multiplicationBehaviorOccupancyEnabled, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string MultiplicationBehaviorRampStartText
+    {
+        get => _multiplicationBehaviorRampStartText;
+        set
+        {
+            if (SetProperty(ref _multiplicationBehaviorRampStartText, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string MultiplicationBehaviorRampFullText
+    {
+        get => _multiplicationBehaviorRampFullText;
+        set
+        {
+            if (SetProperty(ref _multiplicationBehaviorRampFullText, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
     public bool ShowTaskSettingsCard => SelectedTask is not null;
 
     public bool ShowBooleanTaskSettings
@@ -782,7 +821,10 @@ public sealed class MainWindowViewModel : ViewModelBase
                 var interiorAxisCount = Math.Max(0, count - 2);
                 var interiorCount = interiorAxisCount * interiorAxisCount;
                 var edgeCount = count <= 2 ? count * count : Math.Min((count * count) - interiorCount, Math.Max(4, interiorCount));
-                return $"Evaluates {interiorCount + edgeCount} stratified multiplication samples from an evenly spaced {count}x{count} grid in [0,1], keeping all interior points and a deterministic boundary subset so edge cases do not dominate. Output[0] is the task value and output[1] is the shared ready bit.";
+                var behaviorDetail = MultiplicationBehaviorOccupancyEnabled
+                    ? $" Behavior occupancy pressure ramps from balanced {MultiplicationBehaviorRampStartText} to {MultiplicationBehaviorRampFullText}."
+                    : " Behavior occupancy pressure is disabled.";
+                return $"Evaluates {interiorCount + edgeCount} stratified multiplication samples from an evenly spaced {count}x{count} grid in [0,1], keeping all interior points and a deterministic boundary subset so edge cases do not dominate. Output[0] is the task value and output[1] is the shared ready bit.{behaviorDetail}";
             }
 
             return "This task does not expose custom evaluation settings yet.";
@@ -1476,6 +1518,9 @@ public sealed class MainWindowViewModel : ViewModelBase
             GtUniqueInputValuesText = taskSettings.Gt.UniqueInputValueCount.ToString(CultureInfo.InvariantCulture);
             MultiplicationUniqueInputValuesText = taskSettings.Multiplication.UniqueInputValueCount.ToString(CultureInfo.InvariantCulture);
             MultiplicationToleranceText = taskSettings.Multiplication.AccuracyTolerance.ToString("0.0##", CultureInfo.InvariantCulture);
+            MultiplicationBehaviorOccupancyEnabled = taskSettings.Multiplication.BehaviorOccupancyEnabled;
+            MultiplicationBehaviorRampStartText = taskSettings.Multiplication.BehaviorStageGateStart.ToString("0.0##", CultureInfo.InvariantCulture);
+            MultiplicationBehaviorRampFullText = taskSettings.Multiplication.BehaviorStageGateFull.ToString("0.0##", CultureInfo.InvariantCulture);
             SelectedDiversityPreset = DiversityPresets.FirstOrDefault(option => option.Value == profile.DiversityPreset)
                 ?? SelectedDiversityPreset;
 
@@ -2137,7 +2182,10 @@ public sealed class MainWindowViewModel : ViewModelBase
             Multiplication = new BasicsMultiplicationTaskSettings
             {
                 UniqueInputValueCount = ParseRequiredInt(MultiplicationUniqueInputValuesText, "Multiplication unique input values", errors),
-                AccuracyTolerance = ParseRequiredFloat(MultiplicationToleranceText, "Multiplication accuracy tolerance", errors)
+                AccuracyTolerance = ParseRequiredFloat(MultiplicationToleranceText, "Multiplication accuracy tolerance", errors),
+                BehaviorOccupancyEnabled = MultiplicationBehaviorOccupancyEnabled,
+                BehaviorStageGateStart = ParseRequiredFloat(MultiplicationBehaviorRampStartText, "Multiplication behavior ramp start", errors),
+                BehaviorStageGateFull = ParseRequiredFloat(MultiplicationBehaviorRampFullText, "Multiplication behavior ramp full score", errors)
             }
         };
         var diversityPreset = SelectedDiversityPreset?.Value ?? BasicsDiversityPreset.Medium;

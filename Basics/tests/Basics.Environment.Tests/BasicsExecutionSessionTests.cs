@@ -2464,13 +2464,13 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public async Task ExecutionSession_QueuesAllEliteCrossPairs_BeforeFallbackPairing()
+    public async Task ExecutionSession_InterleavesParentPoolPairing_WithEliteCrossQueue()
     {
         await using var runtimeClient = new FakeBasicsRuntimeClient
         {
             DefaultBehavior = "zero"
         };
-        var session = CreateSession(runtimeClient);
+        var session = CreateSession(runtimeClient, breedingProgressPublishInterval: TimeSpan.Zero);
 
         try
         {
@@ -2484,6 +2484,7 @@ public sealed class BasicsExecutionSessionTests
                 ResolvePairKey(seedBBytes, seedCBytes)
             };
 
+            var snapshots = new List<BasicsExecutionSnapshot>();
             var final = await session.RunAsync(
                 CreatePlan(BasicsOutputObservationMode.EventedOutput) with
                 {
@@ -2529,16 +2530,23 @@ public sealed class BasicsExecutionSessionTests
                     }
                 },
                 new AndTaskPlugin(),
-                _ => { },
+                snapshots.Add,
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.True(
+                final.State is BasicsExecutionState.Stopped or BasicsExecutionState.Succeeded,
+                $"Expected clean terminal state, observed {final.State}: {final.DetailText}");
             Assert.True(runtimeClient.ReproduceRequests.Count >= 3);
-            var firstThreePairKeys = runtimeClient.ReproduceRequests
-                .Take(3)
+            var attemptedPairKeys = runtimeClient.ReproduceRequests
                 .Select(ResolvePairKey)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            Assert.Equal(expectedElitePairs, firstThreePairKeys);
+            Assert.Subset(attemptedPairKeys, expectedElitePairs);
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.DetailText.Contains("via elite cross queue", StringComparison.Ordinal));
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.DetailText.Contains("via ranked parent pool", StringComparison.Ordinal));
         }
         finally
         {

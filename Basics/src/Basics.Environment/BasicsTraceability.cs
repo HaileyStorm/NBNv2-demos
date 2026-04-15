@@ -124,7 +124,10 @@ public sealed record BasicsScalarGridTaskSettingsTraceRecord(
 
 public sealed record BasicsMultiplicationTaskSettingsTraceRecord(
     int UniqueInputValueCount,
-    float AccuracyTolerance);
+    float AccuracyTolerance,
+    bool BehaviorOccupancyEnabled,
+    float BehaviorStageGateStart,
+    float BehaviorStageGateFull);
 
 public sealed record BasicsTaskSettingsTraceRecord(
     BasicsBinaryTruthTableTaskSettingsTraceRecord BooleanTruthTable,
@@ -244,7 +247,10 @@ public static class BasicsTraceability
                     taskSettings.Gt.UniqueInputValueCount),
                 new BasicsMultiplicationTaskSettingsTraceRecord(
                     taskSettings.Multiplication.UniqueInputValueCount,
-                    taskSettings.Multiplication.AccuracyTolerance)));
+                    taskSettings.Multiplication.AccuracyTolerance,
+                    taskSettings.Multiplication.BehaviorOccupancyEnabled,
+                    taskSettings.Multiplication.BehaviorStageGateStart,
+                    taskSettings.Multiplication.BehaviorStageGateFull)));
     }
 
     public static BasicsBuildTraceRecord BuildBuildTrace(

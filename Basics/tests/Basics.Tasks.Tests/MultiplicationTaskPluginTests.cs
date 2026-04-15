@@ -220,6 +220,24 @@ public sealed class MultiplicationTaskPluginTests
     }
 
     [Fact]
+    public void Evaluate_CanDisableBehaviorSelectionPressure()
+    {
+        var plugin = new MultiplicationTaskPlugin(new BasicsMultiplicationTaskSettings
+        {
+            BehaviorOccupancyEnabled = false
+        });
+        var dataset = plugin.BuildDeterministicDataset();
+        var exact = plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset.Select((sample, index) => new BasicsTaskObservation((ulong)(index + 1), sample.ExpectedOutput)).ToArray());
+
+        Assert.True(exact.ScoreBreakdown["behavior_auxiliary_fitness"] > 0f);
+        Assert.Equal(0f, exact.ScoreBreakdown["behavior_stage_gate"]);
+        Assert.Equal(0f, exact.ScoreBreakdown["behavior_selection_signal"]);
+    }
+
+    [Fact]
     public void Evaluate_PenalizesLowReadyConfidence()
     {
         var dataset = _plugin.BuildDeterministicDataset();

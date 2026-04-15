@@ -384,8 +384,8 @@
                         </Grid>
 
                         <Grid IsVisible="{Binding ShowMultiplicationTaskSettings}"
-                              ColumnDefinitions="Auto,120,Auto,120,*"
-                              RowDefinitions="Auto,Auto"
+                              ColumnDefinitions="Auto,120,Auto,120,Auto,120"
+                              RowDefinitions="Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Unique input values" VerticalAlignment="Center"
@@ -394,7 +394,18 @@
                             <TextBlock Grid.Row="0" Grid.Column="2" Text="Accuracy tolerance" VerticalAlignment="Center"
                                        ToolTip.Tip="Maximum absolute output error still counted as accurate for multiplication scoring." />
                             <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding MultiplicationToleranceText}" />
-                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="5"
+                            <CheckBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                      Content="Behavior occupancy"
+                                      IsChecked="{Binding MultiplicationBehaviorOccupancyEnabled}"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Enable the staged behavior-occupancy auxiliary pressure for multiplication. This records behavior metrics either way, but only enabled runs apply the behavior selection/fitness signal." />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Ramp start" VerticalAlignment="Center"
+                                       ToolTip.Tip="Balanced accuracy where behavior pressure begins ramping above zero." />
+                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding MultiplicationBehaviorRampStartText}" />
+                            <TextBlock Grid.Row="1" Grid.Column="4" Text="Ramp full" VerticalAlignment="Center"
+                                       ToolTip.Tip="Balanced accuracy where behavior pressure reaches full strength." />
+                            <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding MultiplicationBehaviorRampFullText}" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="6"
                                        Text="Multiplication uses a stratified deterministic subset of the selected [0,1] grid, preserves all interior points, and exposes raw, balanced, edge, and interior accuracy views."
                                        Foreground="#6C7A89"
                                        TextWrapping="Wrap" />

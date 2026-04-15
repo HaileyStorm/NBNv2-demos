@@ -8,8 +8,6 @@ internal static class BasicsTaskPluginScoring
     private const float ReadyConfidenceFitnessFloor = 0.05f;
     private const int BehaviorBinCount = 8;
     private const float BehaviorFitnessBonusWeight = 0.04f;
-    private const float BehaviorStageGateStart = 0.35f;
-    private const float BehaviorStageGateFull = 0.50f;
 
     public static BasicsTaskEvaluationResult EvaluateBooleanDataset(
         BasicsTaskContract contract,
@@ -144,7 +142,10 @@ internal static class BasicsTaskPluginScoring
         IReadOnlyList<BasicsTaskSample> samples,
         IReadOnlyList<BasicsTaskObservation> observations,
         string coverageKey,
-        float accuracyTolerance)
+        float accuracyTolerance,
+        bool behaviorOccupancyEnabled,
+        float behaviorStageGateStart,
+        float behaviorStageGateFull)
     {
         ArgumentNullException.ThrowIfNull(canonicalDataset);
         if (!float.IsFinite(accuracyTolerance) || accuracyTolerance < 0f)
@@ -236,7 +237,12 @@ internal static class BasicsTaskPluginScoring
         breakdown["zero_product_mean_output"] = zeroCount == 0 ? 0f : zeroOutputSum / zeroCount;
         breakdown["unit_product_gap"] = unitCount == 0 ? 0f : unitGapSum / unitCount;
         breakdown["midrange_mean_absolute_error"] = midrangeCount == 0 ? 0f : midrangeAbsoluteErrorSum / midrangeCount;
-        ApplyBehaviorStageGate(breakdown, balancedAccuracy);
+        ApplyBehaviorStageGate(
+            breakdown,
+            balancedAccuracy,
+            behaviorOccupancyEnabled,
+            behaviorStageGateStart,
+            behaviorStageGateFull);
         return CreateMultiplicationSuccess(outcomes, correct, rawAccuracy, breakdown);
     }
 
@@ -513,6 +519,7 @@ internal static class BasicsTaskPluginScoring
             ["mean_squared_error"] = 1f,
             ["target_proximity_fitness"] = 0f,
             ["ready_confidence"] = 0f,
+            ["behavior_occupancy_enabled"] = 0f,
             ["behavior_output_entropy"] = 0f,
             ["behavior_transition_entropy"] = 0f,
             ["behavior_state_occupancy"] = 0f,
@@ -626,6 +633,7 @@ internal static class BasicsTaskPluginScoring
             1f);
 
         breakdown["behavior_output_entropy"] = outputEntropy;
+        breakdown["behavior_occupancy_enabled"] = 1f;
         breakdown["behavior_transition_entropy"] = transitionEntropy;
         breakdown["behavior_state_occupancy"] = stateOccupancy;
         breakdown["behavior_ready_timing_entropy"] = readyTimingEntropy;
@@ -638,12 +646,18 @@ internal static class BasicsTaskPluginScoring
 
     private static void ApplyBehaviorStageGate(
         Dictionary<string, float> breakdown,
-        float balancedAccuracy)
+        float balancedAccuracy,
+        bool behaviorOccupancyEnabled,
+        float behaviorStageGateStart,
+        float behaviorStageGateFull)
     {
-        var stageGate = ResolveBehaviorStageGate(balancedAccuracy);
+        var stageGate = behaviorOccupancyEnabled && IsBehaviorOccupancyEnabled()
+            ? ResolveBehaviorStageGate(balancedAccuracy, behaviorStageGateStart, behaviorStageGateFull)
+            : 0f;
         var behaviorAuxiliaryFitness = breakdown.TryGetValue("behavior_auxiliary_fitness", out var value)
             ? ClampUnitFinite(value)
             : 0f;
+        breakdown["behavior_occupancy_enabled"] = behaviorOccupancyEnabled && IsBehaviorOccupancyEnabled() ? 1f : 0f;
         breakdown["behavior_stage_gate"] = stageGate;
         breakdown["behavior_selection_signal"] = Math.Clamp(behaviorAuxiliaryFitness * stageGate, 0f, 1f);
     }
@@ -651,6 +665,7 @@ internal static class BasicsTaskPluginScoring
     private static void AddZeroBehaviorOccupancyMetrics(Dictionary<string, float> breakdown)
     {
         breakdown["behavior_output_entropy"] = 0f;
+        breakdown["behavior_occupancy_enabled"] = 0f;
         breakdown["behavior_transition_entropy"] = 0f;
         breakdown["behavior_state_occupancy"] = 0f;
         breakdown["behavior_ready_timing_entropy"] = 0f;
@@ -778,10 +793,26 @@ internal static class BasicsTaskPluginScoring
         return entropy;
     }
 
-    private static float ResolveBehaviorStageGate(float balancedAccuracy)
+    private static float ResolveBehaviorStageGate(
+        float balancedAccuracy,
+        float behaviorStageGateStart,
+        float behaviorStageGateFull)
     {
+        if (!float.IsFinite(behaviorStageGateStart)
+            || !float.IsFinite(behaviorStageGateFull))
+        {
+            return 0f;
+        }
+
+        var start = ClampUnitFinite(behaviorStageGateStart);
+        var full = ClampUnitFinite(behaviorStageGateFull);
+        if (full <= start)
+        {
+            return 0f;
+        }
+
         var normalized = Math.Clamp(
-            (ClampUnitFinite(balancedAccuracy) - BehaviorStageGateStart) / (BehaviorStageGateFull - BehaviorStageGateStart),
+            (ClampUnitFinite(balancedAccuracy) - start) / (full - start),
             0f,
             1f);
         return normalized * normalized * (3f - (2f * normalized));

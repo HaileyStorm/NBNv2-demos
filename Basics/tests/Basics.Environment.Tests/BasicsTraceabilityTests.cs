@@ -98,7 +98,10 @@ public sealed class BasicsTraceabilityTests
                 Multiplication = new BasicsMultiplicationTaskSettings
                 {
                     UniqueInputValueCount = 7,
-                    AccuracyTolerance = 0.02f
+                    AccuracyTolerance = 0.02f,
+                    BehaviorOccupancyEnabled = false,
+                    BehaviorStageGateStart = 0.33f,
+                    BehaviorStageGateFull = 0.55f
                 }
             });
 
@@ -119,6 +122,9 @@ public sealed class BasicsTraceabilityTests
         Assert.True(trace.VariationBand.AllowAxonReroute);
         Assert.Equal(7, trace.TaskSettings.Multiplication.UniqueInputValueCount);
         Assert.Equal(0.02f, trace.TaskSettings.Multiplication.AccuracyTolerance);
+        Assert.False(trace.TaskSettings.Multiplication.BehaviorOccupancyEnabled);
+        Assert.Equal(0.33f, trace.TaskSettings.Multiplication.BehaviorStageGateStart);
+        Assert.Equal(0.55f, trace.TaskSettings.Multiplication.BehaviorStageGateFull);
         Assert.Equal(48, trace.SizingOverrides.InitialPopulationCount);
         Assert.Equal(12, trace.SizingOverrides.MaxConcurrentBrains);
         Assert.Single(trace.InitialBrainSeeds);

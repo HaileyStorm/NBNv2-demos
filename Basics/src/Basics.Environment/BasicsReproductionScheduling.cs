@@ -49,6 +49,8 @@ public sealed record BasicsParentSelectionPolicy
 
 public sealed record BasicsRunAllocationPolicy
 {
+    public const uint MaximumRunsPerPair = 64;
+
     public uint MinRunsPerPair { get; init; } = 1;
     public uint MaxRunsPerPair { get; init; } = 6;
     public double FitnessExponent { get; init; } = 1.20d;
@@ -65,6 +67,11 @@ public sealed record BasicsRunAllocationPolicy
         if (MaxRunsPerPair < MinRunsPerPair)
         {
             errors.Add("MaxRunsPerPair must be >= MinRunsPerPair.");
+        }
+
+        if (MaxRunsPerPair > MaximumRunsPerPair)
+        {
+            errors.Add($"MaxRunsPerPair must be <= {MaximumRunsPerPair}.");
         }
 
         if (FitnessExponent <= 0d)
@@ -133,27 +140,33 @@ public static class BasicsReproductionBudgetPlanner
 
     public static uint ResolveRunCount(
         BasicsRunAllocationPolicy policy,
-        uint capacityBound,
+        uint baseRunCount,
         float normalizedFitness,
         float normalizedNovelty)
     {
         ArgumentNullException.ThrowIfNull(policy);
 
-        var effectiveCapacityBound = capacityBound == 0
-            ? policy.MaxRunsPerPair
-            : capacityBound;
-        var boundedMaximum = Math.Max(policy.MinRunsPerPair, Math.Min(policy.MaxRunsPerPair, effectiveCapacityBound));
-
-        if (boundedMaximum == policy.MinRunsPerPair)
+        if (policy.MaxRunsPerPair == policy.MinRunsPerPair)
         {
             return policy.MinRunsPerPair;
         }
 
+        var baseline = Math.Min(
+            policy.MaxRunsPerPair,
+            Math.Max(policy.MinRunsPerPair, baseRunCount == 0 ? policy.MaxRunsPerPair : baseRunCount));
         var weightedFitness = Math.Pow(Clamp01(normalizedFitness), policy.FitnessExponent);
         var diversityBonus = Clamp01(normalizedNovelty) * policy.DiversityBoost;
         var normalizedScore = Math.Min(1d, (weightedFitness + diversityBonus) / (1d + policy.DiversityBoost));
-        var range = boundedMaximum - policy.MinRunsPerPair;
-        return policy.MinRunsPerPair + (uint)Math.Round(range * normalizedScore, MidpointRounding.AwayFromZero);
+        if (normalizedScore >= 0.5d)
+        {
+            var highRange = policy.MaxRunsPerPair - baseline;
+            var highScore = (normalizedScore - 0.5d) * 2d;
+            return baseline + (uint)Math.Round(highRange * highScore, MidpointRounding.AwayFromZero);
+        }
+
+        var lowRange = baseline - policy.MinRunsPerPair;
+        var lowScore = normalizedScore * 2d;
+        return policy.MinRunsPerPair + (uint)Math.Round(lowRange * lowScore, MidpointRounding.AwayFromZero);
     }
 
     private static float Clamp01(float value) => Math.Clamp(value, 0f, 1f);

@@ -90,6 +90,9 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.NotNull(profile.TaskSettings);
         Assert.Equal(7, profile.TaskSettings!.Multiplication.UniqueInputValueCount);
         Assert.Equal(0.03f, profile.TaskSettings.Multiplication.AccuracyTolerance);
+        Assert.True(profile.TaskSettings.Multiplication.BehaviorOccupancyEnabled);
+        Assert.Equal(0.35f, profile.TaskSettings.Multiplication.BehaviorStageGateStart);
+        Assert.Equal(0.50f, profile.TaskSettings.Multiplication.BehaviorStageGateFull);
         Assert.True(profile.AdaptiveDiversity.Enabled);
         Assert.Equal(8, profile.AdaptiveDiversity.StallGenerationWindow);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);

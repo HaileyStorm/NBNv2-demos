@@ -7,6 +7,9 @@ public sealed class MultiplicationTaskPlugin : IBasicsTaskPlugin
 {
     private readonly IReadOnlyList<BasicsTaskSample> _dataset;
     private readonly float _accuracyTolerance;
+    private readonly bool _behaviorOccupancyEnabled;
+    private readonly float _behaviorStageGateStart;
+    private readonly float _behaviorStageGateFull;
 
     public BasicsTaskContract Contract { get; } = new(
         TaskId: "multiplication",
@@ -21,6 +24,9 @@ public sealed class MultiplicationTaskPlugin : IBasicsTaskPlugin
         var effectiveSettings = settings ?? new BasicsMultiplicationTaskSettings();
         _dataset = CreateDataset(effectiveSettings.UniqueInputValueCount);
         _accuracyTolerance = effectiveSettings.AccuracyTolerance;
+        _behaviorOccupancyEnabled = effectiveSettings.BehaviorOccupancyEnabled;
+        _behaviorStageGateStart = effectiveSettings.BehaviorStageGateStart;
+        _behaviorStageGateFull = effectiveSettings.BehaviorStageGateFull;
     }
 
     public IReadOnlyList<BasicsTaskSample> BuildDeterministicDataset() => _dataset;
@@ -36,7 +42,10 @@ public sealed class MultiplicationTaskPlugin : IBasicsTaskPlugin
             samples,
             observations,
             coverageKey: "evaluation_set_coverage",
-            accuracyTolerance: _accuracyTolerance);
+            accuracyTolerance: _accuracyTolerance,
+            behaviorOccupancyEnabled: _behaviorOccupancyEnabled,
+            behaviorStageGateStart: _behaviorStageGateStart,
+            behaviorStageGateFull: _behaviorStageGateFull);
 
     private static IReadOnlyList<BasicsTaskSample> CreateDataset(int uniqueInputValueCount)
     {

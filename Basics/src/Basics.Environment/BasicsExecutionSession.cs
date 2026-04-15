@@ -31,6 +31,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private const float ReadyConfidenceSelectionFloor = 0.05f;
     private const int MaxMemberEvaluationAttempts = 3;
     private const int MinimumPopulationSize = 2;
+    private const int QueuedPairParentPoolReserveInterval = 2;
 
     private readonly IBasicsRuntimeClient _runtimeClient;
     private readonly BasicsTemplatePublishingOptions _publishingOptions;
@@ -3109,6 +3110,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var compatibilityCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         var queuedPairKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var queuedPairs = new Queue<QueuedBreedingPair>();
+        var eliteQueuedPairBudget = ResolveEliteQueuedPairAttemptBudget(targetPopulation, nextGeneration.Count);
+        var eliteQueuedPairUseCount = 0;
         await EnqueueEliteCrossPairsAsync(
                 carryForwardMembers,
                 population,
@@ -3132,9 +3135,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             float normalizedFitness;
             float normalizedNovelty;
             string pairingReason;
-            if (queuedPairs.Count > 0)
+            if (!ShouldReserveParentPoolPairing(attempt, queuedPairs.Count, parentPool.Count)
+                && TryDequeueQueuedBreedingPair(
+                    queuedPairs,
+                    eliteQueuedPairBudget,
+                    ref eliteQueuedPairUseCount,
+                    out var queuedPair))
             {
-                var queuedPair = queuedPairs.Dequeue();
                 parentA = queuedPair.ParentA;
                 parentB = queuedPair.ParentB;
                 normalizedFitness = queuedPair.NormalizedFitnessHint;
@@ -3569,6 +3576,75 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             ? Math.Min(2, eliteCount)
             : Math.Min(1, eliteCount);
 
+    private static int ResolveEliteQueuedPairAttemptBudget(int targetPopulation, int carryForwardCount)
+    {
+        var remainingSlots = Math.Max(1, targetPopulation - carryForwardCount);
+        var minimumBudget = Math.Min(2, remainingSlots);
+        return Math.Clamp(remainingSlots / 3, minimumBudget, remainingSlots);
+    }
+
+    private static bool ShouldReserveParentPoolPairing(
+        int attempt,
+        int queuedPairCount,
+        int parentPoolCount)
+        => queuedPairCount > 0
+           && parentPoolCount > 1
+           && attempt % QueuedPairParentPoolReserveInterval == 0;
+
+    private static bool TryDequeueQueuedBreedingPair(
+        Queue<QueuedBreedingPair> queuedPairs,
+        int eliteQueuedPairBudget,
+        ref int eliteQueuedPairUseCount,
+        out QueuedBreedingPair queuedPair)
+        => TryDequeueQueuedBreedingPair(
+               queuedPairs,
+               preferElite: false,
+               eliteQueuedPairBudget,
+               ref eliteQueuedPairUseCount,
+               out queuedPair)
+           || TryDequeueQueuedBreedingPair(
+               queuedPairs,
+               preferElite: true,
+               eliteQueuedPairBudget,
+               ref eliteQueuedPairUseCount,
+               out queuedPair);
+
+    private static bool TryDequeueQueuedBreedingPair(
+        Queue<QueuedBreedingPair> queuedPairs,
+        bool preferElite,
+        int eliteQueuedPairBudget,
+        ref int eliteQueuedPairUseCount,
+        out QueuedBreedingPair queuedPair)
+    {
+        var scanCount = queuedPairs.Count;
+        while (scanCount-- > 0)
+        {
+            var candidate = queuedPairs.Dequeue();
+            var isElitePair = IsEliteCrossQueuedPair(candidate);
+            var canUse = preferElite
+                ? isElitePair && eliteQueuedPairUseCount < eliteQueuedPairBudget
+                : !isElitePair;
+            if (canUse)
+            {
+                if (isElitePair)
+                {
+                    eliteQueuedPairUseCount++;
+                }
+
+                queuedPair = candidate;
+                return true;
+            }
+
+            queuedPairs.Enqueue(candidate);
+        }
+
+        queuedPair = default;
+        return false;
+    }
+
+    private static bool IsEliteCrossQueuedPair(QueuedBreedingPair pair)
+        => string.Equals(pair.PairingReason, "elite cross queue", StringComparison.Ordinal);
+
     private static IReadOnlyList<PopulationMember> SelectCarryForwardMembers(
         IReadOnlyList<PopulationMember> ranked,
         int eliteCount)
@@ -3750,7 +3826,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var normalizedSpeciesNovelty = Math.Clamp(speciesNovelty, 0f, 1f);
         if (population.Count <= 1
             || member.LastEvaluation is null
-            || !IsBehaviorOccupancyEnabled()
+            || !IsBehaviorSelectionEnabled(member.LastEvaluation.ScoreBreakdown)
             || !member.LastEvaluation.ScoreBreakdown.ContainsKey("balanced_tolerance_accuracy"))
         {
             return normalizedSpeciesNovelty;
@@ -5046,7 +5122,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         if (scoreBreakdown.ContainsKey("balanced_tolerance_accuracy"))
         {
             var edgeAccuracy = ResolveAccuracyBreakdownMetric(scoreBreakdown, "edge_tolerance_accuracy", selectionAccuracy);
-            if (IsBehaviorOccupancyEnabled() && scoreBreakdown.ContainsKey("behavior_selection_signal"))
+            if (IsBehaviorSelectionEnabled(scoreBreakdown))
             {
                 var behaviorSignal = ResolveBehaviorSelectionSignal(scoreBreakdown);
                 return Math.Clamp(readyMultiplier * (
@@ -5084,6 +5160,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         => scoreBreakdown.TryGetValue("behavior_selection_signal", out var value)
             ? ClampUnitFinite(value)
             : 0f;
+
+    private static bool IsBehaviorSelectionEnabled(IReadOnlyDictionary<string, float> scoreBreakdown)
+        => IsBehaviorOccupancyEnabled()
+           && scoreBreakdown.ContainsKey("behavior_selection_signal")
+           && (!scoreBreakdown.TryGetValue("behavior_occupancy_enabled", out var enabled)
+               || enabled >= 0.5f);
 
     private static bool IsBehaviorOccupancyEnabled()
     {

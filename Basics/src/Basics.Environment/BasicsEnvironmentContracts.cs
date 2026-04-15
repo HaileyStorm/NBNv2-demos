@@ -564,9 +564,14 @@ public sealed record BasicsScalarGridTaskSettings
 public sealed record BasicsMultiplicationTaskSettings
 {
     public const float MaximumAccuracyTolerance = 1f;
+    public const float DefaultBehaviorStageGateStart = 0.35f;
+    public const float DefaultBehaviorStageGateFull = 0.50f;
 
     public int UniqueInputValueCount { get; init; } = 7;
     public float AccuracyTolerance { get; init; } = 0.03f;
+    public bool BehaviorOccupancyEnabled { get; init; } = true;
+    public float BehaviorStageGateStart { get; init; } = DefaultBehaviorStageGateStart;
+    public float BehaviorStageGateFull { get; init; } = DefaultBehaviorStageGateFull;
 
     public BasicsContractValidationResult Validate()
     {
@@ -591,6 +596,23 @@ public sealed record BasicsMultiplicationTaskSettings
             {
                 errors.Add($"Multiplication accuracy tolerance must be <= adjacent input delta ({adjacentInputDelta:0.######}) for {UniqueInputValueCount} unique input values.");
             }
+        }
+
+        if (!float.IsFinite(BehaviorStageGateStart) || BehaviorStageGateStart < 0f || BehaviorStageGateStart > 1f)
+        {
+            errors.Add("Multiplication behavior ramp start must be a finite value between 0 and 1.");
+        }
+
+        if (!float.IsFinite(BehaviorStageGateFull) || BehaviorStageGateFull < 0f || BehaviorStageGateFull > 1f)
+        {
+            errors.Add("Multiplication behavior ramp full score must be a finite value between 0 and 1.");
+        }
+
+        if (float.IsFinite(BehaviorStageGateStart)
+            && float.IsFinite(BehaviorStageGateFull)
+            && BehaviorStageGateFull <= BehaviorStageGateStart)
+        {
+            errors.Add("Multiplication behavior ramp full score must be greater than the ramp start score.");
         }
 
         return BasicsContractValidationResult.FromErrors(errors);
