@@ -2381,7 +2381,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         var displayedInteriorAccuracy = ResolveLatestMetric(_interiorAccuracyHistory, 0f);
         var displayedOffspringFitness = ResolveLatestMetric(snapshot.OffspringFitnessHistory, snapshot.OffspringBestFitness);
         var displayedBestFitness = ResolvePeakMetric(snapshot.BestFitnessHistory, snapshot.BestFitness);
-        var bestBrainBalancedAccuracy = ResolveBestCandidateAccuracyMetric(snapshot.BestCandidate, "balanced_tolerance_accuracy");
+        var bestBrainBalancedAccuracy = ResolveBestCandidateReadyWeightedBalancedAccuracy(snapshot.BestCandidate);
         var bestBrainEdgeAccuracy = ResolveBestCandidateAccuracyMetric(snapshot.BestCandidate, "edge_tolerance_accuracy");
         var bestBrainInteriorAccuracy = ResolveBestCandidateAccuracyMetric(snapshot.BestCandidate, "interior_tolerance_accuracy");
         var hasPartitionedAccuracy = _balancedAccuracyHistory.Count > 0
@@ -2419,7 +2419,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             var shortSha = snapshot.BestCandidate.ArtifactSha256[..Math.Min(12, snapshot.BestCandidate.ArtifactSha256.Length)];
             BestBrainStatus = $"Best-so-far artifact {shortSha}";
             var accuracyDetail = hasPartitionedAccuracy && bestBrainBalancedAccuracy.HasValue
-                ? $"raw accuracy {snapshot.BestCandidate.Accuracy:0.###}, balanced {bestBrainBalancedAccuracy.Value:0.###}, fitness {snapshot.BestCandidate.Fitness:0.###}."
+                ? $"raw accuracy {snapshot.BestCandidate.Accuracy:0.###}, ready-weighted balanced {bestBrainBalancedAccuracy.Value:0.###}, fitness {snapshot.BestCandidate.Fitness:0.###}."
                 : $"accuracy {snapshot.BestCandidate.Accuracy:0.###}, fitness {snapshot.BestCandidate.Fitness:0.###}.";
             var originDetail = snapshot.BestCandidate.BootstrapOrigin is null
                 ? string.Empty
@@ -2491,8 +2491,8 @@ public sealed class MainWindowViewModel : ViewModelBase
                 ? bestBrainBalancedAccuracy.Value.ToString("0.###", CultureInfo.InvariantCulture)
                 : "—",
             bestBrainBalancedAccuracy.HasValue
-                ? "Balanced accuracy for the current best-so-far brain, weighting interior multiplication samples more heavily than edge samples."
-                : "Balanced best-brain accuracy appears when the active task publishes partitioned accuracy metrics.");
+                ? "Ready-weighted balanced accuracy for the current best-so-far brain. This multiplies balanced multiplication accuracy by ready confidence so the card matches record-selection semantics."
+                : "Ready-weighted balanced best-brain accuracy appears when the active task publishes partitioned accuracy metrics.");
         UpdateMetricSummary(
             BasicsMetricId.BestCandidateEdgeAccuracy,
             bestBrainEdgeAccuracy.HasValue
@@ -3285,6 +3285,18 @@ public sealed class MainWindowViewModel : ViewModelBase
             ? Math.Clamp(value, 0f, 1f)
             : null;
 
+    private static float? ResolveBestCandidateReadyWeightedBalancedAccuracy(BasicsExecutionBestCandidateSummary? bestCandidate)
+    {
+        var balanced = ResolveBestCandidateAccuracyMetric(bestCandidate, "balanced_tolerance_accuracy");
+        if (!balanced.HasValue)
+        {
+            return null;
+        }
+
+        var readyConfidence = ResolveBestCandidateAccuracyMetric(bestCandidate, "ready_confidence") ?? 1f;
+        return Math.Clamp(balanced.Value * readyConfidence, 0f, 1f);
+    }
+
     private static bool CanUseBestCandidateForExport(BasicsExecutionBestCandidateSummary? bestCandidate)
         => bestCandidate is not null
            && bestCandidate.Diagnostics.Count == 0
@@ -3646,7 +3658,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private static IEnumerable<MetricSummaryItemViewModel> BuildBestBrainMetricSummaryItems()
     {
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Raw acc", "—", "Best raw accuracy across all successful evaluations.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateBalancedAccuracy, "Balanced", "—", "Balanced accuracy for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateBalancedAccuracy, "Ready bal", "—", "Ready-weighted balanced accuracy for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateEdgeAccuracy, "Edge", "—", "Edge-sample accuracy for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateInteriorAccuracy, "Interior", "—", "Interior-sample accuracy for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateFitness, "Fitness", "—", "Fitness for the current best-so-far brain.");
