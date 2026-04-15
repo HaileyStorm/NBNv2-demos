@@ -14,6 +14,9 @@ public sealed record BasicsTaskExecutionProfile(
 
 public static class BasicsTaskExecutionProfiles
 {
+    private const int DefaultPopulationCount = 64;
+    private const int DefaultMaxConcurrentBrains = 32;
+
     private static readonly BasicsTaskExecutionProfile DefaultProfile = new(
         OutputObservationMode: BasicsOutputObservationMode.VectorPotential,
         OutputSamplingPolicy: new BasicsOutputSamplingPolicy(),
@@ -30,7 +33,7 @@ public static class BasicsTaskExecutionProfiles
             AllowRegionSetChange = false
         },
         SeedShape: new BasicsSeedShapeConstraints(),
-        Sizing: new BasicsSizingOverrides(),
+        Sizing: CreateDefaultSizing(),
         Scheduling: new BasicsReproductionSchedulingPolicy
         {
             ParentSelection = new BasicsParentSelectionPolicy
@@ -79,9 +82,11 @@ public static class BasicsTaskExecutionProfiles
         SeedShape: new BasicsSeedShapeConstraints(),
         Sizing: new BasicsSizingOverrides
         {
-            InitialPopulationCount = 32,
+            InitialPopulationCount = DefaultPopulationCount,
+            MinimumPopulationCount = DefaultPopulationCount,
+            MaximumPopulationCount = DefaultPopulationCount,
             ReproductionRunCount = 1,
-            MaxConcurrentBrains = 32
+            MaxConcurrentBrains = DefaultMaxConcurrentBrains
         },
         Scheduling: new BasicsReproductionSchedulingPolicy
         {
@@ -140,9 +145,11 @@ public static class BasicsTaskExecutionProfiles
         },
         Sizing = new BasicsSizingOverrides
         {
-            InitialPopulationCount = 32,
+            InitialPopulationCount = DefaultPopulationCount,
+            MinimumPopulationCount = DefaultPopulationCount,
+            MaximumPopulationCount = DefaultPopulationCount,
             ReproductionRunCount = 4,
-            MaxConcurrentBrains = 32
+            MaxConcurrentBrains = DefaultMaxConcurrentBrains
         },
         Scheduling = BasicsDiversityTuning.CreateScheduling(BasicsDiversityPreset.High)
     };
@@ -168,11 +175,11 @@ public static class BasicsTaskExecutionProfiles
         },
         Sizing = new BasicsSizingOverrides
         {
-            InitialPopulationCount = 32,
-            MinimumPopulationCount = 32,
-            MaximumPopulationCount = 64,
+            InitialPopulationCount = DefaultPopulationCount,
+            MinimumPopulationCount = DefaultPopulationCount,
+            MaximumPopulationCount = DefaultPopulationCount,
             ReproductionRunCount = 3,
-            MaxConcurrentBrains = 32
+            MaxConcurrentBrains = DefaultMaxConcurrentBrains
         }
     };
 
@@ -186,4 +193,12 @@ public static class BasicsTaskExecutionProfiles
             "multiplication" => MultiplicationProfile,
             _ => DefaultProfile
         };
+
+    private static BasicsSizingOverrides CreateDefaultSizing() => new()
+    {
+        InitialPopulationCount = DefaultPopulationCount,
+        MinimumPopulationCount = DefaultPopulationCount,
+        MaximumPopulationCount = DefaultPopulationCount,
+        MaxConcurrentBrains = DefaultMaxConcurrentBrains
+    };
 }
