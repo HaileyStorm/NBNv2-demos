@@ -208,5 +208,10 @@ public sealed record BasicsExecutionSnapshot(
     BasicsExecutionBatchTimingSummary? LatestBatchTiming = null,
     BasicsExecutionGenerationTimingSummary? LatestGenerationTiming = null)
 {
+    public IReadOnlyList<float> OffspringBehaviorOccupancyHistory { get; init; } = Array.Empty<float>();
+    public IReadOnlyList<float> BehaviorOccupancyHistory { get; init; } = Array.Empty<float>();
+    public IReadOnlyList<float> OffspringBehaviorPressureHistory { get; init; } = Array.Empty<float>();
+    public IReadOnlyList<float> BehaviorPressureHistory { get; init; } = Array.Empty<float>();
+
     public IReadOnlyList<BasicsExecutionBootstrapCandidateTrace> BootstrapCandidateTraces { get; init; } = Array.Empty<BasicsExecutionBootstrapCandidateTrace>();
 }

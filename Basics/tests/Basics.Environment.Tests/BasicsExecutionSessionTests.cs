@@ -897,6 +897,10 @@ public sealed class BasicsExecutionSessionTests
             Assert.NotNull(final.BestCandidate);
             Assert.Equal(1f, final.BestCandidate.Accuracy);
             Assert.Equal(strongSeedHash, final.BestCandidate.ArtifactSha256);
+            Assert.NotEmpty(final.BehaviorOccupancyHistory);
+            Assert.NotEmpty(final.BehaviorPressureHistory);
+            Assert.True(final.BehaviorOccupancyHistory.Max() > 0f);
+            Assert.True(final.BehaviorPressureHistory.Max() > 0f);
         }
         finally
         {
@@ -1255,6 +1259,10 @@ public sealed class BasicsExecutionSessionTests
             0f,
             0.80f,
             0.80f,
+            0f,
+            0f,
+            0f,
+            0f,
             1,
             0,
             0.60d,
@@ -1319,6 +1327,10 @@ public sealed class BasicsExecutionSessionTests
             0.89f,
             0.70f,
             0.70f,
+            0f,
+            0f,
+            0f,
+            0f,
             1,
             0,
             0.70d,
@@ -1378,6 +1390,10 @@ public sealed class BasicsExecutionSessionTests
             0.89f,
             0.75f,
             0.75f,
+            0f,
+            0f,
+            0f,
+            0f,
             1,
             0,
             0.75d,

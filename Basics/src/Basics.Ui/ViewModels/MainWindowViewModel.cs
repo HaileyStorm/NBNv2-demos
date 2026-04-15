@@ -58,6 +58,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(AccuracyQuaternaryChartValues),
         nameof(FitnessChartValues),
         nameof(BestFitnessChartValues),
+        nameof(FitnessTertiaryChartValues),
+        nameof(FitnessQuaternaryChartValues),
         nameof(AccuracyChartPoints),
         nameof(BestAccuracyChartPoints),
         nameof(FitnessChartPoints),
@@ -112,6 +114,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly List<float> _interiorAccuracyHistory = new();
     private readonly List<float> _fitnessHistory = new();
     private readonly List<float> _bestFitnessHistory = new();
+    private readonly List<float> _behaviorOccupancyHistory = new();
+    private readonly List<float> _behaviorPressureHistory = new();
     // Keep these in sync with the fixed plot host inside MainWindow.axaml.
     private const float ChartPlotWidth = 299f;
     private const float ChartPlotHeight = 414f;
@@ -1039,7 +1043,11 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public bool HasAccuracyChartData => ResolveAccuracyChartGenerationCount() > 0;
 
-    public bool HasFitnessChartData => _fitnessHistory.Count > 0 || _bestFitnessHistory.Count > 0;
+    public bool HasFitnessChartData
+        => _fitnessHistory.Count > 0
+           || _bestFitnessHistory.Count > 0
+           || _behaviorOccupancyHistory.Count > 0
+           || _behaviorPressureHistory.Count > 0;
 
     public bool ShowAccuracyEmptyState => !HasAccuracyChartData;
 
@@ -1069,6 +1077,10 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public IReadOnlyList<float> BestFitnessChartValues => BuildBestSoFarHistory(_bestFitnessHistory);
 
+    public IReadOnlyList<float> FitnessTertiaryChartValues => _behaviorOccupancyHistory;
+
+    public IReadOnlyList<float> FitnessQuaternaryChartValues => _behaviorPressureHistory;
+
     public IReadOnlyList<Point> AccuracyChartPoints => BuildChartPoints(AccuracyChartValues);
 
     public IReadOnlyList<Point> BestAccuracyChartPoints => BuildChartPoints(BestAccuracyChartValues);
@@ -1085,7 +1097,11 @@ public sealed class MainWindowViewModel : ViewModelBase
             AccuracyQuaternaryChartValues);
 
     public IReadOnlyList<ChartAxisTickItem> FitnessGenerationTicks
-        => BuildGenerationTicks(_fitnessHistory, _bestFitnessHistory);
+        => BuildGenerationTicks(
+            _fitnessHistory,
+            _bestFitnessHistory,
+            _behaviorOccupancyHistory,
+            _behaviorPressureHistory);
 
     public IReadOnlyList<ChartAxisValueTickItem> NormalizedValueAxisTicks { get; } = BuildNormalizedValueAxisTicks();
 
@@ -2354,6 +2370,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         ReplaceHistory(_interiorAccuracyHistory, snapshot.OffspringInteriorAccuracyHistory);
         ReplaceHistory(_fitnessHistory, snapshot.OffspringFitnessHistory);
         ReplaceHistory(_bestFitnessHistory, snapshot.BestFitnessHistory);
+        ReplaceHistory(_behaviorOccupancyHistory, snapshot.BehaviorOccupancyHistory);
+        ReplaceHistory(_behaviorPressureHistory, snapshot.BehaviorPressureHistory);
         UpdateChartBindings();
 
         var displayedAccuracy = ResolveLatestMetric(snapshot.OffspringAccuracyHistory, snapshot.OffspringBestAccuracy);
@@ -3304,6 +3322,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         _interiorAccuracyHistory.Clear();
         _fitnessHistory.Clear();
         _bestFitnessHistory.Clear();
+        _behaviorOccupancyHistory.Clear();
+        _behaviorPressureHistory.Clear();
         UpdateChartBindings();
     }
 
@@ -3330,6 +3350,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(AccuracyQuaternaryChartValues));
         OnPropertyChanged(nameof(FitnessChartValues));
         OnPropertyChanged(nameof(BestFitnessChartValues));
+        OnPropertyChanged(nameof(FitnessTertiaryChartValues));
+        OnPropertyChanged(nameof(FitnessQuaternaryChartValues));
         OnPropertyChanged(nameof(AccuracyChartPoints));
         OnPropertyChanged(nameof(BestAccuracyChartPoints));
         OnPropertyChanged(nameof(FitnessChartPoints));

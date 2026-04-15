@@ -633,15 +633,15 @@ internal static class BasicsTaskPluginScoring
             1f);
 
         breakdown["behavior_output_entropy"] = outputEntropy;
-        breakdown["behavior_occupancy_enabled"] = 1f;
+        breakdown["behavior_occupancy_enabled"] = 0f;
         breakdown["behavior_transition_entropy"] = transitionEntropy;
         breakdown["behavior_state_occupancy"] = stateOccupancy;
         breakdown["behavior_ready_timing_entropy"] = readyTimingEntropy;
         breakdown["behavior_response_diversity"] = responseDiversity;
         breakdown["behavior_occupancy_signal"] = occupancySignal;
         breakdown["behavior_auxiliary_fitness"] = behaviorAuxiliaryFitness;
-        breakdown["behavior_stage_gate"] = 1f;
-        breakdown["behavior_selection_signal"] = behaviorAuxiliaryFitness;
+        breakdown["behavior_stage_gate"] = 0f;
+        breakdown["behavior_selection_signal"] = 0f;
     }
 
     private static void ApplyBehaviorStageGate(

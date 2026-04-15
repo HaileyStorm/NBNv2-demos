@@ -111,6 +111,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var offspringInteriorAccuracyHistory = new List<float>();
         var offspringFitnessHistory = new List<float>();
         var fitnessHistory = new List<float>();
+        var offspringBehaviorOccupancyHistory = new List<float>();
+        var behaviorOccupancyHistory = new List<float>();
+        var offspringBehaviorPressureHistory = new List<float>();
+        var behaviorPressureHistory = new List<float>();
         ulong reproductionCalls = 0;
         ulong reproductionRunsObserved = 0;
         float bestAccuracySoFar = 0f;
@@ -157,7 +161,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 balancedAccuracyHistory: balancedAccuracyHistory,
                 offspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory,
                 offspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory,
-                offspringFitnessHistory: offspringFitnessHistory);
+                offspringFitnessHistory: offspringFitnessHistory,
+                offspringBehaviorOccupancyHistory: offspringBehaviorOccupancyHistory,
+                behaviorOccupancyHistory: behaviorOccupancyHistory,
+                offspringBehaviorPressureHistory: offspringBehaviorPressureHistory,
+                behaviorPressureHistory: behaviorPressureHistory);
         }
 
         PublishStartupStatus(
@@ -319,7 +327,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         balancedAccuracyHistory,
                         offspringEdgeAccuracyHistory,
                         offspringInteriorAccuracyHistory,
-                        offspringFitnessHistory);
+                        offspringFitnessHistory,
+                        offspringBehaviorOccupancyHistory,
+                        behaviorOccupancyHistory,
+                        offspringBehaviorPressureHistory,
+                        behaviorPressureHistory);
                 }
 
                 var previousBestCandidate = bestCandidateSoFar;
@@ -338,6 +350,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 }
                 offspringFitnessHistory.Add(generationMetrics.OffspringBestFitness);
                 fitnessHistory.Add(generationMetrics.BestFitness);
+                offspringBehaviorOccupancyHistory.Add(generationMetrics.OffspringBestBehaviorOccupancy);
+                behaviorOccupancyHistory.Add(generationMetrics.BestBehaviorOccupancy);
+                offspringBehaviorPressureHistory.Add(generationMetrics.OffspringBestBehaviorPressure);
+                behaviorPressureHistory.Add(generationMetrics.BestBehaviorPressure);
 
                 var generationSummary = CreateSnapshot(
                     plan.StopCriteria,
@@ -360,6 +376,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     offspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory,
                     offspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory,
                     offspringFitnessHistory: offspringFitnessHistory,
+                    offspringBehaviorOccupancyHistory: offspringBehaviorOccupancyHistory,
+                    behaviorOccupancyHistory: behaviorOccupancyHistory,
+                    offspringBehaviorPressureHistory: offspringBehaviorPressureHistory,
+                    behaviorPressureHistory: behaviorPressureHistory,
                     overallBestAccuracy: bestAccuracySoFar,
                     overallBestFitness: bestFitnessSoFar,
                     overallBestCandidate: bestCandidateSoFar,
@@ -405,7 +425,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         balancedAccuracyHistory,
                         offspringEdgeAccuracyHistory,
                         offspringInteriorAccuracyHistory,
-                        offspringFitnessHistory);
+                        offspringFitnessHistory,
+                        offspringBehaviorOccupancyHistory,
+                        behaviorOccupancyHistory,
+                        offspringBehaviorPressureHistory,
+                        behaviorPressureHistory);
                 }
 
                 if (plan.StopCriteria.IsGenerationLimitReached(generation))
@@ -446,7 +470,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         balancedAccuracyHistory,
                         offspringEdgeAccuracyHistory,
                         offspringInteriorAccuracyHistory,
-                        offspringFitnessHistory);
+                        offspringFitnessHistory,
+                        offspringBehaviorOccupancyHistory,
+                        behaviorOccupancyHistory,
+                        offspringBehaviorPressureHistory,
+                        behaviorPressureHistory);
                 }
 
                 population = await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
@@ -495,6 +523,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                                 offspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory,
                                 offspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory,
                                 offspringFitnessHistory: offspringFitnessHistory,
+                                offspringBehaviorOccupancyHistory: offspringBehaviorOccupancyHistory,
+                                behaviorOccupancyHistory: behaviorOccupancyHistory,
+                                offspringBehaviorPressureHistory: offspringBehaviorPressureHistory,
+                                behaviorPressureHistory: behaviorPressureHistory,
                                 overallBestAccuracy: bestAccuracySoFar,
                                 overallBestFitness: bestFitnessSoFar,
                                 overallBestCandidate: bestCandidateSoFar));
@@ -535,7 +567,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         balancedAccuracyHistory,
                         offspringEdgeAccuracyHistory,
                         offspringInteriorAccuracyHistory,
-                        offspringFitnessHistory);
+                        offspringFitnessHistory,
+                        offspringBehaviorOccupancyHistory,
+                        behaviorOccupancyHistory,
+                        offspringBehaviorPressureHistory,
+                        behaviorPressureHistory);
                 }
 
                 if (nextGeneration.All(CanReuseEvaluation)
@@ -568,7 +604,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         balancedAccuracyHistory,
                         offspringEdgeAccuracyHistory,
                         offspringInteriorAccuracyHistory,
-                        offspringFitnessHistory);
+                        offspringFitnessHistory,
+                        offspringBehaviorOccupancyHistory,
+                        behaviorOccupancyHistory,
+                        offspringBehaviorPressureHistory,
+                        behaviorPressureHistory);
                 }
 
                 population = nextGeneration;
@@ -608,7 +648,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 balancedAccuracyHistory,
                 offspringEdgeAccuracyHistory,
                 offspringInteriorAccuracyHistory,
-                offspringFitnessHistory);
+                offspringFitnessHistory,
+                offspringBehaviorOccupancyHistory,
+                behaviorOccupancyHistory,
+                offspringBehaviorPressureHistory,
+                behaviorPressureHistory);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -646,7 +690,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 balancedAccuracyHistory,
                 offspringEdgeAccuracyHistory,
                 offspringInteriorAccuracyHistory,
-                offspringFitnessHistory);
+                offspringFitnessHistory,
+                offspringBehaviorOccupancyHistory,
+                behaviorOccupancyHistory,
+                offspringBehaviorPressureHistory,
+                behaviorPressureHistory);
         }
         catch (Exception ex)
         {
@@ -684,7 +732,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 balancedAccuracyHistory,
                 offspringEdgeAccuracyHistory,
                 offspringInteriorAccuracyHistory,
-                offspringFitnessHistory);
+                offspringFitnessHistory,
+                offspringBehaviorOccupancyHistory,
+                behaviorOccupancyHistory,
+                offspringBehaviorPressureHistory,
+                behaviorPressureHistory);
         }
         finally
         {
@@ -4344,7 +4396,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<float>? balancedAccuracyHistory = null,
         IReadOnlyList<float>? offspringEdgeAccuracyHistory = null,
         IReadOnlyList<float>? offspringInteriorAccuracyHistory = null,
-        IReadOnlyList<float>? offspringFitnessHistory = null)
+        IReadOnlyList<float>? offspringFitnessHistory = null,
+        IReadOnlyList<float>? offspringBehaviorOccupancyHistory = null,
+        IReadOnlyList<float>? behaviorOccupancyHistory = null,
+        IReadOnlyList<float>? offspringBehaviorPressureHistory = null,
+        IReadOnlyList<float>? behaviorPressureHistory = null)
     {
         var snapshot = CreateTerminalSnapshot(
             stopCriteria,
@@ -4372,7 +4428,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             balancedAccuracyHistory,
             offspringEdgeAccuracyHistory,
             offspringInteriorAccuracyHistory,
-            offspringFitnessHistory);
+            offspringFitnessHistory,
+            offspringBehaviorOccupancyHistory,
+            behaviorOccupancyHistory,
+            offspringBehaviorPressureHistory,
+            behaviorPressureHistory);
         onSnapshot(snapshot);
         return snapshot;
     }
@@ -4403,7 +4463,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<float>? balancedAccuracyHistory = null,
         IReadOnlyList<float>? offspringEdgeAccuracyHistory = null,
         IReadOnlyList<float>? offspringInteriorAccuracyHistory = null,
-        IReadOnlyList<float>? offspringFitnessHistory = null)
+        IReadOnlyList<float>? offspringFitnessHistory = null,
+        IReadOnlyList<float>? offspringBehaviorOccupancyHistory = null,
+        IReadOnlyList<float>? behaviorOccupancyHistory = null,
+        IReadOnlyList<float>? offspringBehaviorPressureHistory = null,
+        IReadOnlyList<float>? behaviorPressureHistory = null)
     {
         if (!ShouldUseBaselineSnapshot(population, baselineSnapshot))
         {
@@ -4433,7 +4497,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 balancedAccuracyHistory: balancedAccuracyHistory,
                 offspringEdgeAccuracyHistory: offspringEdgeAccuracyHistory,
                 offspringInteriorAccuracyHistory: offspringInteriorAccuracyHistory,
-                offspringFitnessHistory: offspringFitnessHistory);
+                offspringFitnessHistory: offspringFitnessHistory,
+                offspringBehaviorOccupancyHistory: offspringBehaviorOccupancyHistory,
+                behaviorOccupancyHistory: behaviorOccupancyHistory,
+                offspringBehaviorPressureHistory: offspringBehaviorPressureHistory,
+                behaviorPressureHistory: behaviorPressureHistory);
 
             if (!ShouldPreserveBaselinePopulationSummary(state, population, baselineSnapshot))
             {
@@ -4486,6 +4554,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             LatestBatchTiming: latestBatchTiming ?? baseline.LatestBatchTiming,
             LatestGenerationTiming: latestGenerationTiming ?? baseline.LatestGenerationTiming)
         {
+            OffspringBehaviorOccupancyHistory = offspringBehaviorOccupancyHistory?.Count > 0 ? offspringBehaviorOccupancyHistory.ToArray() : baseline.OffspringBehaviorOccupancyHistory,
+            BehaviorOccupancyHistory = behaviorOccupancyHistory?.Count > 0 ? behaviorOccupancyHistory.ToArray() : baseline.BehaviorOccupancyHistory,
+            OffspringBehaviorPressureHistory = offspringBehaviorPressureHistory?.Count > 0 ? offspringBehaviorPressureHistory.ToArray() : baseline.OffspringBehaviorPressureHistory,
+            BehaviorPressureHistory = behaviorPressureHistory?.Count > 0 ? behaviorPressureHistory.ToArray() : baseline.BehaviorPressureHistory,
             BootstrapCandidateTraces = baseline.BootstrapCandidateTraces.ToArray()
         };
     }
@@ -4523,9 +4595,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<float>? balancedAccuracyHistory = null,
         IReadOnlyList<float>? offspringEdgeAccuracyHistory = null,
         IReadOnlyList<float>? offspringInteriorAccuracyHistory = null,
-        IReadOnlyList<float>? offspringFitnessHistory = null)
+        IReadOnlyList<float>? offspringFitnessHistory = null,
+        IReadOnlyList<float>? offspringBehaviorOccupancyHistory = null,
+        IReadOnlyList<float>? behaviorOccupancyHistory = null,
+        IReadOnlyList<float>? offspringBehaviorPressureHistory = null,
+        IReadOnlyList<float>? behaviorPressureHistory = null)
     {
-        onSnapshot(new BasicsExecutionSnapshot(
+        var snapshot = new BasicsExecutionSnapshot(
             state,
             statusText,
             detailText,
@@ -4556,7 +4632,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             offspringFitnessHistory?.ToArray() ?? Array.Empty<float>(),
             fitnessHistory.ToArray(),
             latestBatchTiming,
-            latestGenerationTiming));
+            latestGenerationTiming)
+        {
+            OffspringBehaviorOccupancyHistory = offspringBehaviorOccupancyHistory?.ToArray() ?? Array.Empty<float>(),
+            BehaviorOccupancyHistory = behaviorOccupancyHistory?.ToArray() ?? Array.Empty<float>(),
+            OffspringBehaviorPressureHistory = offspringBehaviorPressureHistory?.ToArray() ?? Array.Empty<float>(),
+            BehaviorPressureHistory = behaviorPressureHistory?.ToArray() ?? Array.Empty<float>()
+        };
+        onSnapshot(snapshot);
     }
 
     private static bool ShouldUseBaselineSnapshot(
@@ -4792,6 +4875,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<float>? offspringEdgeAccuracyHistory = null,
         IReadOnlyList<float>? offspringInteriorAccuracyHistory = null,
         IReadOnlyList<float>? offspringFitnessHistory = null,
+        IReadOnlyList<float>? offspringBehaviorOccupancyHistory = null,
+        IReadOnlyList<float>? behaviorOccupancyHistory = null,
+        IReadOnlyList<float>? offspringBehaviorPressureHistory = null,
+        IReadOnlyList<float>? behaviorPressureHistory = null,
         bool includeWinnerRuntimeState = false,
         float overallBestAccuracy = 0f,
         float overallBestFitness = 0f,
@@ -4837,6 +4924,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             latestBatchTiming,
             latestGenerationTiming)
         {
+            OffspringBehaviorOccupancyHistory = includeHistories ? offspringBehaviorOccupancyHistory?.ToArray() ?? Array.Empty<float>() : Array.Empty<float>(),
+            BehaviorOccupancyHistory = includeHistories ? behaviorOccupancyHistory?.ToArray() ?? Array.Empty<float>() : Array.Empty<float>(),
+            OffspringBehaviorPressureHistory = includeHistories ? offspringBehaviorPressureHistory?.ToArray() ?? Array.Empty<float>() : Array.Empty<float>(),
+            BehaviorPressureHistory = includeHistories ? behaviorPressureHistory?.ToArray() ?? Array.Empty<float>() : Array.Empty<float>(),
             BootstrapCandidateTraces = CloneBootstrapCandidateTraces(metrics.BootstrapCandidateTraces)
         };
     }
@@ -4858,6 +4949,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 OffspringBestInteriorAccuracy: 0f,
                 OffspringBestFitness: 0f,
                 BestFitness: 0f,
+                OffspringBestBehaviorOccupancy: 0f,
+                BestBehaviorOccupancy: 0f,
+                OffspringBestBehaviorPressure: 0f,
+                BestBehaviorPressure: 0f,
                 OffspringEvaluatedCount: 0,
                 RetainedEvaluationCount: 0,
                 MeanFitness: 0f,
@@ -4919,6 +5014,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var offspringBestInteriorAccuracy = offspringCandidates.Length == 0
             ? 0f
             : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "interior_tolerance_accuracy"));
+        var offspringBestBehaviorOccupancy = offspringCandidates.Length == 0
+            ? 0f
+            : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "behavior_occupancy_signal"));
+        var bestBehaviorOccupancy = candidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "behavior_occupancy_signal"));
+        var offspringBestBehaviorPressure = offspringCandidates.Length == 0
+            ? 0f
+            : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "behavior_selection_signal"));
+        var bestBehaviorPressure = candidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "behavior_selection_signal"));
         var bootstrapCandidateTraces = BuildBootstrapCandidateTraces(population, currentGeneration);
 
         return new GenerationMetrics(
@@ -4934,6 +5037,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ? 0f
                 : offspringCandidates.Max(candidate => candidate.Evaluation.Fitness),
             BestFitness: candidates.Max(candidate => candidate.Evaluation.Fitness),
+            OffspringBestBehaviorOccupancy: offspringBestBehaviorOccupancy,
+            BestBehaviorOccupancy: bestBehaviorOccupancy,
+            OffspringBestBehaviorPressure: offspringBestBehaviorPressure,
+            BestBehaviorPressure: bestBehaviorPressure,
             OffspringEvaluatedCount: offspringCandidates.Length,
             RetainedEvaluationCount: retainedEvaluationCount,
             MeanFitness: candidates.Average(candidate => candidate.Evaluation.Fitness),
@@ -5353,6 +5460,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         float OffspringBestInteriorAccuracy,
         float OffspringBestFitness,
         float BestFitness,
+        float OffspringBestBehaviorOccupancy,
+        float BestBehaviorOccupancy,
+        float OffspringBestBehaviorPressure,
+        float BestBehaviorPressure,
         int OffspringEvaluatedCount,
         int RetainedEvaluationCount,
         double MeanFitness,

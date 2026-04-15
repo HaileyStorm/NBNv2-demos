@@ -796,6 +796,16 @@
                                        FontSize="18"
                                        FontWeight="SemiBold"
                                        Foreground="#182436" />
+                            <WrapPanel ItemSpacing="14">
+                                <TextBlock Text="Fitness"
+                                           Foreground="#A16207" />
+                                <TextBlock Text="Best fitness"
+                                           Foreground="#92400E" />
+                                <TextBlock Text="Behavior occupancy"
+                                           Foreground="#0F766E" />
+                                <TextBlock Text="Behavior pressure"
+                                           Foreground="#7C3AED" />
+                            </WrapPanel>
                             <Border BorderBrush="#D9D0C2"
                                     BorderThickness="1"
                                     CornerRadius="10"
@@ -819,8 +829,12 @@
                                     <ui:MetricLineChart Grid.Column="1"
                                                         PrimaryValues="{Binding FitnessChartValues}"
                                                         SecondaryValues="{Binding BestFitnessChartValues}"
+                                                        TertiaryValues="{Binding FitnessTertiaryChartValues}"
+                                                        QuaternaryValues="{Binding FitnessQuaternaryChartValues}"
                                                         PrimaryStroke="#A16207"
                                                         SecondaryStroke="#92400E"
+                                                        TertiaryStroke="#0F766E"
+                                                        QuaternaryStroke="#7C3AED"
                                                         EmptyText="No runtime fitness samples yet."
                                                         HorizontalAlignment="Stretch"
                                                         VerticalAlignment="Stretch" />
