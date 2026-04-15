@@ -3657,17 +3657,17 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static IEnumerable<MetricSummaryItemViewModel> BuildBestBrainMetricSummaryItems()
     {
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Raw acc", "—", "Best raw accuracy across all successful evaluations.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateBalancedAccuracy, "Ready bal", "—", "Ready-weighted balanced accuracy for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestAccuracy, "Raw acc", "—", "Best raw accuracy across all successful evaluations.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateEdgeAccuracy, "Edge", "—", "Edge-sample accuracy for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateInteriorAccuracy, "Interior", "—", "Interior-sample accuracy for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateFitness, "Fitness", "—", "Fitness for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateGeneration, "Gen", "—", "Generation where the current best-so-far brain was evaluated.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAverageReadyTicks, "Avg ready", "—", "Average ready-bit arrival tick for the current best-so-far brain.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateInternalNeuronCount, "Neurons", "—", "Internal neuron count for the current best-so-far brain.");
-        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAxonCount, "Axons", "—", "Axon count for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickRange, "Ready ticks", "—", "Min / median / max ready-bit arrival ticks for the current best-so-far brain.");
         yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateReadyTickStdDev, "Ready stddev", "—", "Standard deviation of ready-bit arrival ticks for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateInternalNeuronCount, "Neurons", "—", "Internal neuron count for the current best-so-far brain.");
+        yield return new MetricSummaryItemViewModel(BasicsMetricId.BestCandidateAxonCount, "Axons", "—", "Axon count for the current best-so-far brain.");
     }
 
     private static string FormatOutputObservationMode(BasicsOutputObservationMode mode)

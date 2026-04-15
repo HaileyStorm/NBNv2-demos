@@ -698,6 +698,11 @@
                                    TextWrapping="Wrap"
                                    Foreground="#6C7A89" />
                         <ItemsControl ItemsSource="{Binding BestBrainSummaries}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Columns="2" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:MetricSummaryItemViewModel">
                                     <Border Margin="0,0,0,8"
