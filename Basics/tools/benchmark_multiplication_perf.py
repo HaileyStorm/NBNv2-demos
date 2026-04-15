@@ -35,6 +35,7 @@ DEGRADATION_RATIO = 1.35
 MIN_COMPLETED_GENERATIONS_FOR_SKIP = 2
 HARNESS_ASSEMBLY_NAME = "Nbn.Demos.Basics.Harness.dll"
 WORKER_ASSEMBLY_NAME = "Nbn.Runtime.WorkerNode.dll"
+LOCAL_PYTHON_PACKAGE_ROOT = Path("Basics") / "artifacts" / "benchmarks" / "python-packages"
 
 GENERATION_EVALUATED_RE = re.compile(r"Generation\s+(\d+)\s+evaluated", re.IGNORECASE)
 
@@ -276,7 +277,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--install-tqdm",
         action="store_true",
-        help="Install tqdm with pip if it is missing.",
+        help="Install tqdm into a repo-local package directory if it is missing.",
     )
     parser.add_argument(
         "--dry-run",
@@ -291,19 +292,90 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_tqdm(install_if_missing: bool) -> Any:
+class SimpleProgress:
+    """Small tqdm-compatible fallback for externally managed Python installs."""
+
+    def __init__(self, total: int, unit: str = "item", dynamic_ncols: bool = True) -> None:
+        self.total = total
+        self.unit = unit
+        self.dynamic_ncols = dynamic_ncols
+        self.n = 0
+        self.description = ""
+        self._last_rendered_at = 0.0
+
+    def __enter__(self) -> "SimpleProgress":
+        self.refresh()
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        self.refresh()
+        print()
+
+    def set_description(self, description: str) -> None:
+        self.description = description
+        self.refresh()
+
+    def update(self, count: int = 1) -> None:
+        self.n += count
+        self._render(force=self.n >= self.total)
+
+    def refresh(self) -> None:
+        self._render(force=True)
+
+    def _render(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_rendered_at < 0.5:
+            return
+        self._last_rendered_at = now
+        percent = 100.0 if self.total <= 0 else min(100.0, self.n * 100.0 / self.total)
+        prefix = f"{self.description}: " if self.description else ""
+        print(f"\r{prefix}{self.n}/{self.total} {self.unit} ({percent:5.1f}%)", end="", flush=True)
+
+
+def load_tqdm(install_if_missing: bool, package_root: Path) -> Any:
+    if package_root.exists():
+        sys.path.insert(0, str(package_root))
+
     try:
         from tqdm import tqdm  # type: ignore
 
         return tqdm
     except ImportError:
         if not install_if_missing:
-            print("tqdm is required. Re-run with --install-tqdm or install it with: python3 -m pip install tqdm", file=sys.stderr)
-            raise
-        subprocess.run([sys.executable, "-m", "pip", "install", "tqdm"], check=True)
-        from tqdm import tqdm  # type: ignore
+            print("tqdm is not installed; using built-in progress fallback.", file=sys.stderr)
+            return SimpleProgress
 
-        return tqdm
+        package_root.mkdir(parents=True, exist_ok=True)
+        install = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--target", str(package_root), "tqdm"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        if install.returncode != 0:
+            print(
+                "Could not install tqdm into the repo-local package directory; using built-in progress fallback.",
+                file=sys.stderr,
+            )
+            tail = "\n".join(install.stdout.splitlines()[-20:])
+            if tail:
+                print(tail, file=sys.stderr)
+            return SimpleProgress
+
+        sys.path.insert(0, str(package_root))
+        try:
+            from tqdm import tqdm  # type: ignore
+
+            return tqdm
+        except ImportError:
+            print("tqdm installation completed but import still failed; using built-in progress fallback.", file=sys.stderr)
+            return SimpleProgress
+
+
+def local_python_package_root(args: argparse.Namespace) -> Path:
+    version = f"py{sys.version_info.major}{sys.version_info.minor}"
+    return (args.repo_root / LOCAL_PYTHON_PACKAGE_ROOT / version).resolve()
 
 
 def now_stamp() -> str:
@@ -1198,7 +1270,7 @@ def main() -> int:
         print_initial_plan(combos)
         return 0
 
-    tqdm = load_tqdm(args.install_tqdm)
+    tqdm = load_tqdm(args.install_tqdm, local_python_package_root(args))
     ensure_core_runtime_reachable(args)
     ensure_no_existing_workers(args)
 
