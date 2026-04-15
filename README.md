@@ -30,4 +30,5 @@ This repository holds External World demo projects for NBN. Each demo is a consu
 
 - Demo projects should integrate with NBN through IO Gateway and the documented External World contract.
 - Do not fork or hand-maintain copies of canonical NBN contracts here unless there is an explicit generation or vendoring workflow.
+- Root-level shared demo libraries under `src/` hold reusable demo-side primitives, such as behavior occupancy metrics that are derived from External World rollouts rather than NBN runtime internals.
 - If demo work uncovers an issue in `../NBNv2`, summarize it first. Cross-repo fixes in `../NBNv2` are allowed only after explicit user approval in the active session.

@@ -1,4 +1,5 @@
 using Nbn.Demos.Basics.Environment;
+using Nbn.Demos.Behavior;
 
 namespace Nbn.Demos.Basics.Tasks;
 
@@ -6,7 +7,6 @@ internal static class BasicsTaskPluginScoring
 {
     private const float TargetProximityScale = 8f;
     private const float ReadyConfidenceFitnessFloor = 0.05f;
-    private const int BehaviorBinCount = 8;
     private const float BehaviorFitnessBonusWeight = 0.04f;
 
     public static BasicsTaskEvaluationResult EvaluateBooleanDataset(
@@ -519,16 +519,16 @@ internal static class BasicsTaskPluginScoring
             ["mean_squared_error"] = 1f,
             ["target_proximity_fitness"] = 0f,
             ["ready_confidence"] = 0f,
-            ["behavior_occupancy_enabled"] = 0f,
-            ["behavior_output_entropy"] = 0f,
-            ["behavior_transition_entropy"] = 0f,
-            ["behavior_state_occupancy"] = 0f,
-            ["behavior_ready_timing_entropy"] = 0f,
-            ["behavior_response_diversity"] = 0f,
-            ["behavior_occupancy_signal"] = 0f,
-            ["behavior_auxiliary_fitness"] = 0f,
-            ["behavior_stage_gate"] = 0f,
-            ["behavior_selection_signal"] = 0f,
+            [BehaviorMetricKeys.OccupancyEnabled] = 0f,
+            [BehaviorMetricKeys.OutputEntropy] = 0f,
+            [BehaviorMetricKeys.TransitionEntropy] = 0f,
+            [BehaviorMetricKeys.StateOccupancy] = 0f,
+            [BehaviorMetricKeys.ReadyTimingEntropy] = 0f,
+            [BehaviorMetricKeys.ResponseDiversity] = 0f,
+            [BehaviorMetricKeys.OccupancySignal] = 0f,
+            [BehaviorMetricKeys.AuxiliaryFitness] = 0f,
+            [BehaviorMetricKeys.StageGate] = 0f,
+            [BehaviorMetricKeys.SelectionSignal] = 0f,
             ["dataset_coverage"] = 0f
         };
 
@@ -573,12 +573,7 @@ internal static class BasicsTaskPluginScoring
         float baseFitness,
         IReadOnlyDictionary<string, float> breakdown)
     {
-        if (!IsBehaviorOccupancyEnabled())
-        {
-            return Math.Clamp(baseFitness, 0f, 1f);
-        }
-
-        var behaviorFitness = breakdown.TryGetValue("behavior_selection_signal", out var value)
+        var behaviorFitness = breakdown.TryGetValue(BehaviorMetricKeys.SelectionSignal, out var value)
             ? ClampUnitFinite(value)
             : 0f;
         return Math.Clamp(
@@ -593,55 +588,24 @@ internal static class BasicsTaskPluginScoring
     {
         if (outcomes.Count == 0)
         {
-            AddZeroBehaviorOccupancyMetrics(breakdown);
+            AddBehaviorOccupancyMetrics(breakdown, BehaviorOccupancyAnalyzer.Empty);
             return;
         }
 
-        var outputBins = new int[outcomes.Count];
-        var expectedBins = new int[outcomes.Count];
-        var readyTickBins = new int[outcomes.Count];
-        for (var i = 0; i < outcomes.Count; i++)
-        {
-            outputBins[i] = QuantizeUnit(outcomes[i].Observation.OutputValue);
-            expectedBins[i] = QuantizeUnit(outcomes[i].Sample.ExpectedOutput);
-            readyTickBins[i] = QuantizeReadyTick(outcomes[i].Observation.ReadyTickCount);
-        }
-
-        var outputEntropy = ComputeNormalizedEntropy(outputBins, Math.Min(BehaviorBinCount, outcomes.Count));
-        var transitionEntropy = ComputeTransitionEntropy(outputBins);
-        var stateOccupancy = ComputeStateOccupancy(outputBins);
-        var readyTimingEntropy = ComputeNormalizedEntropy(readyTickBins, Math.Min(BehaviorBinCount, outcomes.Count));
-        var responseDiversity = ComputeNormalizedMutualInformation(expectedBins, outputBins);
         var targetProximity = breakdown.TryGetValue("target_proximity_fitness", out var proximityValue)
             ? ClampUnitFinite(proximityValue)
             : 0f;
         var readyConfidence = breakdown.TryGetValue("ready_confidence", out var readyValue)
             ? ClampUnitFinite(readyValue)
             : 1f;
-        var viabilityGate = readyConfidence * (0.25f + (0.75f * targetProximity));
-        var rawOccupancy = Math.Clamp(
-            (0.45f * outputEntropy)
-            + (0.25f * transitionEntropy)
-            + (0.30f * stateOccupancy),
-            0f,
-            1f);
-        var occupancySignal = Math.Clamp(rawOccupancy * viabilityGate, 0f, 1f);
-        var controllableSignal = Math.Clamp(responseDiversity * viabilityGate, 0f, 1f);
-        var behaviorAuxiliaryFitness = Math.Clamp(
-            (0.40f * occupancySignal) + (0.60f * controllableSignal),
-            0f,
-            1f);
-
-        breakdown["behavior_output_entropy"] = outputEntropy;
-        breakdown["behavior_occupancy_enabled"] = 0f;
-        breakdown["behavior_transition_entropy"] = transitionEntropy;
-        breakdown["behavior_state_occupancy"] = stateOccupancy;
-        breakdown["behavior_ready_timing_entropy"] = readyTimingEntropy;
-        breakdown["behavior_response_diversity"] = responseDiversity;
-        breakdown["behavior_occupancy_signal"] = occupancySignal;
-        breakdown["behavior_auxiliary_fitness"] = behaviorAuxiliaryFitness;
-        breakdown["behavior_stage_gate"] = 0f;
-        breakdown["behavior_selection_signal"] = 0f;
+        var samples = outcomes
+            .Select(static outcome => new BehaviorOccupancySample(
+                outcome.Sample.ExpectedOutput,
+                outcome.Observation.OutputValue,
+                outcome.Observation.ReadyTickCount))
+            .ToArray();
+        var metrics = BehaviorOccupancyAnalyzer.Analyze(samples, readyConfidence, targetProximity);
+        AddBehaviorOccupancyMetrics(breakdown, metrics);
     }
 
     private static void ApplyBehaviorStageGate(
@@ -651,179 +615,32 @@ internal static class BasicsTaskPluginScoring
         float behaviorStageGateStart,
         float behaviorStageGateFull)
     {
-        var stageGate = behaviorOccupancyEnabled && IsBehaviorOccupancyEnabled()
-            ? ResolveBehaviorStageGate(balancedAccuracy, behaviorStageGateStart, behaviorStageGateFull)
+        var behaviorEnabled = behaviorOccupancyEnabled;
+        var stageGate = behaviorEnabled
+            ? BehaviorOccupancyAnalyzer.ResolveStageGate(balancedAccuracy, behaviorStageGateStart, behaviorStageGateFull)
             : 0f;
-        var behaviorAuxiliaryFitness = breakdown.TryGetValue("behavior_auxiliary_fitness", out var value)
+        var behaviorAuxiliaryFitness = breakdown.TryGetValue(BehaviorMetricKeys.AuxiliaryFitness, out var value)
             ? ClampUnitFinite(value)
             : 0f;
-        breakdown["behavior_occupancy_enabled"] = behaviorOccupancyEnabled && IsBehaviorOccupancyEnabled() ? 1f : 0f;
-        breakdown["behavior_stage_gate"] = stageGate;
-        breakdown["behavior_selection_signal"] = Math.Clamp(behaviorAuxiliaryFitness * stageGate, 0f, 1f);
+        breakdown[BehaviorMetricKeys.OccupancyEnabled] = behaviorEnabled ? 1f : 0f;
+        breakdown[BehaviorMetricKeys.StageGate] = stageGate;
+        breakdown[BehaviorMetricKeys.SelectionSignal] = Math.Clamp(behaviorAuxiliaryFitness * stageGate, 0f, 1f);
     }
 
-    private static void AddZeroBehaviorOccupancyMetrics(Dictionary<string, float> breakdown)
+    private static void AddBehaviorOccupancyMetrics(
+        Dictionary<string, float> breakdown,
+        BehaviorOccupancyMetrics metrics)
     {
-        breakdown["behavior_output_entropy"] = 0f;
-        breakdown["behavior_occupancy_enabled"] = 0f;
-        breakdown["behavior_transition_entropy"] = 0f;
-        breakdown["behavior_state_occupancy"] = 0f;
-        breakdown["behavior_ready_timing_entropy"] = 0f;
-        breakdown["behavior_response_diversity"] = 0f;
-        breakdown["behavior_occupancy_signal"] = 0f;
-        breakdown["behavior_auxiliary_fitness"] = 0f;
-        breakdown["behavior_stage_gate"] = 0f;
-        breakdown["behavior_selection_signal"] = 0f;
-    }
-
-    private static int QuantizeUnit(float value)
-    {
-        var clamped = ClampUnitFinite(value);
-        return Math.Clamp((int)MathF.Floor(clamped * BehaviorBinCount), 0, BehaviorBinCount - 1);
-    }
-
-    private static int QuantizeReadyTick(float value)
-    {
-        if (!float.IsFinite(value) || value <= 0f)
-        {
-            return 0;
-        }
-
-        return Math.Clamp((int)MathF.Floor(value), 0, BehaviorBinCount - 1);
-    }
-
-    private static float ComputeStateOccupancy(IReadOnlyList<int> bins)
-    {
-        if (bins.Count == 0)
-        {
-            return 0f;
-        }
-
-        var maxDistinctCount = Math.Min(BehaviorBinCount, bins.Count);
-        if (maxDistinctCount <= 1)
-        {
-            return 0f;
-        }
-
-        var distinctCount = bins.Distinct().Count();
-        return Math.Clamp((distinctCount - 1) / (float)(maxDistinctCount - 1), 0f, 1f);
-    }
-
-    private static float ComputeTransitionEntropy(IReadOnlyList<int> bins)
-    {
-        if (bins.Count <= 1)
-        {
-            return 0f;
-        }
-
-        var transitions = new int[bins.Count - 1];
-        for (var i = 1; i < bins.Count; i++)
-        {
-            transitions[i - 1] = (bins[i - 1] * BehaviorBinCount) + bins[i];
-        }
-
-        return ComputeNormalizedEntropy(
-            transitions,
-            Math.Min(BehaviorBinCount * BehaviorBinCount, transitions.Length));
-    }
-
-    private static float ComputeNormalizedMutualInformation(
-        IReadOnlyList<int> left,
-        IReadOnlyList<int> right)
-    {
-        if (left.Count == 0 || left.Count != right.Count)
-        {
-            return 0f;
-        }
-
-        var leftEntropy = ComputeEntropy(left);
-        var rightEntropy = ComputeEntropy(right);
-        var normalizer = Math.Min(leftEntropy, rightEntropy);
-        if (normalizer <= 0d)
-        {
-            return 0f;
-        }
-
-        var joint = new int[left.Count];
-        for (var i = 0; i < left.Count; i++)
-        {
-            joint[i] = (left[i] * BehaviorBinCount) + right[i];
-        }
-
-        var mutualInformation = Math.Max(0d, leftEntropy + rightEntropy - ComputeEntropy(joint));
-        return Math.Clamp((float)(mutualInformation / normalizer), 0f, 1f);
-    }
-
-    private static float ComputeNormalizedEntropy(
-        IReadOnlyList<int> values,
-        int maxDistinctCount)
-    {
-        if (values.Count <= 1 || maxDistinctCount <= 1)
-        {
-            return 0f;
-        }
-
-        var entropy = ComputeEntropy(values);
-        var maxEntropy = Math.Log(maxDistinctCount);
-        return maxEntropy <= 0d
-            ? 0f
-            : Math.Clamp((float)(entropy / maxEntropy), 0f, 1f);
-    }
-
-    private static double ComputeEntropy(IReadOnlyList<int> values)
-    {
-        if (values.Count <= 1)
-        {
-            return 0d;
-        }
-
-        var counts = new Dictionary<int, int>();
-        foreach (var value in values)
-        {
-            counts[value] = counts.TryGetValue(value, out var count) ? count + 1 : 1;
-        }
-
-        var entropy = 0d;
-        foreach (var count in counts.Values)
-        {
-            var probability = count / (double)values.Count;
-            entropy -= probability * Math.Log(probability);
-        }
-
-        return entropy;
-    }
-
-    private static float ResolveBehaviorStageGate(
-        float balancedAccuracy,
-        float behaviorStageGateStart,
-        float behaviorStageGateFull)
-    {
-        if (!float.IsFinite(behaviorStageGateStart)
-            || !float.IsFinite(behaviorStageGateFull))
-        {
-            return 0f;
-        }
-
-        var start = ClampUnitFinite(behaviorStageGateStart);
-        var full = ClampUnitFinite(behaviorStageGateFull);
-        if (full <= start)
-        {
-            return 0f;
-        }
-
-        var normalized = Math.Clamp(
-            (ClampUnitFinite(balancedAccuracy) - start) / (full - start),
-            0f,
-            1f);
-        return normalized * normalized * (3f - (2f * normalized));
-    }
-
-    private static bool IsBehaviorOccupancyEnabled()
-    {
-        var value = System.Environment.GetEnvironmentVariable("NBN_BASICS_BEHAVIOR_OCCUPANCY");
-        return !string.Equals(value, "0", StringComparison.OrdinalIgnoreCase)
-               && !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)
-               && !string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
+        breakdown[BehaviorMetricKeys.OutputEntropy] = metrics.OutputEntropy;
+        breakdown[BehaviorMetricKeys.OccupancyEnabled] = 0f;
+        breakdown[BehaviorMetricKeys.TransitionEntropy] = metrics.TransitionEntropy;
+        breakdown[BehaviorMetricKeys.StateOccupancy] = metrics.StateOccupancy;
+        breakdown[BehaviorMetricKeys.ReadyTimingEntropy] = metrics.ReadyTimingEntropy;
+        breakdown[BehaviorMetricKeys.ResponseDiversity] = metrics.ResponseDiversity;
+        breakdown[BehaviorMetricKeys.OccupancySignal] = metrics.OccupancySignal;
+        breakdown[BehaviorMetricKeys.AuxiliaryFitness] = metrics.AuxiliaryFitness;
+        breakdown[BehaviorMetricKeys.StageGate] = 0f;
+        breakdown[BehaviorMetricKeys.SelectionSignal] = 0f;
     }
 
     private static float ClampUnitFinite(float value)

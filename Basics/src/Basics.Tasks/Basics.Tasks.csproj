@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Basics.Environment\Basics.Environment.csproj" />
+    <ProjectReference Include="..\..\..\src\Nbn.Demos.Behavior\Nbn.Demos.Behavior.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

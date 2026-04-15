@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Nbn.Demos.Behavior\Nbn.Demos.Behavior.csproj" />
     <ProjectReference Include="..\..\..\..\NBNv2\src\Nbn.Shared\Nbn.Shared.csproj" />
     <ProjectReference Include="..\..\..\..\NBNv2\src\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
   </ItemGroup>

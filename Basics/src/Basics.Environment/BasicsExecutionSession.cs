@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Nbn.Demos.Behavior;
 using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
@@ -5016,12 +5017,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "interior_tolerance_accuracy"));
         var offspringBestBehaviorOccupancy = offspringCandidates.Length == 0
             ? 0f
-            : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "behavior_occupancy_signal"));
-        var bestBehaviorOccupancy = candidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "behavior_occupancy_signal"));
+            : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, BehaviorMetricKeys.OccupancySignal));
+        var bestBehaviorOccupancy = candidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, BehaviorMetricKeys.OccupancySignal));
         var offspringBestBehaviorPressure = offspringCandidates.Length == 0
             ? 0f
-            : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "behavior_selection_signal"));
-        var bestBehaviorPressure = candidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "behavior_selection_signal"));
+            : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, BehaviorMetricKeys.SelectionSignal));
+        var bestBehaviorPressure = candidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, BehaviorMetricKeys.SelectionSignal));
         var bootstrapCandidateTraces = BuildBootstrapCandidateTraces(population, currentGeneration);
 
         return new GenerationMetrics(
@@ -5279,23 +5280,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     }
 
     private static float ResolveBehaviorSelectionSignal(IReadOnlyDictionary<string, float> scoreBreakdown)
-        => scoreBreakdown.TryGetValue("behavior_selection_signal", out var value)
+        => scoreBreakdown.TryGetValue(BehaviorMetricKeys.SelectionSignal, out var value)
             ? ClampUnitFinite(value)
             : 0f;
 
     private static bool IsBehaviorSelectionEnabled(IReadOnlyDictionary<string, float> scoreBreakdown)
-        => IsBehaviorOccupancyEnabled()
-           && scoreBreakdown.ContainsKey("behavior_selection_signal")
-           && (!scoreBreakdown.TryGetValue("behavior_occupancy_enabled", out var enabled)
+        => scoreBreakdown.ContainsKey(BehaviorMetricKeys.SelectionSignal)
+           && (!scoreBreakdown.TryGetValue(BehaviorMetricKeys.OccupancyEnabled, out var enabled)
                || enabled >= 0.5f);
-
-    private static bool IsBehaviorOccupancyEnabled()
-    {
-        var value = System.Environment.GetEnvironmentVariable("NBN_BASICS_BEHAVIOR_OCCUPANCY");
-        return !string.Equals(value, "0", StringComparison.OrdinalIgnoreCase)
-               && !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)
-               && !string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
-    }
 
     private static float ClampUnitFinite(float value)
         => float.IsFinite(value) ? Math.Clamp(value, 0f, 1f) : 0f;

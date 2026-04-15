@@ -19,6 +19,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Basics.Harness", "src\Basic
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Basics.Tasks.Tests", "tests\Basics.Tasks.Tests\Basics.Tasks.Tests.csproj", "{73763B69-DDCF-4008-9AC6-D132FC61BD75}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Nbn.Demos.Behavior", "..\src\Nbn.Demos.Behavior\Nbn.Demos.Behavior.csproj", "{13157F2C-0D0C-4C5A-8CEB-1BD129D3F723}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -52,6 +54,10 @@ Global
 		{73763B69-DDCF-4008-9AC6-D132FC61BD75}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{73763B69-DDCF-4008-9AC6-D132FC61BD75}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{73763B69-DDCF-4008-9AC6-D132FC61BD75}.Release|Any CPU.Build.0 = Release|Any CPU
+		{13157F2C-0D0C-4C5A-8CEB-1BD129D3F723}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{13157F2C-0D0C-4C5A-8CEB-1BD129D3F723}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{13157F2C-0D0C-4C5A-8CEB-1BD129D3F723}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{13157F2C-0D0C-4C5A-8CEB-1BD129D3F723}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E705FAD7-B997-4D31-933E-211765428CEC} = {06AADE90-D5DE-431B-AF70-67AF32712887}

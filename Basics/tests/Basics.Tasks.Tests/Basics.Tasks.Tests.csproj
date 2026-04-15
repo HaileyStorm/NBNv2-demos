@@ -22,6 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Nbn.Demos.Behavior\Nbn.Demos.Behavior.csproj" />
     <ProjectReference Include="..\..\src\Basics.Tasks\Basics.Tasks.csproj" />
   </ItemGroup>
 

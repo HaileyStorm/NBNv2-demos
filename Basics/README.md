@@ -6,6 +6,7 @@
 
 - A shared environment library in `src/Basics.Environment`.
 - A task-plugin library in `src/Basics.Tasks`.
+- Shared behavior-occupancy scoring primitives from the repo-level `src/Nbn.Demos.Behavior` library.
 - A small Avalonia desktop UI in `src/Basics.Ui`, including target accuracy/fitness stop controls and winning-artifact export (`.nbn` and, when available, `.nbs`).
 - A headless live-trial harness in `src/Basics.Harness`.
 - A test project in `tests/Basics.Environment.Tests`.
@@ -26,6 +27,7 @@
   - diversity pressure avoids collapsing to one lineage too early
   - species-balance pressure prevents one bootstrap family from monopolizing the run budget
   - run counts stay bounded by IO-reported capacity recommendations and any explicit overrides
+- Behavior occupancy is a permanent auxiliary demo-side signal: task evaluations can measure output/state occupancy, transition entropy, ready-timing entropy, and input-conditioned response diversity through the shared `Nbn.Demos.Behavior` library, then apply task-specific viability gates and selection pressure.
 - Shared metrics expected by the future UI include accuracy, best/mean fitness, population count, active brains, species count, reproduction activity, and capacity utilization.
 
 ## Implemented Task Contracts
@@ -53,8 +55,9 @@ All implemented Basics tasks use the same `2 -> 2` geometry, require tick-aligne
 - The expected output is the normalized product `a * b`. Because the input domain is already bounded to `[0,1]`, no extra remapping is applied.
 - Accuracy is tolerance-based for this task: a sample counts as correct when the observed output is within the configured tolerance, defaulting to `+/-0.03`, of the canonical product target.
 - Multiplication now keeps raw overall tolerance accuracy in the primary `task_accuracy`/`tolerance_accuracy` fields, but also reports `edge_tolerance_accuracy`, `interior_tolerance_accuracy`, and `balanced_tolerance_accuracy`. Multiplication fitness uses a moderately interior-biased balanced view plus an edge/interior agreement signal so `min(a,b)`-style edge memorization does not masquerade as real multiplication progress while edge recovery still matters.
+- Multiplication applies the shared behavior-occupancy metrics as a small staged auxiliary pressure. The signal is gated by ready confidence, target proximity, and the configured balanced-accuracy ramp so noisy or not-ready output diversity does not outrank meaningful task progress.
 - The task value is still read from `output[0]`; `output[1]` is only the readiness signal.
-- Shared breakdown keys remain `task_accuracy`, `mean_absolute_error`, `mean_squared_error`, `target_proximity_fitness`, and `dataset_coverage`; task-specific regression keys are `tolerance_accuracy`, `edge_tolerance_accuracy`, `interior_tolerance_accuracy`, `balanced_tolerance_accuracy`, `zero_product_mean_output`, `unit_product_gap`, `midrange_mean_absolute_error`, and `evaluation_set_coverage`.
+- Shared breakdown keys remain `task_accuracy`, `mean_absolute_error`, `mean_squared_error`, `target_proximity_fitness`, and `dataset_coverage`; behavior keys are `behavior_output_entropy`, `behavior_transition_entropy`, `behavior_state_occupancy`, `behavior_ready_timing_entropy`, `behavior_response_diversity`, `behavior_occupancy_signal`, `behavior_auxiliary_fitness`, `behavior_stage_gate`, and `behavior_selection_signal`; task-specific regression keys are `tolerance_accuracy`, `edge_tolerance_accuracy`, `interior_tolerance_accuracy`, `balanced_tolerance_accuracy`, `zero_product_mean_output`, `unit_product_gap`, `midrange_mean_absolute_error`, and `evaluation_set_coverage`.
 
 ## Project Layout
 
