@@ -33,6 +33,8 @@ OPTIONAL_WORKER_COUNT = 4
 MIN_DURATION_SECONDS = 300
 DEGRADATION_RATIO = 1.35
 MIN_COMPLETED_GENERATIONS_FOR_SKIP = 2
+HARNESS_ASSEMBLY_NAME = "Nbn.Demos.Basics.Harness.dll"
+WORKER_ASSEMBLY_NAME = "Nbn.Runtime.WorkerNode.dll"
 
 GENERATION_EVALUATED_RE = re.compile(r"Generation\s+(\d+)\s+evaluated", re.IGNORECASE)
 
@@ -176,6 +178,18 @@ def parse_args() -> argparse.Namespace:
         help="Build configuration for prebuilt assemblies. Default: Release.",
     )
     parser.add_argument(
+        "--harness-assembly",
+        type=Path,
+        default=None,
+        help="Explicit Basics harness DLL path. Auto-detected from standard bin/ and .artifacts-* outputs when omitted.",
+    )
+    parser.add_argument(
+        "--worker-assembly",
+        type=Path,
+        default=None,
+        help="Explicit WorkerNode DLL path. Auto-detected from standard bin/ and .artifacts-* outputs when omitted.",
+    )
+    parser.add_argument(
         "--harness-port-base",
         type=int,
         default=15000,
@@ -302,6 +316,10 @@ def normalize_paths(args: argparse.Namespace) -> None:
         args.runtime_root = (args.repo_root / ".." / "NBNv2").resolve()
     else:
         args.runtime_root = args.runtime_root.resolve()
+    if args.harness_assembly is not None:
+        args.harness_assembly = args.harness_assembly.resolve()
+    if args.worker_assembly is not None:
+        args.worker_assembly = args.worker_assembly.resolve()
 
     if args.output_root is None:
         args.output_root = (
@@ -338,12 +356,15 @@ def validate_args(args: argparse.Namespace, *, require_binaries: bool) -> None:
     if not harness_assembly.exists():
         raise SystemExit(
             f"Basics harness assembly not found: {harness_assembly}\n"
-            f"Build Basics first, for example: {args.dotnet} build {harness_project_path(args)} -c {args.configuration}"
+            f"Expected assembly name: {HARNESS_ASSEMBLY_NAME}\n"
+            f"Build Basics first, for example: {args.dotnet} build {harness_project_path(args)} -c {args.configuration}\n"
+            f"If you built to a custom artifacts path, pass --harness-assembly <path>."
         )
     if not worker_assembly.exists():
         raise SystemExit(
             f"WorkerNode assembly not found: {worker_assembly}\n"
-            f"Build the runtime first, for example: {args.dotnet} build {worker_project_path(args)} -c {args.configuration}"
+            f"Build the runtime first, for example: {args.dotnet} build {worker_project_path(args)} -c {args.configuration}\n"
+            f"If you built to a custom artifacts path, pass --worker-assembly <path>."
         )
 
 
@@ -352,7 +373,9 @@ def harness_project_path(args: argparse.Namespace) -> Path:
 
 
 def harness_assembly_path(args: argparse.Namespace) -> Path:
-    return (
+    if args.harness_assembly is not None:
+        return args.harness_assembly
+    standard = (
         args.repo_root
         / "Basics"
         / "src"
@@ -360,7 +383,14 @@ def harness_assembly_path(args: argparse.Namespace) -> Path:
         / "bin"
         / args.configuration
         / "net8.0"
-        / "Basics.Harness.dll"
+        / HARNESS_ASSEMBLY_NAME
+    )
+    return resolve_assembly_path(
+        standard,
+        search_root=args.repo_root / "Basics",
+        assembly_name=HARNESS_ASSEMBLY_NAME,
+        project_dir_name="Basics.Harness",
+        configuration=args.configuration,
     )
 
 
@@ -369,15 +399,53 @@ def worker_project_path(args: argparse.Namespace) -> Path:
 
 
 def worker_assembly_path(args: argparse.Namespace) -> Path:
-    return (
+    if args.worker_assembly is not None:
+        return args.worker_assembly
+    standard = (
         args.runtime_root
         / "src"
         / "Nbn.Runtime.WorkerNode"
         / "bin"
         / args.configuration
         / "net8.0"
-        / "Nbn.Runtime.WorkerNode.dll"
+        / WORKER_ASSEMBLY_NAME
     )
+    return resolve_assembly_path(
+        standard,
+        search_root=args.runtime_root,
+        assembly_name=WORKER_ASSEMBLY_NAME,
+        project_dir_name="Nbn.Runtime.WorkerNode",
+        configuration=args.configuration,
+    )
+
+
+def resolve_assembly_path(
+    standard: Path,
+    *,
+    search_root: Path,
+    assembly_name: str,
+    project_dir_name: str,
+    configuration: str,
+) -> Path:
+    candidates: dict[Path, float] = {}
+    if standard.exists():
+        candidates[standard] = standard.stat().st_mtime
+
+    if search_root.exists():
+        config_segment = configuration.lower()
+        for path in search_root.glob(f"**/{assembly_name}"):
+            parts = {part.lower() for part in path.parts}
+            if "bin" not in parts or "obj" in parts or "ref" in parts or "refint" in parts:
+                continue
+            if project_dir_name.lower() not in parts:
+                continue
+            if config_segment not in parts:
+                continue
+            candidates[path] = path.stat().st_mtime
+
+    if not candidates:
+        return standard
+    return max(candidates, key=candidates.get)
 
 
 def initial_combos(args: argparse.Namespace) -> list[Combo]:
