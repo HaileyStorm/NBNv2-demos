@@ -187,7 +187,7 @@ public static class BasicsDiversityTuning
             return 0;
         }
 
-        return Math.Min(3, 1 + ((stalledGenerationCount - options.StallGenerationWindow) / 2));
+        return Math.Min(3, stalledGenerationCount / options.StallGenerationWindow);
     }
 
     public static BasicsDiversityPreset ResolveEffectivePreset(BasicsDiversityPreset basePreset, int boostSteps)

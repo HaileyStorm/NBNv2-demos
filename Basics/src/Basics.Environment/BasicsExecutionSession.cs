@@ -5006,8 +5006,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         var offspringBestBalancedAccuracy = offspringCandidates.Length == 0
             ? 0f
-            : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "balanced_tolerance_accuracy"));
-        var bestBalancedAccuracy = candidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "balanced_tolerance_accuracy"));
+            : offspringCandidates.Max(candidate => ResolveReadyWeightedBalancedAccuracy(candidate.Evaluation));
+        var bestBalancedAccuracy = candidates.Max(candidate => ResolveReadyWeightedBalancedAccuracy(candidate.Evaluation));
         var offspringBestEdgeAccuracy = offspringCandidates.Length == 0
             ? 0f
             : offspringCandidates.Max(candidate => ResolveAccuracyBreakdownMetric(candidate.Evaluation, "edge_tolerance_accuracy"));
@@ -5057,6 +5057,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         => evaluation.ScoreBreakdown.TryGetValue(key, out var value)
             ? Math.Clamp(value, 0f, 1f)
             : 0f;
+
+    private static float ResolveReadyWeightedBalancedAccuracy(BasicsTaskEvaluationResult evaluation)
+        => Math.Clamp(
+            ResolveAccuracyBreakdownMetric(evaluation, "balanced_tolerance_accuracy")
+            * ResolveReadyConfidenceMultiplier(evaluation.ScoreBreakdown),
+            0f,
+            1f);
 
     private static IReadOnlyList<BasicsExecutionBootstrapCandidateTrace> BuildBootstrapCandidateTraces(
         IReadOnlyList<PopulationMember> population,

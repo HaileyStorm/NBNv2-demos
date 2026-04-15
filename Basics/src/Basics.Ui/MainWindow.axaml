@@ -742,7 +742,7 @@
                                        Foreground="#182436" />
                             <WrapPanel IsVisible="{Binding ShowAccuracyMetricToggles}"
                                        ItemSpacing="12">
-                                <CheckBox Content="Balanced"
+                                <CheckBox Content="Ready-weighted balanced"
                                           IsChecked="{Binding ShowBalancedAccuracyChart}"
                                           Foreground="#2563EB" />
                                 <CheckBox Content="Edge"

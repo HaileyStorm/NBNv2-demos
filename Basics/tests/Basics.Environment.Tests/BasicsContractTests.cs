@@ -129,6 +129,23 @@ public sealed class BasicsContractTests
     }
 
     [Fact]
+    public void DiversityTuning_AdaptiveBoostSteps_AdvanceOncePerStallWindow()
+    {
+        var options = new BasicsAdaptiveDiversityOptions
+        {
+            Enabled = true,
+            StallGenerationWindow = 75
+        };
+
+        Assert.Equal(0, BasicsDiversityTuning.ResolveAdaptiveBoostSteps(options, stalledGenerationCount: 74));
+        Assert.Equal(1, BasicsDiversityTuning.ResolveAdaptiveBoostSteps(options, stalledGenerationCount: 75));
+        Assert.Equal(1, BasicsDiversityTuning.ResolveAdaptiveBoostSteps(options, stalledGenerationCount: 149));
+        Assert.Equal(2, BasicsDiversityTuning.ResolveAdaptiveBoostSteps(options, stalledGenerationCount: 150));
+        Assert.Equal(3, BasicsDiversityTuning.ResolveAdaptiveBoostSteps(options, stalledGenerationCount: 225));
+        Assert.Equal(3, BasicsDiversityTuning.ResolveAdaptiveBoostSteps(options, stalledGenerationCount: 300));
+    }
+
+    [Fact]
     public void ExecutionStopCriteria_DefaultsToUnlimitedGenerations()
     {
         var criteria = new BasicsExecutionStopCriteria();
