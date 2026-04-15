@@ -1147,6 +1147,52 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task SelectTrackedBestCandidate_PrefersReadyWeightedBalancedRecord_OverCompositeSignal()
+    {
+        await using var runtimeClient = new FakeBasicsRuntimeClient();
+        var populationMemberType = typeof(BasicsExecutionSession).GetNestedType("PopulationMember", BindingFlags.NonPublic);
+        var candidateSelectionType = typeof(BasicsExecutionSession).GetNestedType("CandidateSelection", BindingFlags.NonPublic);
+        var method = typeof(BasicsExecutionSession).GetMethod("SelectTrackedBestCandidate", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(populationMemberType);
+        Assert.NotNull(candidateSelectionType);
+        Assert.NotNull(method);
+
+        var highCompositeEvaluation = CreateEvaluation(
+            fitness: 0.60f,
+            accuracy: 0.55f,
+            balanced: 0.40f,
+            edge: 0.79f,
+            interior: 0.27f,
+            behaviorSelectionSignal: 1f);
+        var highRecordEvaluation = CreateEvaluation(
+            fitness: 0.50f,
+            accuracy: 0.50f,
+            balanced: 0.45f,
+            edge: 0.10f,
+            interior: 0.57f,
+            behaviorSelectionSignal: 0f);
+        var highCompositeCandidate = CreateCandidateSelection(
+            candidateSelectionType!,
+            CreatePopulationMember(populationMemberType!, runtimeClient, "or", highCompositeEvaluation),
+            highCompositeEvaluation,
+            tieBreakRank: 1);
+        var highRecordCandidate = CreateCandidateSelection(
+            candidateSelectionType!,
+            CreatePopulationMember(populationMemberType!, runtimeClient, "and", highRecordEvaluation),
+            highRecordEvaluation,
+            tieBreakRank: 2);
+        var array = Array.CreateInstance(candidateSelectionType!, 2);
+        array.SetValue(highCompositeCandidate, 0);
+        array.SetValue(highRecordCandidate, 1);
+
+        var selected = method!.Invoke(null, new object[] { array });
+        var selectedEvaluation = Assert.IsType<BasicsTaskEvaluationResult>(
+            candidateSelectionType!.GetProperty("Evaluation")!.GetValue(selected));
+
+        Assert.Equal(0.45f, selectedEvaluation.ScoreBreakdown["balanced_tolerance_accuracy"]);
+    }
+
+    [Fact]
     public async Task SelectBestCandidateSummary_UsesBehaviorOccupancy_AsBoundedTieBreaker()
     {
         await using var runtimeClient = new FakeBasicsRuntimeClient();
@@ -3129,6 +3175,67 @@ public sealed class BasicsExecutionSessionTests
             ["ready_confidence"] = 1f,
             ["behavior_selection_signal"] = behaviorSelectionSignal
         };
+
+    private static BasicsTaskEvaluationResult CreateEvaluation(
+        float fitness,
+        float accuracy,
+        float balanced,
+        float edge,
+        float interior,
+        float behaviorSelectionSignal)
+        => new(
+            Fitness: fitness,
+            Accuracy: accuracy,
+            SamplesEvaluated: 1,
+            SamplesCorrect: 1,
+            ScoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+            {
+                ["task_accuracy"] = accuracy,
+                ["balanced_tolerance_accuracy"] = balanced,
+                ["edge_tolerance_accuracy"] = edge,
+                ["interior_tolerance_accuracy"] = interior,
+                ["ready_confidence"] = 1f,
+                ["behavior_occupancy_enabled"] = 1f,
+                ["behavior_selection_signal"] = behaviorSelectionSignal
+            },
+            Diagnostics: Array.Empty<string>());
+
+    private static object CreatePopulationMember(
+        Type populationMemberType,
+        FakeBasicsRuntimeClient runtimeClient,
+        string behavior,
+        BasicsTaskEvaluationResult evaluation)
+        => Activator.CreateInstance(
+               populationMemberType,
+               BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+               binder: null,
+               args:
+               [
+                   runtimeClient.CreateDefinitionArtifact(behavior),
+                   "species.default",
+                   "species.default",
+                   new BasicsDefinitionComplexitySummary(1, 1, 3),
+                   evaluation,
+                   1,
+                   true,
+                   Guid.Empty,
+                   null
+               ],
+               culture: null)
+           ?? throw new InvalidOperationException("Could not create test population member.");
+
+    private static object CreateCandidateSelection(
+        Type candidateSelectionType,
+        object populationMember,
+        BasicsTaskEvaluationResult evaluation,
+        int tieBreakRank)
+        => Activator.CreateInstance(
+               candidateSelectionType,
+               BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+               binder: null,
+               args: [populationMember, evaluation, tieBreakRank],
+               culture: null)
+           ?? throw new InvalidOperationException("Could not create test candidate selection.");
 
     private sealed class FakeBasicsRuntimeClient : IBasicsRuntimeClient
     {

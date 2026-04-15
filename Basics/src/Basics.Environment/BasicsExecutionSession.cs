@@ -5169,6 +5169,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static CandidateSelection SelectTrackedBestCandidate(IReadOnlyList<CandidateSelection> candidates)
         => candidates
             .OrderByDescending(candidate => candidate.Evaluation.Diagnostics.Count == 0)
+            .ThenByDescending(candidate => ResolveCandidateRecordScore(candidate.Evaluation))
             .ThenByDescending(candidate => ResolveParentSelectionSignal(candidate.Evaluation))
             .ThenByDescending(candidate => ResolveCandidateSelectionAccuracy(candidate.Evaluation))
             .ThenByDescending(candidate => candidate.Evaluation.Accuracy)
@@ -5217,6 +5218,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         => Math.Clamp(
             ResolveReadyConfidenceMultiplier(candidate.ScoreBreakdown)
             * ResolveCandidateSelectionAccuracy(candidate),
+            0f,
+            1f);
+
+    private static float ResolveCandidateRecordScore(BasicsTaskEvaluationResult evaluation)
+        => Math.Clamp(
+            ResolveReadyConfidenceMultiplier(evaluation.ScoreBreakdown)
+            * ResolveCandidateSelectionAccuracy(evaluation),
             0f,
             1f);
 
