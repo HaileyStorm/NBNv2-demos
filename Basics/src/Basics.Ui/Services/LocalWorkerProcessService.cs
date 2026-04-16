@@ -35,6 +35,14 @@ public sealed record BasicsLocalWorkerStopResult(
     string StatusText,
     string DetailText);
 
+internal sealed record BasicsWorkerProcessLaunchPlan(
+    int WorkerCount,
+    int Port,
+    string RootActorName,
+    string LogicalName,
+    string LogPath,
+    IReadOnlyList<BasicsLocalWorkerInfo> Workers);
+
 public interface IBasicsLocalWorkerProcessService : IAsyncDisposable
 {
     int LaunchedWorkerCount { get; }
@@ -51,6 +59,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
     private static readonly TimeSpan WorkerStartupTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan WorkerStartupPollInterval = TimeSpan.FromMilliseconds(200);
+    private static readonly TimeSpan WorkerPostBindStabilityDelay = TimeSpan.FromMilliseconds(750);
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly List<ManagedWorkerProcess> _processes = new();
     private readonly string _workspaceRoot;
@@ -80,7 +89,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         {
             lock (_processes)
             {
-                return _processes.Count;
+                return _processes.Sum(static process => process.WorkerCount);
             }
         }
     }
@@ -105,46 +114,43 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
                     DetailText: "Worker count must be greater than zero.");
             }
 
+            if (request.BasePort <= 0 || request.BasePort > 65535)
+            {
+                return new BasicsLocalWorkerLaunchResult(
+                    Success: false,
+                    StartedCount: 0,
+                    StartedWorkers: Array.Empty<BasicsLocalWorkerInfo>(),
+                    StatusText: "Worker launch blocked.",
+                    DetailText: "Worker port must be between 1 and 65535.");
+            }
+
             await EnsureWorkerRuntimeBuiltAsync(cancellationToken).ConfigureAwait(false);
 
-            var started = new List<BasicsLocalWorkerInfo>(request.WorkerCount);
-            var nextPort = request.BasePort;
-            for (var index = 0; index < request.WorkerCount; index++)
+            var ordinal = _nextWorkerOrdinal++;
+            var port = FindNextAvailablePort(request.BasePort);
+            var plan = BuildWorkerProcessLaunchPlan(
+                ordinal,
+                port,
+                request.WorkerCount,
+                request.BindHost,
+                request.AdvertiseHost,
+                processId: 0,
+                _workerLogRoot);
+            var started = await StartWorkerProcessAsync(plan, request, cancellationToken).ConfigureAwait(false);
+            if (started is null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var ordinal = _nextWorkerOrdinal++;
-                var port = FindNextAvailablePort(nextPort);
-                nextPort = port + 1;
-                var rootActorName = $"worker-node-ui-{ordinal}";
-                var logicalName = $"nbn.worker.ui.{ordinal}";
-                var startedWorker = await StartWorkerProcessAsync(
-                        ordinal,
-                        port,
-                        rootActorName,
-                        logicalName,
-                        request,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-                if (startedWorker is null)
-                {
-                    return new BasicsLocalWorkerLaunchResult(
-                        Success: started.Count > 0,
-                        StartedCount: started.Count,
-                        StartedWorkers: started.ToArray(),
-                        StatusText: started.Count > 0 ? "Workers partially started." : "Worker launch failed.",
-                        DetailText: started.Count > 0
-                            ? $"Started {started.Count} worker(s) before a launch failed. See log files under {_workerLogRoot}."
-                            : $"No workers started. See log files under {_workerLogRoot}.");
-                }
-
-                started.Add(startedWorker);
+                return new BasicsLocalWorkerLaunchResult(
+                    Success: false,
+                    StartedCount: 0,
+                    StartedWorkers: Array.Empty<BasicsLocalWorkerInfo>(),
+                    StatusText: "Worker launch failed.",
+                    DetailText: $"No workers started. See log file {plan.LogPath}.");
             }
 
             return new BasicsLocalWorkerLaunchResult(
                 Success: true,
                 StartedCount: started.Count,
-                StartedWorkers: started.ToArray(),
+                StartedWorkers: started,
                 StatusText: $"Started {started.Count} worker(s).",
                 DetailText: BuildWorkerDetail(started));
         }
@@ -179,12 +185,13 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
                 await StopManagedWorkerProcessAsync(process, cancellationToken).ConfigureAwait(false);
             }
 
+            var stoppedWorkerCount = snapshot.Sum(static process => process.WorkerCount);
             return new BasicsLocalWorkerStopResult(
-                StoppedCount: snapshot.Count,
-                StatusText: snapshot.Count == 0 ? "No launched workers to stop." : $"Stopped {snapshot.Count} launched worker(s).",
+                StoppedCount: stoppedWorkerCount,
+                StatusText: snapshot.Count == 0 ? "No launched workers to stop." : $"Stopped {stoppedWorkerCount} launched worker(s).",
                 DetailText: snapshot.Count == 0
                     ? "Basics UI is not currently tracking any worker processes."
-                    : "All worker processes started by Basics UI in this session were stopped.");
+                    : "All WorkerNode host processes started by Basics UI in this session were stopped.");
         }
         finally
         {
@@ -252,17 +259,45 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         _workerRuntimeBuilt = true;
     }
 
-    private async Task<BasicsLocalWorkerInfo?> StartWorkerProcessAsync(
+    internal static BasicsWorkerProcessLaunchPlan BuildWorkerProcessLaunchPlan(
         int ordinal,
         int port,
-        string rootActorName,
-        string logicalName,
+        int workerCount,
+        string bindHost,
+        string advertiseHost,
+        int processId,
+        string logRoot)
+    {
+        var rootActorName = $"worker-node-ui-{ordinal}";
+        var logicalName = $"nbn.worker.ui.{ordinal}";
+        var logPath = Path.Combine(logRoot, $"worker-{ordinal:D2}-{port}.log");
+        var workers = Enumerable.Range(0, workerCount)
+            .Select(index => new BasicsLocalWorkerInfo(
+                Port: port,
+                RootActorName: ResolveRootActorName(rootActorName, index),
+                LogicalName: logicalName,
+                BindHost: bindHost,
+                AdvertiseHost: advertiseHost,
+                ProcessId: processId,
+                LogPath: logPath))
+            .ToArray();
+
+        return new BasicsWorkerProcessLaunchPlan(
+            workerCount,
+            port,
+            rootActorName,
+            logicalName,
+            logPath,
+            workers);
+    }
+
+    private async Task<IReadOnlyList<BasicsLocalWorkerInfo>?> StartWorkerProcessAsync(
+        BasicsWorkerProcessLaunchPlan plan,
         BasicsLocalWorkerLaunchRequest request,
         CancellationToken cancellationToken)
     {
-        var logPath = Path.Combine(_workerLogRoot, $"worker-{ordinal:D2}-{port}.log");
         var writer = TextWriter.Synchronized(new StreamWriter(
-            new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+            new FileStream(plan.LogPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
         {
             AutoFlush = true
         });
@@ -280,27 +315,16 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
             },
             EnableRaisingEvents = true
         };
-        process.StartInfo.ArgumentList.Add(_workerAssemblyPath);
-        process.StartInfo.ArgumentList.Add("--bind-host");
-        process.StartInfo.ArgumentList.Add(request.BindHost);
-        process.StartInfo.ArgumentList.Add("--advertise-host");
-        process.StartInfo.ArgumentList.Add(request.AdvertiseHost);
-        process.StartInfo.ArgumentList.Add("--port");
-        process.StartInfo.ArgumentList.Add(port.ToString());
-        process.StartInfo.ArgumentList.Add("--logical-name");
-        process.StartInfo.ArgumentList.Add(logicalName);
-        process.StartInfo.ArgumentList.Add("--root-name");
-        process.StartInfo.ArgumentList.Add(rootActorName);
-        process.StartInfo.ArgumentList.Add("--settings-host");
-        process.StartInfo.ArgumentList.Add(request.SettingsHost);
-        process.StartInfo.ArgumentList.Add("--settings-port");
-        process.StartInfo.ArgumentList.Add(request.SettingsPort.ToString());
-        process.StartInfo.ArgumentList.Add("--settings-name");
-        process.StartInfo.ArgumentList.Add(request.SettingsName);
-        process.StartInfo.ArgumentList.Add("--storage-pct");
-        process.StartInfo.ArgumentList.Add(request.StoragePercent.ToString());
+        AddWorkerProcessArguments(process.StartInfo, _workerAssemblyPath, plan, request);
 
-        var managed = new ManagedWorkerProcess(process, writer, logPath, port, rootActorName, logicalName);
+        var managed = new ManagedWorkerProcess(
+            process,
+            writer,
+            plan.LogPath,
+            plan.Port,
+            plan.WorkerCount,
+            plan.RootActorName,
+            plan.LogicalName);
         DataReceivedEventHandler outputHandler = (_, args) => AppendWorkerLog(managed, "stdout", args.Data);
         DataReceivedEventHandler errorHandler = (_, args) => AppendWorkerLog(managed, "stderr", args.Data);
         EventHandler exitHandler = (_, _) => HandleWorkerExit(managed);
@@ -320,8 +344,8 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            var started = await WaitForWorkerPortAsync(process, port, cancellationToken).ConfigureAwait(false);
-            if (!started)
+            var started = await WaitForWorkerPortAsync(process, plan.Port, cancellationToken).ConfigureAwait(false);
+            if (!started || !await WaitForWorkerStabilityAsync(process, cancellationToken).ConfigureAwait(false))
             {
                 await StopManagedWorkerProcessAsync(managed, cancellationToken).ConfigureAwait(false);
                 return null;
@@ -332,14 +356,9 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
                 _processes.Add(managed);
             }
 
-            return new BasicsLocalWorkerInfo(
-                Port: port,
-                RootActorName: rootActorName,
-                LogicalName: logicalName,
-                BindHost: request.BindHost,
-                AdvertiseHost: request.AdvertiseHost,
-                ProcessId: process.Id,
-                LogPath: logPath);
+            return plan.Workers
+                .Select(worker => worker with { ProcessId = process.Id })
+                .ToArray();
         }
         catch
         {
@@ -368,6 +387,23 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         }
 
         return false;
+    }
+
+    private static async Task<bool> WaitForWorkerStabilityAsync(Process process, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(WorkerPostBindStabilityDelay, cancellationToken).ConfigureAwait(false);
+            return !process.HasExited;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void AppendWorkerLog(ManagedWorkerProcess process, string streamName, string? data)
@@ -507,7 +543,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
     private int FindNextAvailablePort(int requestedPort)
     {
         var port = requestedPort;
-        while (true)
+        while (port <= 65535)
         {
             var inUse = IsPortInUse(port);
             if (!inUse)
@@ -523,12 +559,46 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
 
             port++;
         }
+
+        throw new InvalidOperationException($"No available worker port found at or above {requestedPort}.");
+    }
+
+    internal static void AddWorkerProcessArguments(
+        ProcessStartInfo startInfo,
+        string workerAssemblyPath,
+        BasicsWorkerProcessLaunchPlan plan,
+        BasicsLocalWorkerLaunchRequest request)
+    {
+        startInfo.ArgumentList.Add(workerAssemblyPath);
+        startInfo.ArgumentList.Add("--bind-host");
+        startInfo.ArgumentList.Add(request.BindHost);
+        startInfo.ArgumentList.Add("--advertise-host");
+        startInfo.ArgumentList.Add(request.AdvertiseHost);
+        startInfo.ArgumentList.Add("--port");
+        startInfo.ArgumentList.Add(plan.Port.ToString());
+        startInfo.ArgumentList.Add("--logical-name");
+        startInfo.ArgumentList.Add(plan.LogicalName);
+        startInfo.ArgumentList.Add("--root-name");
+        startInfo.ArgumentList.Add(plan.RootActorName);
+        startInfo.ArgumentList.Add("--worker-count");
+        startInfo.ArgumentList.Add(plan.WorkerCount.ToString());
+        startInfo.ArgumentList.Add("--settings-host");
+        startInfo.ArgumentList.Add(request.SettingsHost);
+        startInfo.ArgumentList.Add("--settings-port");
+        startInfo.ArgumentList.Add(request.SettingsPort.ToString());
+        startInfo.ArgumentList.Add("--settings-name");
+        startInfo.ArgumentList.Add(request.SettingsName);
+        startInfo.ArgumentList.Add("--storage-pct");
+        startInfo.ArgumentList.Add(request.StoragePercent.ToString());
     }
 
     private static bool IsPortInUse(int port)
         => IPGlobalProperties.GetIPGlobalProperties()
             .GetActiveTcpListeners()
             .Any(endpoint => endpoint.Port == port);
+
+    private static string ResolveRootActorName(string baseRootActorName, int workerIndex)
+        => workerIndex == 0 ? baseRootActorName : $"{baseRootActorName}-{workerIndex + 1}";
 
     private static string BuildWorkerDetail(IReadOnlyList<BasicsLocalWorkerInfo> workers)
         => string.Join(
@@ -587,6 +657,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
             TextWriter logWriter,
             string logPath,
             int port,
+            int workerCount,
             string rootActorName,
             string logicalName)
         {
@@ -594,6 +665,7 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
             LogWriter = logWriter;
             LogPath = logPath;
             Port = port;
+            WorkerCount = workerCount;
             RootActorName = rootActorName;
             LogicalName = logicalName;
         }
@@ -609,6 +681,8 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         public string LogPath { get; }
 
         public int Port { get; }
+
+        public int WorkerCount { get; }
 
         public string RootActorName { get; }
 

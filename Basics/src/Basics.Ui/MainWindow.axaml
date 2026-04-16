@@ -98,17 +98,17 @@
                                   IsExpanded="False">
                             <StackPanel Margin="0,10,0,0"
                                         Spacing="10">
-                                <TextBlock Text="Starts local WorkerNode processes on consecutive loopback ports. Shared-port multi-worker launch is not supported here yet."
+                                <TextBlock Text="Starts one local WorkerNode process on the configured port, with one uniquely named worker root per requested worker."
                                            Foreground="#425466"
                                            TextWrapping="Wrap" />
                                 <Grid ColumnDefinitions="Auto,90,Auto,90,Auto,90"
                                       ColumnSpacing="12"
                                       RowSpacing="10">
                                     <TextBlock Grid.Column="0" Text="Workers" VerticalAlignment="Center"
-                                               ToolTip.Tip="How many local worker processes to start from this UI action." />
+                                               ToolTip.Tip="How many worker root actors to start on the shared WorkerNode port." />
                                     <TextBox Grid.Column="1" Text="{Binding WorkerCountText}" />
-                                    <TextBlock Grid.Column="2" Text="First port" VerticalAlignment="Center"
-                                               ToolTip.Tip="Starting port for the launched worker set. Basics will skip ports already in use." />
+                                    <TextBlock Grid.Column="2" Text="Worker port" VerticalAlignment="Center"
+                                               ToolTip.Tip="Shared WorkerNode port. Basics will skip to the next available port when this one is already in use." />
                                     <TextBox Grid.Column="3" Text="{Binding WorkerBasePortText}" />
                                     <TextBlock Grid.Column="4" Text="Storage %" VerticalAlignment="Center"
                                                ToolTip.Tip="Worker storage availability percentage passed to the WorkerNode runtime." />

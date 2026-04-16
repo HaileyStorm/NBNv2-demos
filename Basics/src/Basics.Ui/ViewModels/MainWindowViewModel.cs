@@ -206,7 +206,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _workerBasePortText = "12041";
     private string _workerStoragePctText = "95";
     private string _workerLauncherStatus = "No workers launched from Basics UI.";
-    private string _workerLauncherDetail = "Starts local WorkerNode processes on consecutive loopback ports. Shared-port multi-worker launch is not supported here yet.";
+    private string _workerLauncherDetail = "Starts one local WorkerNode process on the configured port with the requested worker root count.";
     private string _initialBrainSeedStatus = "No initial brains uploaded.";
     private ArtifactRef? _winnerDefinitionArtifact;
     private ArtifactRef? _winnerSnapshotArtifact;
@@ -1237,7 +1237,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         IsWorkerLauncherBusy = true;
         WorkerLauncherStatus = "Starting workers...";
-        WorkerLauncherDetail = $"Launching {request.WorkerCount} local worker process(es) from Basics UI.";
+        WorkerLauncherDetail = $"Launching {request.WorkerCount} local worker root(s) on a shared port starting at {request.BasePort}.";
         RaiseCommandStates();
 
         try
@@ -2036,9 +2036,9 @@ public sealed class MainWindowViewModel : ViewModelBase
             return false;
         }
 
-        if (!int.TryParse(WorkerBasePortText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var basePort) || basePort <= 0)
+        if (!int.TryParse(WorkerBasePortText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var basePort) || basePort <= 0 || basePort > 65535)
         {
-            failureMessage = "First worker port must be a positive integer.";
+            failureMessage = "Worker port must be an integer between 1 and 65535.";
             return false;
         }
 
