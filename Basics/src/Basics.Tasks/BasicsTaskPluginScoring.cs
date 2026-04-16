@@ -159,6 +159,11 @@ internal static class BasicsTaskPluginScoring
             ("edge_tolerance_accuracy", 0f),
             ("interior_tolerance_accuracy", 0f),
             ("balanced_tolerance_accuracy", 0f),
+            ("weak_side_tolerance_accuracy", 0f),
+            ("multiplication_surface_fitness", 0f),
+            ("multiplication_monotonicity", 0f),
+            ("multiplication_product_correlation", 0f),
+            ("interior_proximity_fitness", 0f),
             ("zero_product_mean_output", 1f),
             ("unit_product_gap", 1f),
             ("midrange_mean_absolute_error", 1f));
@@ -228,12 +233,18 @@ internal static class BasicsTaskPluginScoring
         var edgeAccuracy = edgeCount == 0 ? rawAccuracy : edgeCorrect / (float)edgeCount;
         var interiorAccuracy = interiorCount == 0 ? rawAccuracy : interiorCorrect / (float)interiorCount;
         var balancedAccuracy = ResolveMultiplicationBalancedAccuracy(edgeAccuracy, interiorAccuracy);
+        var surface = ComputeMultiplicationSurfaceMetrics(outcomes, edgeAccuracy, interiorAccuracy);
 
         var breakdown = CreateBaseBreakdown(outcomes, rawAccuracy, coverageKey);
         breakdown["tolerance_accuracy"] = rawAccuracy;
         breakdown["edge_tolerance_accuracy"] = edgeAccuracy;
         breakdown["interior_tolerance_accuracy"] = interiorAccuracy;
         breakdown["balanced_tolerance_accuracy"] = balancedAccuracy;
+        breakdown["weak_side_tolerance_accuracy"] = surface.WeakSideAccuracy;
+        breakdown["multiplication_surface_fitness"] = surface.SurfaceFitness;
+        breakdown["multiplication_monotonicity"] = surface.Monotonicity;
+        breakdown["multiplication_product_correlation"] = surface.ProductCorrelation;
+        breakdown["interior_proximity_fitness"] = surface.InteriorProximityFitness;
         breakdown["zero_product_mean_output"] = zeroCount == 0 ? 0f : zeroOutputSum / zeroCount;
         breakdown["unit_product_gap"] = unitCount == 0 ? 0f : unitGapSum / unitCount;
         breakdown["midrange_mean_absolute_error"] = midrangeCount == 0 ? 0f : midrangeAbsoluteErrorSum / midrangeCount;
@@ -445,10 +456,17 @@ internal static class BasicsTaskPluginScoring
         var balancedAccuracy = breakdown.TryGetValue("balanced_tolerance_accuracy", out var balanced)
             ? Math.Clamp(balanced, 0f, 1f)
             : accuracy;
+        var surfaceFitness = breakdown.TryGetValue("multiplication_surface_fitness", out var surface)
+            ? Math.Clamp(surface, 0f, 1f)
+            : 0f;
+        var weakSideAccuracy = breakdown.TryGetValue("weak_side_tolerance_accuracy", out var weakSide)
+            ? Math.Clamp(weakSide, 0f, 1f)
+            : balancedAccuracy;
         var sharedFitness = Math.Clamp(
-            (0.50f * breakdown["target_proximity_fitness"])
-            + (0.25f * (1f - breakdown["mean_absolute_error"]))
-            + (0.25f * balancedAccuracy),
+            (0.42f * breakdown["target_proximity_fitness"])
+            + (0.20f * (1f - breakdown["mean_absolute_error"]))
+            + (0.20f * balancedAccuracy)
+            + (0.18f * surfaceFitness),
             0f,
             1f);
         var zeroProductScore = 1f - Math.Clamp(breakdown["zero_product_mean_output"], 0f, 1f);
@@ -458,14 +476,16 @@ internal static class BasicsTaskPluginScoring
             ? Math.Clamp(interior, 0f, 1f)
             : accuracy;
         var structuredRegressionScore = Math.Clamp(
-            (0.20f * unitProductScore)
-            + (0.15f * zeroProductScore)
-            + (0.45f * interiorAccuracy)
-            + (0.20f * midrangeScore),
+            (0.15f * unitProductScore)
+            + (0.10f * zeroProductScore)
+            + (0.25f * interiorAccuracy)
+            + (0.20f * midrangeScore)
+            + (0.20f * weakSideAccuracy)
+            + (0.10f * surfaceFitness),
             0f,
             1f);
         var baseFitness = Math.Clamp(
-            sharedFitness * (0.25f + (0.75f * structuredRegressionScore)),
+            sharedFitness * (0.22f + (0.78f * structuredRegressionScore)),
             0f,
             1f);
         var fitness = ApplyReadyConfidenceFitness(ApplyBehaviorAuxiliaryBonus(baseFitness, breakdown), breakdown);
@@ -484,6 +504,122 @@ internal static class BasicsTaskPluginScoring
 
     private static float ResolveMultiplicationBalancedAccuracy(float edgeAccuracy, float interiorAccuracy)
         => Math.Clamp((0.25f * edgeAccuracy) + (0.75f * interiorAccuracy), 0f, 1f);
+
+    private static MultiplicationSurfaceMetrics ComputeMultiplicationSurfaceMetrics(
+        IReadOnlyList<DeterministicScalarOutcome> outcomes,
+        float edgeAccuracy,
+        float interiorAccuracy)
+    {
+        var weakSideAccuracy = ComputeWeakSideAccuracy(edgeAccuracy, interiorAccuracy);
+        var monotonicity = ComputeMultiplicationMonotonicity(outcomes);
+        var productCorrelation = ComputeProductCorrelation(outcomes);
+        var interiorOutcomes = outcomes
+            .Where(static outcome => !IsMultiplicationEdgeSample(outcome.Sample))
+            .ToArray();
+        var interiorProximity = interiorOutcomes.Length == 0
+            ? 1f
+            : interiorOutcomes.Average(static outcome => 1f / (1f + (TargetProximityScale * outcome.Delta)));
+        var surfaceFitness = Math.Clamp(
+            (0.35f * productCorrelation)
+            + (0.25f * monotonicity)
+            + (0.25f * interiorProximity)
+            + (0.15f * weakSideAccuracy),
+            0f,
+            1f);
+
+        return new MultiplicationSurfaceMetrics(
+            SurfaceFitness: surfaceFitness,
+            Monotonicity: monotonicity,
+            ProductCorrelation: productCorrelation,
+            InteriorProximityFitness: Math.Clamp(interiorProximity, 0f, 1f),
+            WeakSideAccuracy: weakSideAccuracy);
+    }
+
+    private static float ComputeWeakSideAccuracy(float edgeAccuracy, float interiorAccuracy)
+    {
+        edgeAccuracy = Math.Clamp(edgeAccuracy, 0f, 1f);
+        interiorAccuracy = Math.Clamp(interiorAccuracy, 0f, 1f);
+        var minimum = Math.Min(edgeAccuracy, interiorAccuracy);
+        var harmonic = edgeAccuracy <= 0f || interiorAccuracy <= 0f
+            ? 0f
+            : (2f * edgeAccuracy * interiorAccuracy) / (edgeAccuracy + interiorAccuracy);
+        return Math.Clamp((0.65f * minimum) + (0.35f * harmonic), 0f, 1f);
+    }
+
+    private static float ComputeMultiplicationMonotonicity(IReadOnlyList<DeterministicScalarOutcome> outcomes)
+    {
+        var comparablePairs = 0;
+        var monotonicPairs = 0;
+        for (var i = 0; i < outcomes.Count; i++)
+        {
+            for (var j = i + 1; j < outcomes.Count; j++)
+            {
+                var left = outcomes[i];
+                var right = outcomes[j];
+                if (left.Sample.InputB == right.Sample.InputB && left.Sample.InputA != right.Sample.InputA)
+                {
+                    comparablePairs++;
+                    if (IsNonDecreasingByInput(left, right, compareInputA: true))
+                    {
+                        monotonicPairs++;
+                    }
+                }
+
+                if (left.Sample.InputA == right.Sample.InputA && left.Sample.InputB != right.Sample.InputB)
+                {
+                    comparablePairs++;
+                    if (IsNonDecreasingByInput(left, right, compareInputA: false))
+                    {
+                        monotonicPairs++;
+                    }
+                }
+            }
+        }
+
+        return comparablePairs == 0 ? 1f : monotonicPairs / (float)comparablePairs;
+    }
+
+    private static bool IsNonDecreasingByInput(
+        DeterministicScalarOutcome left,
+        DeterministicScalarOutcome right,
+        bool compareInputA)
+    {
+        var leftInput = compareInputA ? left.Sample.InputA : left.Sample.InputB;
+        var rightInput = compareInputA ? right.Sample.InputA : right.Sample.InputB;
+        var low = leftInput <= rightInput ? left : right;
+        var high = leftInput <= rightInput ? right : left;
+        return high.Observation.OutputValue + 0.0001f >= low.Observation.OutputValue;
+    }
+
+    private static float ComputeProductCorrelation(IReadOnlyList<DeterministicScalarOutcome> outcomes)
+    {
+        if (outcomes.Count < 2)
+        {
+            return 1f;
+        }
+
+        var expectedMean = outcomes.Average(static outcome => outcome.Sample.ExpectedOutput);
+        var outputMean = outcomes.Average(static outcome => Math.Clamp(outcome.Observation.OutputValue, 0f, 1f));
+        var numerator = 0d;
+        var expectedVariance = 0d;
+        var outputVariance = 0d;
+        foreach (var outcome in outcomes)
+        {
+            var expectedDelta = outcome.Sample.ExpectedOutput - expectedMean;
+            var outputDelta = Math.Clamp(outcome.Observation.OutputValue, 0f, 1f) - outputMean;
+            numerator += expectedDelta * outputDelta;
+            expectedVariance += expectedDelta * expectedDelta;
+            outputVariance += outputDelta * outputDelta;
+        }
+
+        var denominator = Math.Sqrt(expectedVariance * outputVariance);
+        if (denominator <= 0.0000001d)
+        {
+            return 0f;
+        }
+
+        return Math.Clamp((float)(numerator / denominator), 0f, 1f);
+    }
 
     private static float ComputeSharedFitness(
         float accuracy,
@@ -549,6 +685,13 @@ internal static class BasicsTaskPluginScoring
         BasicsTaskSample Sample,
         BasicsTaskObservation Observation,
         float Delta);
+
+    private readonly record struct MultiplicationSurfaceMetrics(
+        float SurfaceFitness,
+        float Monotonicity,
+        float ProductCorrelation,
+        float InteriorProximityFitness,
+        float WeakSideAccuracy);
 
     private static float ComputeReadyConfidence(IReadOnlyList<DeterministicScalarOutcome> outcomes)
         => outcomes.Count == 0

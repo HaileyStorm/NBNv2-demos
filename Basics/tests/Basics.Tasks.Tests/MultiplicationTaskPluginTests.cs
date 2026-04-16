@@ -89,6 +89,35 @@ public sealed class MultiplicationTaskPluginTests
         Assert.InRange(result.Accuracy, 0.52f, 0.54f);
         Assert.InRange(result.ScoreBreakdown["balanced_tolerance_accuracy"], 0.30f, 0.32f);
         Assert.True(result.Fitness < 0.5f, $"Expected edge-perfect min baseline to be demoted, observed fitness {result.Fitness:0.###}.");
+        Assert.True(result.ScoreBreakdown["weak_side_tolerance_accuracy"] < result.ScoreBreakdown["balanced_tolerance_accuracy"]);
+    }
+
+    [Fact]
+    public void Evaluate_AddsProductSurfaceMetrics_ForMultiplicationShape()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var exact = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset.Select((sample, index) => new BasicsTaskObservation((ulong)(index + 1), sample.ExpectedOutput)).ToArray());
+        var collapsed = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset.Select((_, index) => new BasicsTaskObservation((ulong)(index + 1), 0f)).ToArray());
+        var scaledProduct = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            dataset.Select((sample, index) => new BasicsTaskObservation((ulong)(index + 1), sample.ExpectedOutput * 0.75f)).ToArray());
+
+        Assert.Equal(1f, exact.ScoreBreakdown["multiplication_surface_fitness"]);
+        Assert.Equal(1f, exact.ScoreBreakdown["multiplication_monotonicity"]);
+        Assert.Equal(1f, exact.ScoreBreakdown["multiplication_product_correlation"]);
+        Assert.Equal(1f, exact.ScoreBreakdown["interior_proximity_fitness"]);
+        Assert.Equal(1f, exact.ScoreBreakdown["weak_side_tolerance_accuracy"]);
+        Assert.Equal(0f, collapsed.ScoreBreakdown["multiplication_product_correlation"]);
+        Assert.True(exact.ScoreBreakdown["multiplication_surface_fitness"] > collapsed.ScoreBreakdown["multiplication_surface_fitness"]);
+        Assert.True(scaledProduct.ScoreBreakdown["multiplication_product_correlation"] > collapsed.ScoreBreakdown["multiplication_product_correlation"]);
+        Assert.True(scaledProduct.ScoreBreakdown["multiplication_surface_fitness"] > collapsed.ScoreBreakdown["multiplication_surface_fitness"]);
     }
 
     [Fact]

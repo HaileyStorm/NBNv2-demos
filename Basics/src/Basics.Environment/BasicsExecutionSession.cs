@@ -3124,14 +3124,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         var adaptiveBoostSteps = BasicsDiversityTuning.ResolveAdaptiveBoostSteps(plan.AdaptiveDiversity, stalledGenerationCount);
         var effectivePreset = BasicsDiversityTuning.ResolveEffectivePreset(plan.DiversityPreset, adaptiveBoostSteps);
-        var effectiveVariationBand = BasicsDiversityTuning.ResolveEffectiveVariationBand(
+        var baseVariationBand = plan.SeedTemplate.InitialVariationBand;
+        var explorationVariationBand = BasicsDiversityTuning.ResolveEffectiveVariationBand(
             plan.SeedTemplate.InitialVariationBand,
             plan.DiversityPreset,
             adaptiveBoostSteps);
-        var effectiveScheduling = BasicsDiversityTuning.ApplyAdaptiveBoost(plan.Scheduling, adaptiveBoostSteps);
+        var baseScheduling = plan.Scheduling;
+        var explorationScheduling = BasicsDiversityTuning.ApplyAdaptiveBoost(plan.Scheduling, adaptiveBoostSteps);
         var eliteCount = ranked.Length == 1
             ? 1
-            : Math.Max(1, (int)Math.Ceiling(ranked.Length * effectiveScheduling.ParentSelection.EliteFraction));
+            : Math.Max(1, (int)Math.Ceiling(ranked.Length * baseScheduling.ParentSelection.EliteFraction));
         eliteCount = Math.Min(eliteCount, Math.Min(ranked.Length, targetPopulation));
 
         var carryForwardMembers = SelectCarryForwardMembers(ranked, eliteCount).ToArray();
@@ -3146,15 +3148,25 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             nextGeneration.Select(static member => member.Definition.ToSha256Hex()),
             StringComparer.OrdinalIgnoreCase);
         var duplicateChildDefinitionCount = 0;
-        var parentPool = await BuildParentPoolAsync(
-                effectiveScheduling.ParentSelection,
+        var baseParentPool = await BuildParentPoolAsync(
+                baseScheduling.ParentSelection,
                 population,
                 carryForwardMembers,
                 plan,
-                adaptiveBoostSteps,
+                adaptiveBoostSteps: 0,
                 cancellationToken)
             .ConfigureAwait(false);
-        if (parentPool.Count == 0)
+        var explorationParentPool = adaptiveBoostSteps > 0
+            ? await BuildParentPoolAsync(
+                    explorationScheduling.ParentSelection,
+                    population,
+                    carryForwardMembers,
+                    plan,
+                    adaptiveBoostSteps,
+                    cancellationToken)
+                .ConfigureAwait(false)
+            : baseParentPool;
+        if (baseParentPool.Count == 0 && explorationParentPool.Count == 0)
         {
             return EnsureMinimumCarryForwardPopulation(nextGeneration, ranked, targetPopulation, minimumPopulation);
         }
@@ -3169,7 +3181,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 carryForwardMembers,
                 population,
                 plan,
-                adaptiveBoostSteps,
+                adaptiveBoostSteps: 0,
                 bestSelectionSignal,
                 queuedPairs,
                 queuedPairKeys,
@@ -3178,6 +3190,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             .ConfigureAwait(false);
         var frontierChildren = new List<FrontierChildCandidate>();
         var frontierCap = ResolveWithinGenerationChildFrontierCap(targetPopulation);
+        var offspringSlotBudget = Math.Max(0, targetPopulation - nextGeneration.Count);
+        var explorationChildBudget = BasicsReproductionBudgetPlanner.ResolveAdaptiveExplorationChildBudget(
+            offspringSlotBudget,
+            adaptiveBoostSteps);
+        var refinementChildBudget = BasicsReproductionBudgetPlanner.ResolveEliteRefinementChildBudget(
+            offspringSlotBudget,
+            carryForwardMembers.Length,
+            adaptiveBoostSteps,
+            explorationChildBudget);
+        var explorationChildCount = 0;
+        var refinementChildCount = 0;
         var maxAttempts = Math.Max(targetPopulation * 4, 8);
         var attempt = 0;
         while (nextGeneration.Count < targetPopulation && attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
@@ -3188,7 +3211,49 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             float normalizedFitness;
             float normalizedNovelty;
             string pairingReason;
-            if (!ShouldReserveParentPoolPairing(attempt, queuedPairs.Count, parentPool.Count)
+            var lane = SelectBreedingLane(
+                attempt,
+                adaptiveBoostSteps,
+                refinementChildCount,
+                refinementChildBudget,
+                explorationChildCount,
+                explorationChildBudget,
+                targetPopulation - nextGeneration.Count,
+                baseParentPool.Count,
+                explorationParentPool.Count);
+            var laneAdaptiveBoostSteps = lane == BasicsBreedingLane.Exploration ? adaptiveBoostSteps : 0;
+            var laneVariationBand = lane == BasicsBreedingLane.Exploration ? explorationVariationBand : baseVariationBand;
+            var laneScheduling = lane == BasicsBreedingLane.Exploration ? explorationScheduling : baseScheduling;
+            var parentPool = lane == BasicsBreedingLane.Exploration ? explorationParentPool : baseParentPool;
+
+            var refinementPair = lane == BasicsBreedingLane.Refinement
+                ? await TrySelectEliteRefinementPairAsync(
+                    carryForwardMembers,
+                    population,
+                    attempt,
+                    plan,
+                    compatibilityCache,
+                    cancellationToken)
+                    .ConfigureAwait(false)
+                : null;
+            if (refinementPair is not null)
+            {
+                parentA = refinementPair.Value.ParentA;
+                parentB = refinementPair.Value.ParentB;
+                normalizedFitness = ResolveNormalizedFitnessHint(parentA, parentB, bestSelectionSignal);
+                normalizedNovelty = 0f;
+                pairingReason = "elite refinement lane";
+                laneScheduling = laneScheduling with
+                {
+                    RunAllocation = CreateRefinementRunAllocation(laneScheduling.RunAllocation)
+                };
+            }
+            else if (parentPool.Count == 0)
+            {
+                continue;
+            }
+            else if (lane != BasicsBreedingLane.Exploration
+                && !ShouldReserveParentPoolPairing(attempt, queuedPairs.Count, parentPool.Count)
                 && TryDequeueQueuedBreedingPair(
                     queuedPairs,
                     eliteQueuedPairBudget,
@@ -3200,6 +3265,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 normalizedFitness = queuedPair.NormalizedFitnessHint;
                 normalizedNovelty = queuedPair.NormalizedNoveltyHint;
                 pairingReason = queuedPair.PairingReason;
+                lane = BasicsBreedingLane.Exploitation;
             }
             else
             {
@@ -3207,22 +3273,34 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 parentB = SelectPairParent(parentPool, parentA, attempt);
                 normalizedFitness = ResolveNormalizedFitnessHint(parentA, parentB, bestSelectionSignal);
                 normalizedNovelty = ResolveNormalizedNoveltyHint(parentA, parentB, population);
-                pairingReason = "ranked parent pool";
+                pairingReason = lane == BasicsBreedingLane.Exploration
+                    ? "ranked exploration parent pool"
+                    : "ranked parent pool";
             }
             var runCount = BasicsReproductionBudgetPlanner.ResolveRunCount(
-                effectiveScheduling.RunAllocation,
+                laneScheduling.RunAllocation,
                 plan.Capacity.RecommendedReproductionRunCount,
                 normalizedFitness,
                 normalizedNovelty);
+            runCount = CapRunCountToLaneBudget(
+                runCount,
+                lane,
+                targetPopulation - nextGeneration.Count,
+                refinementChildBudget - refinementChildCount,
+                explorationChildBudget - explorationChildCount);
             onBreedProgress?.Invoke(
                 adaptiveBoostSteps > 0
-                    ? $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId} via {pairingReason}; requesting {runCount} child run(s). Adaptive diversity {plan.DiversityPreset} -> {effectivePreset} after {stalledGenerationCount} stalled generation(s)."
+                    ? $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId} via {pairingReason}; requesting {runCount} child run(s). Adaptive diversity {plan.DiversityPreset} -> {effectivePreset} after {stalledGenerationCount} stalled generation(s); lane={lane.ToString().ToLowerInvariant()} refinement={refinementChildCount}/{refinementChildBudget} exploration={explorationChildCount}/{explorationChildBudget}."
                     : $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId} via {pairingReason}; requesting {runCount} child run(s). Diversity preset {plan.DiversityPreset}.",
                 nextGeneration.Count);
 
             var reproduceConfig = plan.Reproduction.Config.Clone();
-            ApplyVariationBand(reproduceConfig, effectiveVariationBand);
-            BasicsDiversityTuning.ApplyAdaptiveBoost(reproduceConfig, adaptiveBoostSteps);
+            ApplyVariationBand(reproduceConfig, laneVariationBand);
+            BasicsDiversityTuning.ApplyAdaptiveBoost(reproduceConfig, laneAdaptiveBoostSteps);
+            if (lane == BasicsBreedingLane.Refinement)
+            {
+                ApplyRefinementReproductionTuning(reproduceConfig);
+            }
             reproduceConfig.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
             var result = await _runtimeClient.ReproduceByArtifactsAsync(
                     new Repro.ReproduceByArtifactsRequest
@@ -3274,6 +3352,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     LastEvaluation: null,
                     CountsTowardOffspringMetrics: true);
                 nextGeneration.Add(childMember);
+                if (lane == BasicsBreedingLane.Exploration)
+                {
+                    explorationChildCount++;
+                }
+                else if (lane == BasicsBreedingLane.Refinement)
+                {
+                    refinementChildCount++;
+                }
 
                 if (frontierCap > 0)
                 {
@@ -3294,7 +3380,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             population,
                             targetPopulation,
                             plan,
-                            adaptiveBoostSteps,
+                            adaptiveBoostSteps: 0,
                             bestSelectionSignal,
                             queuedPairs,
                             queuedPairKeys,
@@ -3636,6 +3722,84 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return Math.Clamp(remainingSlots / 3, minimumBudget, remainingSlots);
     }
 
+    private static BasicsBreedingLane SelectBreedingLane(
+        int attempt,
+        int adaptiveBoostSteps,
+        int refinementChildCount,
+        int refinementChildBudget,
+        int explorationChildCount,
+        int explorationChildBudget,
+        int remainingPopulationSlots,
+        int baseParentPoolCount,
+        int explorationParentPoolCount)
+    {
+        var remainingRefinementSlots = Math.Max(0, refinementChildBudget - refinementChildCount);
+        var remainingExplorationSlots = Math.Max(0, explorationChildBudget - explorationChildCount);
+        if (remainingRefinementSlots + remainingExplorationSlots >= remainingPopulationSlots)
+        {
+            if (baseParentPoolCount > 0 && remainingRefinementSlots > 0)
+            {
+                return BasicsBreedingLane.Refinement;
+            }
+
+            if (adaptiveBoostSteps > 0 && explorationParentPoolCount > 0 && remainingExplorationSlots > 0)
+            {
+                return BasicsBreedingLane.Exploration;
+            }
+        }
+
+        if (baseParentPoolCount > 0
+            && remainingRefinementSlots > 0
+            && (attempt == 1 || attempt % 4 == 1))
+        {
+            return BasicsBreedingLane.Refinement;
+        }
+
+        if (adaptiveBoostSteps > 0
+            && explorationParentPoolCount > 0
+            && remainingExplorationSlots > 0
+            && (baseParentPoolCount == 0 || attempt % 3 == 0))
+        {
+            return BasicsBreedingLane.Exploration;
+        }
+
+        return baseParentPoolCount > 0
+            ? BasicsBreedingLane.Exploitation
+            : BasicsBreedingLane.Exploration;
+    }
+
+    private static uint CapRunCountToLaneBudget(
+        uint runCount,
+        BasicsBreedingLane lane,
+        int remainingPopulationSlots,
+        int remainingRefinementSlots,
+        int remainingExplorationSlots)
+    {
+        var remainingLaneSlots = lane switch
+        {
+            BasicsBreedingLane.Refinement => remainingRefinementSlots,
+            BasicsBreedingLane.Exploration => remainingExplorationSlots,
+            _ => remainingPopulationSlots
+                - Math.Max(0, remainingRefinementSlots)
+                - Math.Max(0, remainingExplorationSlots)
+        };
+        var cap = Math.Max(1, Math.Min(remainingPopulationSlots, remainingLaneSlots));
+        return Math.Max(1u, Math.Min(runCount, (uint)cap));
+    }
+
+    private static BasicsRunAllocationPolicy CreateRefinementRunAllocation(BasicsRunAllocationPolicy policy)
+    {
+        var maxRuns = Math.Min(policy.MaxRunsPerPair, 2u);
+        var minRuns = Math.Min(policy.MinRunsPerPair, maxRuns);
+        return policy with
+        {
+            MinRunsPerPair = Math.Max(1u, minRuns),
+            MaxRunsPerPair = Math.Max(1u, maxRuns),
+            FitnessExponent = Math.Max(1.35d, policy.FitnessExponent),
+            DiversityBoost = 0d
+        };
+    }
+
     private static bool ShouldReserveParentPoolPairing(
         int attempt,
         int queuedPairCount,
@@ -3856,6 +4020,73 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return parentPool.FirstOrDefault(candidate => !ReferenceEquals(candidate, parentA)) ?? parentA;
     }
 
+    private async Task<RefinementBreedingPair?> TrySelectEliteRefinementPairAsync(
+        IReadOnlyList<PopulationMember> carryForwardMembers,
+        IReadOnlyList<PopulationMember> population,
+        int attempt,
+        BasicsEnvironmentPlan plan,
+        Dictionary<string, bool> compatibilityCache,
+        CancellationToken cancellationToken)
+    {
+        if (carryForwardMembers.Count == 0)
+        {
+            return null;
+        }
+
+        var elites = carryForwardMembers
+            .GroupBy(member => member.Definition.ToSha256Hex(), StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
+        if (elites.Length == 0)
+        {
+            return null;
+        }
+
+        var parentA = elites[attempt % elites.Length];
+        var parentASha = parentA.Definition.ToSha256Hex();
+        var candidates = elites
+            .Where(member => !string.Equals(
+                member.Definition.ToSha256Hex(),
+                parentASha,
+                StringComparison.OrdinalIgnoreCase))
+            .Concat(population.Where(member => !string.Equals(
+                member.Definition.ToSha256Hex(),
+                parentASha,
+                StringComparison.OrdinalIgnoreCase)))
+            .GroupBy(member => member.Definition.ToSha256Hex(), StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group
+                .OrderByDescending(static member => ResolveParentSelectionSignal(member.LastEvaluation))
+                .ThenByDescending(static member => member.LastEvaluation?.Fitness ?? 0f)
+                .First())
+            .OrderByDescending(static member => ResolveParentSelectionSignal(member.LastEvaluation))
+            .ThenByDescending(static member => member.LastEvaluation?.Fitness ?? 0f);
+        foreach (var candidate in candidates)
+        {
+            if (await AreDefinitionsCompatibleForReproductionAsync(
+                    parentA.Definition,
+                    candidate.Definition,
+                    plan,
+                    adaptiveBoostSteps: 0,
+                    compatibilityCache,
+                    cancellationToken)
+                .ConfigureAwait(false))
+            {
+                return new RefinementBreedingPair(parentA, candidate);
+            }
+        }
+
+        return await AreDefinitionsCompatibleForReproductionAsync(
+                parentA.Definition,
+                parentA.Definition,
+                plan,
+                adaptiveBoostSteps: 0,
+                compatibilityCache,
+                cancellationToken)
+            .ConfigureAwait(false)
+            ? new RefinementBreedingPair(parentA, parentA)
+            : null;
+    }
+
     private float ComputeNovelty(PopulationMember member, IReadOnlyList<PopulationMember> population)
     {
         if (population.Count <= 1)
@@ -4036,6 +4267,31 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         config.ProbStrengthMutate = variationBand.MaxStrengthCodeDelta > 0
             ? Math.Max(config.ProbStrengthMutate, ResolveMutationProbability(variationBand.MaxStrengthCodeDelta, 16, 0.18f))
             : 0f;
+    }
+
+    private static void ApplyRefinementReproductionTuning(Repro.ReproduceConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        config.Limits ??= new Repro.ReproduceLimits();
+        config.Limits.MaxNeuronsAddedAbs = 0;
+        config.Limits.MaxNeuronsRemovedAbs = 0;
+        config.Limits.MaxAxonsAddedAbs = 0;
+        config.Limits.MaxAxonsRemovedAbs = 0;
+        config.Limits.MaxRegionsAddedAbs = 0;
+        config.Limits.MaxRegionsRemovedAbs = 0;
+
+        config.ProbAddAxon = 0f;
+        config.ProbRemoveAxon = 0f;
+        config.ProbRerouteAxon = 0f;
+        config.ProbDisableNeuron = 0f;
+        config.ProbReactivateNeuron = 0f;
+        config.ProbAddNeuronToEmptyRegion = 0f;
+        config.ProbRemoveLastNeuronFromRegion = 0f;
+        config.ProbMutateFunc = 0f;
+        config.ProbMutate = Math.Clamp(config.ProbMutate, 0.01f, 0.04f);
+        config.StrengthTransformEnabled = true;
+        config.ProbStrengthMutate = Math.Clamp(config.ProbStrengthMutate, 0.02f, 0.08f);
     }
 
     private static float ResolveMutationProbability(int delta, int maxReference, float ceiling)
@@ -4310,6 +4566,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ["edge_tolerance_accuracy"] = 0f,
                 ["interior_tolerance_accuracy"] = 0f,
                 ["balanced_tolerance_accuracy"] = 0f,
+                ["weak_side_tolerance_accuracy"] = 0f,
+                ["multiplication_surface_fitness"] = 0f,
+                ["multiplication_monotonicity"] = 0f,
+                ["multiplication_product_correlation"] = 0f,
+                ["interior_proximity_fitness"] = 0f,
                 ["mean_absolute_error"] = 1f,
                 ["mean_squared_error"] = 1f,
                 ["target_proximity_fitness"] = 0f,
@@ -5442,6 +5703,17 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         float NormalizedFitnessHint,
         float NormalizedNoveltyHint,
         string PairingReason);
+
+    private readonly record struct RefinementBreedingPair(
+        PopulationMember ParentA,
+        PopulationMember ParentB);
+
+    private enum BasicsBreedingLane
+    {
+        Exploitation,
+        Exploration,
+        Refinement
+    }
 
     private readonly record struct FrontierChildCandidate(
         PopulationMember Member,

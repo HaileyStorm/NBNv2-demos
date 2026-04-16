@@ -296,6 +296,42 @@ public sealed class BasicsContractTests
     }
 
     [Fact]
+    public void ReproductionBudgetPlanner_BoundsAdaptiveExplorationBudget()
+    {
+        Assert.Equal(0, BasicsReproductionBudgetPlanner.ResolveAdaptiveExplorationChildBudget(offspringSlotCount: 64, adaptiveBoostSteps: 0));
+        Assert.Equal(13, BasicsReproductionBudgetPlanner.ResolveAdaptiveExplorationChildBudget(offspringSlotCount: 64, adaptiveBoostSteps: 1));
+        Assert.Equal(19, BasicsReproductionBudgetPlanner.ResolveAdaptiveExplorationChildBudget(offspringSlotCount: 64, adaptiveBoostSteps: 2));
+        Assert.Equal(26, BasicsReproductionBudgetPlanner.ResolveAdaptiveExplorationChildBudget(offspringSlotCount: 64, adaptiveBoostSteps: 3));
+        Assert.Equal(1, BasicsReproductionBudgetPlanner.ResolveAdaptiveExplorationChildBudget(offspringSlotCount: 2, adaptiveBoostSteps: 3));
+        Assert.Equal(0, BasicsReproductionBudgetPlanner.ResolveAdaptiveExplorationChildBudget(offspringSlotCount: 1, adaptiveBoostSteps: 3));
+    }
+
+    [Fact]
+    public void ReproductionBudgetPlanner_PreservesEliteRefinementBudget()
+    {
+        Assert.Equal(0, BasicsReproductionBudgetPlanner.ResolveEliteRefinementChildBudget(
+            offspringSlotCount: 64,
+            eliteCount: 0,
+            adaptiveBoostSteps: 3,
+            explorationChildBudget: 26));
+        Assert.Equal(0, BasicsReproductionBudgetPlanner.ResolveEliteRefinementChildBudget(
+            offspringSlotCount: 64,
+            eliteCount: 4,
+            adaptiveBoostSteps: 0,
+            explorationChildBudget: 0));
+        Assert.Equal(10, BasicsReproductionBudgetPlanner.ResolveEliteRefinementChildBudget(
+            offspringSlotCount: 64,
+            eliteCount: 4,
+            adaptiveBoostSteps: 3,
+            explorationChildBudget: 26));
+        Assert.Equal(1, BasicsReproductionBudgetPlanner.ResolveEliteRefinementChildBudget(
+            offspringSlotCount: 4,
+            eliteCount: 1,
+            adaptiveBoostSteps: 3,
+            explorationChildBudget: 3));
+    }
+
+    [Fact]
     public void DefaultMetricsContract_IncludesBestBrainComplexityMetrics()
     {
         var metrics = BasicsMetricsContract.Default.RequiredMetrics;

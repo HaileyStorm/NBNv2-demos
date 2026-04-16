@@ -120,6 +120,44 @@ public readonly record struct BasicsParentSelectionScore(
 
 public static class BasicsReproductionBudgetPlanner
 {
+    public static int ResolveAdaptiveExplorationChildBudget(int offspringSlotCount, int adaptiveBoostSteps)
+    {
+        if (offspringSlotCount <= 1 || adaptiveBoostSteps <= 0)
+        {
+            return 0;
+        }
+
+        var fraction = adaptiveBoostSteps switch
+        {
+            1 => 0.20d,
+            2 => 0.30d,
+            _ => 0.40d
+        };
+        var budget = (int)Math.Round(offspringSlotCount * fraction, MidpointRounding.AwayFromZero);
+        return Math.Clamp(budget, 1, offspringSlotCount - 1);
+    }
+
+    public static int ResolveEliteRefinementChildBudget(
+        int offspringSlotCount,
+        int eliteCount,
+        int adaptiveBoostSteps,
+        int explorationChildBudget)
+    {
+        if (offspringSlotCount <= 0 || eliteCount <= 0 || adaptiveBoostSteps <= 0)
+        {
+            return 0;
+        }
+
+        var exploitationSlots = Math.Max(0, offspringSlotCount - Math.Max(0, explorationChildBudget));
+        if (exploitationSlots == 0)
+        {
+            return 0;
+        }
+
+        var budget = (int)Math.Ceiling(exploitationSlots * 0.25d);
+        return Math.Clamp(budget, 1, exploitationSlots);
+    }
+
     public static BasicsParentSelectionScore ScoreParentCandidate(
         BasicsParentSelectionPolicy policy,
         float normalizedFitness,

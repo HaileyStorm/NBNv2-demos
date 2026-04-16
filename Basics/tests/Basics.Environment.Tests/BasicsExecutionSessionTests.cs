@@ -2223,6 +2223,11 @@ public sealed class BasicsExecutionSessionTests
         Assert.Equal(0f, result.ScoreBreakdown["edge_tolerance_accuracy"]);
         Assert.Equal(0f, result.ScoreBreakdown["interior_tolerance_accuracy"]);
         Assert.Equal(0f, result.ScoreBreakdown["balanced_tolerance_accuracy"]);
+        Assert.Equal(0f, result.ScoreBreakdown["weak_side_tolerance_accuracy"]);
+        Assert.Equal(0f, result.ScoreBreakdown["multiplication_surface_fitness"]);
+        Assert.Equal(0f, result.ScoreBreakdown["multiplication_monotonicity"]);
+        Assert.Equal(0f, result.ScoreBreakdown["multiplication_product_correlation"]);
+        Assert.Equal(0f, result.ScoreBreakdown["interior_proximity_fitness"]);
         Assert.Equal(0f, result.ScoreBreakdown["dataset_coverage"]);
         Assert.Equal(0f, result.ScoreBreakdown["truth_table_coverage"]);
         Assert.Equal(0f, result.ScoreBreakdown["comparison_set_coverage"]);
