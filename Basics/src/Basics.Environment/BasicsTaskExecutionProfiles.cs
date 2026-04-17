@@ -15,7 +15,7 @@ public sealed record BasicsTaskExecutionProfile(
 public static class BasicsTaskExecutionProfiles
 {
     private const int DefaultPopulationCount = 64;
-    private const int DefaultMaxConcurrentBrains = 32;
+    private const int DefaultMaxConcurrentBrains = 64;
 
     private static readonly BasicsTaskExecutionProfile DefaultProfile = new(
         OutputObservationMode: BasicsOutputObservationMode.VectorPotential,

@@ -8,6 +8,18 @@ namespace Nbn.Demos.Basics.Ui.Tests;
 public sealed class MainWindowViewModelWorkerLaunchTests
 {
     [Fact]
+    public void Constructor_UsesSharedPortLauncherAndSizingDefaults()
+    {
+        var viewModel = CreateViewModel(new RecordingWorkerProcessService());
+
+        Assert.Equal("32", viewModel.WorkerCountText);
+        Assert.Equal("64", viewModel.InitialPopulationOverrideText);
+        Assert.Equal("64", viewModel.MinimumPopulationOverrideText);
+        Assert.Equal("64", viewModel.MaximumPopulationOverrideText);
+        Assert.Equal("64", viewModel.MaxConcurrentBrainsOverrideText);
+    }
+
+    [Fact]
     public async Task StartWorkersCommand_BuildsSharedPortLaunchRequest_FromUiFields()
     {
         var workerService = new RecordingWorkerProcessService();
