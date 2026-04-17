@@ -123,6 +123,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private const int MaxGenerationTickLabelCount = 14;
     private const double XAxisTickLabelWidth = 18d;
     private const double YAxisTickLabelHeight = 12d;
+    private const float ReadyConfidenceSelectionFloor = 0.05f;
 
     private string _ioAddress = $"{NetworkAddressDefaults.ResolveDefaultAdvertisedHost()}:12050";
     private string _ioGatewayName = "io-gateway";
@@ -2491,7 +2492,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 ? bestBrainBalancedAccuracy.Value.ToString("0.###", CultureInfo.InvariantCulture)
                 : "—",
             bestBrainBalancedAccuracy.HasValue
-                ? "Ready-weighted balanced accuracy for the current best-so-far brain. This multiplies balanced multiplication accuracy by ready confidence so the card matches record-selection semantics."
+                ? "Ready-weighted balanced accuracy for the current best-so-far brain. Uses the same readiness multiplier as record selection."
                 : "Ready-weighted balanced best-brain accuracy appears when the active task publishes partitioned accuracy metrics.");
         UpdateMetricSummary(
             BasicsMetricId.BestCandidateEdgeAccuracy,
@@ -3294,7 +3295,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
 
         var readyConfidence = ResolveBestCandidateAccuracyMetric(bestCandidate, "ready_confidence") ?? 1f;
-        return Math.Clamp(balanced.Value * readyConfidence, 0f, 1f);
+        var readyMultiplier = ReadyConfidenceSelectionFloor + ((1f - ReadyConfidenceSelectionFloor) * readyConfidence);
+        return Math.Clamp(balanced.Value * readyMultiplier, 0f, 1f);
     }
 
     private static bool CanUseBestCandidateForExport(BasicsExecutionBestCandidateSummary? bestCandidate)

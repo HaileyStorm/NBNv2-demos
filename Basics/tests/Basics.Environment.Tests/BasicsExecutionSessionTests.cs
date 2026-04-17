@@ -793,6 +793,33 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_TreatsThresholdCrossingReadyLaneAsFullyReady()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            FinalReadyValue = 0.5f
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.Equal(1f, final.BestCandidate?.ScoreBreakdown["ready_confidence"]);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_ReportsOutputWidthMismatchSeparately()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -3292,6 +3319,7 @@ public sealed class BasicsExecutionSessionTests
         public int ReadySignalDelayTicks { get; init; } = 1;
         public float PreReadyOutputValue { get; init; }
         public float PreReadyReadyValue { get; init; }
+        public float FinalReadyValue { get; init; } = 1f;
         public int? MaxOutputVectorsPerInput { get; init; }
         public bool SuppressOutputVectors { get; init; }
         public bool SuppressReadyOutputEvents { get; init; }
@@ -3560,7 +3588,7 @@ public sealed class BasicsExecutionSessionTests
             for (var offset = 1; offset <= readyDelayTicks; offset++)
             {
                 var tick = ++_ticks[brainId];
-                var ready = offset == readyDelayTicks ? 1f : PreReadyReadyValue;
+                var ready = offset == readyDelayTicks ? FinalReadyValue : PreReadyReadyValue;
                 var value = offset == readyDelayTicks ? finalOutput : PreReadyOutputValue;
                 var vector = new[] { value, ready };
                 if (OutputVectorWidthOverride is int outputVectorWidth)

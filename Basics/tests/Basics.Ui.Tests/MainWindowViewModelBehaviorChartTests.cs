@@ -4,6 +4,7 @@ using Nbn.Demos.Basics.Environment;
 using Nbn.Demos.Basics.Ui.Services;
 using Nbn.Demos.Basics.Ui.ViewModels;
 using Nbn.Proto;
+using Nbn.Shared;
 
 namespace Nbn.Demos.Basics.Ui.Tests;
 
@@ -85,6 +86,25 @@ public sealed class MainWindowViewModelBehaviorChartTests
     }
 
     [Fact]
+    public void ApplyExecutionSnapshot_UsesSelectionReadyMultiplierForBestReadyBalancedCard()
+    {
+        var viewModel = CreateViewModel();
+        var snapshot = CreateSnapshot(
+            bestCandidate: CreateBestCandidate(
+                balancedAccuracy: 0.80f,
+                edgeAccuracy: 0.70f,
+                interiorAccuracy: 0.60f,
+                readyConfidence: 0.50f));
+
+        ApplySnapshot(viewModel, snapshot);
+
+        var readyBalanced = Assert.Single(
+            viewModel.BestBrainSummaries,
+            static metric => metric.MetricId == BasicsMetricId.BestCandidateBalancedAccuracy);
+        Assert.Equal("0.42", readyBalanced.ValueText);
+    }
+
+    [Fact]
     public void BehaviorTaskSettings_AreSerializedIntoEnvironmentOptions()
     {
         var viewModel = CreateViewModel();
@@ -161,7 +181,8 @@ public sealed class MainWindowViewModelBehaviorChartTests
         IReadOnlyList<float>? balancedAccuracyHistory = null,
         IReadOnlyList<float>? bestBalancedAccuracyHistory = null,
         IReadOnlyList<float>? edgeAccuracyHistory = null,
-        IReadOnlyList<float>? interiorAccuracyHistory = null)
+        IReadOnlyList<float>? interiorAccuracyHistory = null,
+        BasicsExecutionBestCandidateSummary? bestCandidate = null)
         => new(
             State: BasicsExecutionState.Running,
             StatusText: "Generation 3 evaluated.",
@@ -183,7 +204,7 @@ public sealed class MainWindowViewModelBehaviorChartTests
             MeanFitness: 0.45f,
             EffectiveTemplateDefinition: null,
             SeedShape: null,
-            BestCandidate: null,
+            BestCandidate: bestCandidate,
             OffspringAccuracyHistory: new[] { 0.1f, 0.2f, 0.3f },
             AccuracyHistory: new[] { 0.15f, 0.25f, 0.35f },
             OffspringBalancedAccuracyHistory: balancedAccuracyHistory ?? Array.Empty<float>(),
@@ -196,6 +217,29 @@ public sealed class MainWindowViewModelBehaviorChartTests
             BehaviorOccupancyHistory = behaviorOccupancyHistory ?? Array.Empty<float>(),
             BehaviorPressureHistory = behaviorPressureHistory ?? Array.Empty<float>()
         };
+
+    private static BasicsExecutionBestCandidateSummary CreateBestCandidate(
+        float balancedAccuracy,
+        float edgeAccuracy,
+        float interiorAccuracy,
+        float readyConfidence)
+        => new(
+            DefinitionArtifact: new string('a', 64).ToArtifactRef(128, "application/x-nbn", "http://fake-store/best"),
+            SnapshotArtifact: null,
+            ActiveBrainId: null,
+            SpeciesId: "species.test",
+            Accuracy: 0.75f,
+            Fitness: 0.70f,
+            Complexity: null,
+            ScoreBreakdown: new Dictionary<string, float>(StringComparer.Ordinal)
+            {
+                ["balanced_tolerance_accuracy"] = balancedAccuracy,
+                ["edge_tolerance_accuracy"] = edgeAccuracy,
+                ["interior_tolerance_accuracy"] = interiorAccuracy,
+                ["ready_confidence"] = readyConfidence
+            },
+            Diagnostics: Array.Empty<string>(),
+            Generation: 3);
 
     private sealed class StubArtifactExportService : IBasicsArtifactExportService
     {

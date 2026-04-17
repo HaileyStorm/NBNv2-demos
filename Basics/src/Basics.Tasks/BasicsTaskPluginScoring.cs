@@ -8,6 +8,9 @@ internal static class BasicsTaskPluginScoring
     private const float TargetProximityScale = 8f;
     private const float ReadyConfidenceFitnessFloor = 0.05f;
     private const float BehaviorFitnessBonusWeight = 0.04f;
+    private const float MultiplicationBalancedInteriorWeight = 0.65f;
+    private const float MultiplicationBalancedEdgeWeight = 0.25f;
+    private const float MultiplicationBalancedWeakSideWeight = 0.10f;
 
     public static BasicsTaskEvaluationResult EvaluateBooleanDataset(
         BasicsTaskContract contract,
@@ -503,7 +506,17 @@ internal static class BasicsTaskPluginScoring
         => sample.InputA is 0f or 1f || sample.InputB is 0f or 1f;
 
     private static float ResolveMultiplicationBalancedAccuracy(float edgeAccuracy, float interiorAccuracy)
-        => Math.Clamp((0.25f * edgeAccuracy) + (0.75f * interiorAccuracy), 0f, 1f);
+    {
+        edgeAccuracy = Math.Clamp(edgeAccuracy, 0f, 1f);
+        interiorAccuracy = Math.Clamp(interiorAccuracy, 0f, 1f);
+        var weakSideAccuracy = ComputeWeakSideAccuracy(edgeAccuracy, interiorAccuracy);
+        return Math.Clamp(
+            (MultiplicationBalancedInteriorWeight * interiorAccuracy)
+            + (MultiplicationBalancedEdgeWeight * edgeAccuracy)
+            + (MultiplicationBalancedWeakSideWeight * weakSideAccuracy),
+            0f,
+            1f);
+    }
 
     private static MultiplicationSurfaceMetrics ComputeMultiplicationSurfaceMetrics(
         IReadOnlyList<DeterministicScalarOutcome> outcomes,

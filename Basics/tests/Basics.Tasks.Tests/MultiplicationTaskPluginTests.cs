@@ -93,6 +93,36 @@ public sealed class MultiplicationTaskPluginTests
     }
 
     [Fact]
+    public void Evaluate_ImprovesBalancedAccuracy_WhenInteriorNearlyHoldsAndEdgesImprove()
+    {
+        var dataset = _plugin.BuildDeterministicDataset();
+        var baseline = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            CreatePartitionedAccuracyObservations(
+                dataset,
+                edgeCorrectTarget: 10,
+                interiorCorrectTarget: 19));
+        var edgeGain = _plugin.Evaluate(
+            CreateValidContext(),
+            dataset,
+            CreatePartitionedAccuracyObservations(
+                dataset,
+                edgeCorrectTarget: 12,
+                interiorCorrectTarget: 18));
+
+        Assert.True(
+            edgeGain.ScoreBreakdown["edge_tolerance_accuracy"] > baseline.ScoreBreakdown["edge_tolerance_accuracy"],
+            "Expected the challenger to improve edge accuracy.");
+        Assert.True(
+            baseline.ScoreBreakdown["interior_tolerance_accuracy"] - edgeGain.ScoreBreakdown["interior_tolerance_accuracy"] <= 0.05f,
+            "Expected the challenger to stay near the interior record.");
+        Assert.True(
+            edgeGain.ScoreBreakdown["balanced_tolerance_accuracy"] > baseline.ScoreBreakdown["balanced_tolerance_accuracy"],
+            $"Expected near-flat interior plus better edges to improve balanced accuracy; baseline={baseline.ScoreBreakdown["balanced_tolerance_accuracy"]:0.###}, challenger={edgeGain.ScoreBreakdown["balanced_tolerance_accuracy"]:0.###}.");
+    }
+
+    [Fact]
     public void Evaluate_AddsProductSurfaceMetrics_ForMultiplicationShape()
     {
         var dataset = _plugin.BuildDeterministicDataset();
@@ -313,6 +343,29 @@ public sealed class MultiplicationTaskPluginTests
         Assert.Equal(0f, result.ScoreBreakdown["ready_confidence"]);
         Assert.InRange(result.Fitness, 0.04f, 0.06f);
     }
+
+    private static BasicsTaskObservation[] CreatePartitionedAccuracyObservations(
+        IReadOnlyList<BasicsTaskSample> dataset,
+        int edgeCorrectTarget,
+        int interiorCorrectTarget)
+    {
+        var edgeCorrect = 0;
+        var interiorCorrect = 0;
+        return dataset.Select((sample, index) =>
+            {
+                var isEdge = sample.InputA is 0f or 1f || sample.InputB is 0f or 1f;
+                var shouldBeCorrect = isEdge
+                    ? edgeCorrect++ < edgeCorrectTarget
+                    : interiorCorrect++ < interiorCorrectTarget;
+                return new BasicsTaskObservation(
+                    (ulong)(index + 1),
+                    shouldBeCorrect ? sample.ExpectedOutput : ResolveIncorrectOutput(sample));
+            })
+            .ToArray();
+    }
+
+    private static float ResolveIncorrectOutput(BasicsTaskSample sample)
+        => sample.ExpectedOutput <= 0.5f ? 1f : 0f;
 
     private static BasicsTaskEvaluationContext CreateValidContext()
         => new(BasicsIoGeometry.InputWidth, BasicsIoGeometry.OutputWidth, TickAligned: true);
