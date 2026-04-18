@@ -2317,11 +2317,12 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public async Task ExecutionSession_ThrottlesSetupConcurrency_ByEligibleWorkerCount()
+    public async Task ExecutionSession_UsesConfiguredBatchSize_AndThrottlesSetupByEligibleWorkerCount()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
         {
-            SpawnDelay = TimeSpan.FromMilliseconds(50)
+            SpawnDelay = TimeSpan.FromMilliseconds(50),
+            BrainInfoDelay = TimeSpan.FromMilliseconds(50)
         };
         var session = new BasicsExecutionSession(runtimeClient, new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" });
         var snapshots = new List<BasicsExecutionSnapshot>();
@@ -2357,12 +2358,14 @@ public sealed class BasicsExecutionSessionTests
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
             Assert.Equal(BasicsExecutionState.Succeeded, final.State);
-            Assert.InRange(runtimeClient.MaxObservedConcurrentSpawnRequests, 1, 2);
+            Assert.Equal(1, runtimeClient.MaxObservedConcurrentSpawnRequests);
+            Assert.Equal(1, runtimeClient.MaxObservedConcurrentBrainInfoRequests);
             Assert.Contains(
                 snapshots,
                 static snapshot => snapshot.State == BasicsExecutionState.Running
                                    && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal)
-                                   && snapshot.DetailText.Contains("Batch 1/4", StringComparison.Ordinal));
+                                   && snapshot.DetailText.Contains("Batch 1/1", StringComparison.Ordinal)
+                                   && snapshot.DetailText.Contains("Setup concurrency 1", StringComparison.Ordinal));
         }
         finally
         {
@@ -3326,6 +3329,7 @@ public sealed class BasicsExecutionSessionTests
         public bool SuppressPreReadyReadyOutputEvents { get; init; }
         public bool RequirePlacementWaitForVisibility { get; init; }
         public TimeSpan AwaitPlacementDelay { get; init; }
+        public TimeSpan BrainInfoDelay { get; init; }
         public string AwaitPlacementFailureCode { get; init; } = "spawn_request_canceled";
         public string AwaitPlacementFailureMessage { get; init; } = "placement visibility timed out";
         public int? OutputVectorWidthOverride { get; init; }
@@ -3335,6 +3339,7 @@ public sealed class BasicsExecutionSessionTests
         public int TransientResetTickPhaseInProgressCount { get; set; }
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
         public int MaxObservedConcurrentPlacementWaits => _maxObservedConcurrentPlacementWaits;
+        public int MaxObservedConcurrentBrainInfoRequests => _maxObservedConcurrentBrainInfoRequests;
         public int AwaitSpawnPlacementCallCount { get; private set; }
         public List<SpeciationAssignRequest> SpeciationAssignRequests { get; } = new();
         public List<Repro.AssessCompatibilityByArtifactsRequest> AssessCompatibilityRequests { get; } = new();
@@ -3356,6 +3361,8 @@ public sealed class BasicsExecutionSessionTests
         private int _maxObservedConcurrentSpawnRequests;
         private int _activePlacementWaits;
         private int _maxObservedConcurrentPlacementWaits;
+        private int _activeBrainInfoRequests;
+        private int _maxObservedConcurrentBrainInfoRequests;
         private readonly Dictionary<Guid, (float Value, float Ready)> _lastVectorOutputByBrain = new();
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
@@ -3364,22 +3371,36 @@ public sealed class BasicsExecutionSessionTests
         public Task<PlacementWorkerInventoryResult?> GetPlacementWorkerInventoryAsync(CancellationToken cancellationToken = default)
             => Task.FromResult<PlacementWorkerInventoryResult?>(null);
 
-        public Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId, CancellationToken cancellationToken = default)
+        public async Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<BrainInfo?>(_brainDefinitions.ContainsKey(brainId)
-                ? new BrainInfo
+            var active = Interlocked.Increment(ref _activeBrainInfoRequests);
+            UpdateMaxObservedConcurrentBrainInfoRequests(active);
+            try
+            {
+                if (BrainInfoDelay > TimeSpan.Zero)
                 {
-                    BrainId = brainId.ToProtoUuid(),
-                    InputWidth = BasicsIoGeometry.InputWidth,
-                    OutputWidth = BasicsIoGeometry.OutputWidth,
-                    OutputVectorSource = InitialOutputVectorSource
+                    await Task.Delay(BrainInfoDelay, cancellationToken);
                 }
-                : new BrainInfo
-                {
-                    BrainId = brainId.ToProtoUuid(),
-                    InputWidth = 0,
-                    OutputWidth = 0
-                });
+
+                return _brainDefinitions.ContainsKey(brainId)
+                    ? new BrainInfo
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        InputWidth = BasicsIoGeometry.InputWidth,
+                        OutputWidth = BasicsIoGeometry.OutputWidth,
+                        OutputVectorSource = InitialOutputVectorSource
+                    }
+                    : new BrainInfo
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        InputWidth = 0,
+                        OutputWidth = 0
+                    };
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeBrainInfoRequests);
+            }
         }
 
         public async Task<SpawnBrainViaIOAck?> SpawnBrainAsync(SpawnBrain request, CancellationToken cancellationToken = default)
@@ -4263,6 +4284,23 @@ public sealed class BasicsExecutionSessionTests
                 }
 
                 if (Interlocked.CompareExchange(ref _maxObservedConcurrentPlacementWaits, active, current) == current)
+                {
+                    return;
+                }
+            }
+        }
+
+        private void UpdateMaxObservedConcurrentBrainInfoRequests(int active)
+        {
+            while (true)
+            {
+                var current = MaxObservedConcurrentBrainInfoRequests;
+                if (active <= current)
+                {
+                    return;
+                }
+
+                if (Interlocked.CompareExchange(ref _maxObservedConcurrentBrainInfoRequests, active, current) == current)
                 {
                     return;
                 }

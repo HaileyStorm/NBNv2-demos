@@ -1281,13 +1281,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var evaluated = new List<PopulationMember>(population.Count);
         var batchTimings = new List<BasicsExecutionBatchTimingSummary>();
         var sampleCountPerBrain = taskPlugin.BuildDeterministicDataset().Count * Math.Max(1, outputSamplingPolicy.SampleRepeatCount);
-        var maxConcurrent = ResolveEvaluationConcurrency(
-            plan.Capacity.RecommendedMaxConcurrentBrains,
-            plan.Capacity.EligibleWorkerCount);
+        var maxConcurrent = ResolveEvaluationConcurrency(plan.Capacity.RecommendedMaxConcurrentBrains);
         var chunkCount = (int)Math.Ceiling(population.Count / (double)maxConcurrent);
         var setupConcurrency = ResolveSetupConcurrency(plan.Capacity.EligibleWorkerCount, maxConcurrent);
         using var setupGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
         using var spawnRequestGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
+        using var placementWaitGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
         var spawnPacer = new SpawnRequestPacer(
             Math.Max(1, plan.Capacity.EligibleWorkerCount),
             _minimumSpawnRequestInterval);
@@ -1384,6 +1383,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         taskPlugin,
                         member,
                         spawnRequestGate,
+                        placementWaitGate,
                         outputObservationMode,
                         outputSamplingPolicy,
                         setupGate,
@@ -1494,6 +1494,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IBasicsTaskPlugin taskPlugin,
         PopulationMember member,
         SemaphoreSlim spawnRequestGate,
+        SemaphoreSlim placementWaitGate,
         BasicsOutputObservationMode outputObservationMode,
         BasicsOutputSamplingPolicy outputSamplingPolicy,
         SemaphoreSlim setupGate,
@@ -1529,6 +1530,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         taskPlugin,
                         member,
                         spawnRequestGate,
+                        placementWaitGate,
                         outputObservationMode,
                         outputSamplingPolicy,
                         setupGate,
@@ -1595,6 +1597,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IBasicsTaskPlugin taskPlugin,
         PopulationMember member,
         SemaphoreSlim spawnRequestGate,
+        SemaphoreSlim placementWaitGate,
         BasicsOutputObservationMode outputObservationMode,
         BasicsOutputSamplingPolicy outputSamplingPolicy,
         SemaphoreSlim setupGate,
@@ -1608,6 +1611,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         Guid brainId = Guid.Empty;
         var spawnGateHeld = false;
+        var placementGateHeld = false;
         var setupSlotHeld = false;
         var subscribedVectorOutputs = false;
         var subscribedSingleOutputs = false;
@@ -1619,10 +1623,23 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var observation = TimeSpan.Zero;
         var observationTiming = default(ObservationTiming);
         PopulationMember resultMember = member;
+        void ReleasePlacementGate()
+        {
+            if (!placementGateHeld)
+            {
+                return;
+            }
+
+            placementWaitGate.Release();
+            placementGateHeld = false;
+        }
+
         try
         {
             var queueStopwatch = Stopwatch.StartNew();
             await spawnPacer.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await placementWaitGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            placementGateHeld = true;
             await spawnRequestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             queueWait = queueStopwatch.Elapsed;
             spawnGateHeld = true;
@@ -1630,23 +1647,23 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             onAttemptProgress?.Invoke(CreateInFlightBrainProgress(
                 member,
                 batchBrainOrdinal,
-                        batchBrainCount,
-                        attempt,
-                        InFlightBrainPhase.RequestingSpawn));
+                batchBrainCount,
+                attempt,
+                InFlightBrainPhase.RequestingSpawn));
             var spawnStopwatch = Stopwatch.StartNew();
             SpawnBrainAck? spawnAck;
             try
             {
-                    spawnAck = await RequestBrainSpawnAsync(
-                        new SpawnBrain
-                        {
-                            BrainDef = member.Definition.Clone(),
-                            LastSnapshot = HasArtifactRef(member.SnapshotArtifact) ? member.SnapshotArtifact!.Clone() : null,
-                            InputWidth = taskPlugin.Contract.InputWidth,
-                            OutputWidth = taskPlugin.Contract.OutputWidth,
-                            StartPaused = true
-                        },
-                        cancellationToken)
+                spawnAck = await RequestBrainSpawnAsync(
+                    new SpawnBrain
+                    {
+                        BrainDef = member.Definition.Clone(),
+                        LastSnapshot = HasArtifactRef(member.SnapshotArtifact) ? member.SnapshotArtifact!.Clone() : null,
+                        InputWidth = taskPlugin.Contract.InputWidth,
+                        OutputWidth = taskPlugin.Contract.OutputWidth,
+                        StartPaused = true
+                    },
+                    cancellationToken)
                     .ConfigureAwait(false);
             }
             finally
@@ -1672,8 +1689,19 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     attempt,
                     InFlightBrainPhase.WaitingForPlacement));
                 var placementStopwatch = Stopwatch.StartNew();
-                spawnAck = await AwaitBrainPlacementAsync(brainId, cancellationToken).ConfigureAwait(false) ?? spawnAck;
-                placementWait = placementStopwatch.Elapsed;
+                try
+                {
+                    spawnAck = await AwaitBrainPlacementAsync(brainId, cancellationToken).ConfigureAwait(false) ?? spawnAck;
+                }
+                finally
+                {
+                    placementWait = placementStopwatch.Elapsed;
+                    ReleasePlacementGate();
+                }
+            }
+            else
+            {
+                ReleasePlacementGate();
             }
 
             if (spawnAck is null
@@ -1873,6 +1901,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 spawnRequestGate.Release();
             }
 
+            ReleasePlacementGate();
+
             if (setupSlotHeld)
             {
                 setupGate.Release();
@@ -1980,16 +2010,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return Math.Max(1, Math.Min(maxConcurrent, Math.Max(1, eligibleWorkerCount)));
     }
 
-    private static int ResolveEvaluationConcurrency(int recommendedMaxConcurrentBrains, int eligibleWorkerCount)
-    {
-        var recommended = Math.Max(1, recommendedMaxConcurrentBrains);
-        if (eligibleWorkerCount <= 0)
-        {
-            return recommended;
-        }
-
-        return Math.Max(1, Math.Min(recommended, eligibleWorkerCount));
-    }
+    private static int ResolveEvaluationConcurrency(int recommendedMaxConcurrentBrains)
+        => Math.Max(1, recommendedMaxConcurrentBrains);
 
     private sealed class SpawnRequestPacer
     {
