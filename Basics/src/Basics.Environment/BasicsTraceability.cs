@@ -338,7 +338,7 @@ public static class BasicsTraceability
 
             return new BasicsTraceabilityRepositoryRecord(
                 Name: target.Name,
-                RootPath: topLevel.Output ?? rootPath,
+                RootPath: NormalizeRepositoryRootPath(topLevel.Output ?? rootPath),
                 IsGitRepository: true,
                 HeadCommitSha: head.ExitCode == 0 ? head.Output : null,
                 Branch: branch.ExitCode == 0 ? branch.Output : null,
@@ -357,6 +357,9 @@ public static class BasicsTraceability
                 Error: ex.GetBaseException().Message);
         }
     }
+
+    private static string NormalizeRepositoryRootPath(string rootPath)
+        => Path.GetFullPath(rootPath);
 
     private static GitCommandResult RunGit(string workingDirectory, params string[] args)
     {
