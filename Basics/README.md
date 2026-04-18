@@ -93,6 +93,10 @@ touch artifacts/ui-runs/basics-ui-multiplication-20260413-162707.jsonl.keep
 
 Advanced overrides are available through environment variables: `NBN_BASICS_UI_RUN_LOG_RETENTION_ENABLED`, `NBN_BASICS_UI_RUN_LOG_MAX_FILE_MB`, `NBN_BASICS_UI_RUN_LOG_MAX_TOTAL_MB`, `NBN_BASICS_UI_RUN_LOG_MAX_FILES`, `NBN_BASICS_UI_RUN_LOG_MAX_AGE_DAYS`, and `NBN_BASICS_UI_RUN_LOG_KEEP_MARKER_SUFFIX`.
 
+## Worker Launch
+
+The Basics UI local worker launcher starts WorkerNode roots on the current desktop and registers them with SettingsMonitor. When the Settings address field is blank, worker launch uses the host from the configured IO address with SettingsMonitor's default port `12010`. Set Settings address explicitly when the shared SettingsMonitor is on a different host or port. The worker advertise host must still resolve to the machine running Basics UI so HiveMind can place work back onto those WorkerNode roots.
+
 ## Live Harness
 
 Generate a sample config:

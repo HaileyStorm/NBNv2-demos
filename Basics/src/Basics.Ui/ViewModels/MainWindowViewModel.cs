@@ -1238,7 +1238,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         IsWorkerLauncherBusy = true;
         WorkerLauncherStatus = "Starting workers...";
-        WorkerLauncherDetail = $"Launching {request.WorkerCount} local worker root(s) on a shared port starting at {request.BasePort}.";
+        WorkerLauncherDetail =
+            $"Launching {request.WorkerCount} local worker root(s) on a shared port starting at {request.BasePort}; registering with SettingsMonitor at {request.SettingsHost}:{request.SettingsPort}/{request.SettingsName}.";
         RaiseCommandStates();
 
         try
@@ -2049,23 +2050,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             return false;
         }
 
-        var settingsName = string.IsNullOrWhiteSpace(OptionalSettingsActorName)
-            ? "SettingsMonitor"
-            : OptionalSettingsActorName.Trim();
-        var settingsHost = "127.0.0.1";
-        var settingsPort = 12010;
-        if (!string.IsNullOrWhiteSpace(OptionalSettingsAddress))
+        if (!TryResolveWorkerSettingsEndpoint(out var settingsHost, out var settingsPort, out var settingsName, out failureMessage))
         {
-            if (!TryParseHostPort(OptionalSettingsAddress, out settingsHost, out settingsPort))
-            {
-                failureMessage = "Settings address must be empty or use host:port.";
-                return false;
-            }
-        }
-
-        if (!NetworkAddressDefaults.IsLoopbackHost(settingsHost))
-        {
-            failureMessage = "Basics UI worker launch currently supports only local loopback SettingsMonitor endpoints. Use Workbench for remote/shared worker orchestration.";
             return false;
         }
 
@@ -2094,6 +2080,38 @@ public sealed class MainWindowViewModel : ViewModelBase
             SettingsHost: settingsHost,
             SettingsPort: settingsPort,
             SettingsName: settingsName);
+        return true;
+    }
+
+    private bool TryResolveWorkerSettingsEndpoint(
+        out string settingsHost,
+        out int settingsPort,
+        out string settingsName,
+        out string failureMessage)
+    {
+        settingsName = string.IsNullOrWhiteSpace(OptionalSettingsActorName)
+            ? "SettingsMonitor"
+            : OptionalSettingsActorName.Trim();
+        settingsHost = "127.0.0.1";
+        settingsPort = 12010;
+        failureMessage = string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(OptionalSettingsAddress))
+        {
+            if (!TryParseHostPort(OptionalSettingsAddress, out settingsHost, out settingsPort))
+            {
+                failureMessage = "Settings address must be empty or use host:port.";
+                return false;
+            }
+
+            return true;
+        }
+
+        if (TryParseHostPort(IoAddress, out var ioHost, out _))
+        {
+            settingsHost = ioHost;
+        }
+
         return true;
     }
 

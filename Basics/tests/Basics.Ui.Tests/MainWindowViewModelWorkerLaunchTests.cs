@@ -49,6 +49,50 @@ public sealed class MainWindowViewModelWorkerLaunchTests
     }
 
     [Fact]
+    public async Task StartWorkersCommand_WhenSettingsAddressBlank_UsesIoHostForSettings()
+    {
+        var workerService = new RecordingWorkerProcessService();
+        var viewModel = CreateViewModel(workerService);
+        viewModel.BindHost = "127.0.0.1";
+        viewModel.AdvertiseHost = "127.0.0.1";
+        viewModel.IoAddress = "192.168.0.14:12050";
+        viewModel.WorkerCountText = "2";
+        viewModel.WorkerBasePortText = "12041";
+        viewModel.OptionalSettingsAddress = string.Empty;
+        viewModel.OptionalSettingsActorName = "SettingsMonitor";
+
+        viewModel.StartWorkersCommand.Execute(null);
+
+        await WaitForAsync(() => workerService.StartCallCount == 1);
+        Assert.NotNull(workerService.LastStartRequest);
+        var request = workerService.LastStartRequest!;
+        Assert.Equal("192.168.0.14", request.SettingsHost);
+        Assert.Equal(12010, request.SettingsPort);
+        Assert.Equal("127.0.0.1", request.AdvertiseHost);
+    }
+
+    [Fact]
+    public async Task StartWorkersCommand_AllowsExplicitRemoteSettingsEndpoint()
+    {
+        var workerService = new RecordingWorkerProcessService();
+        var viewModel = CreateViewModel(workerService);
+        viewModel.BindHost = "127.0.0.1";
+        viewModel.AdvertiseHost = "127.0.0.1";
+        viewModel.OptionalSettingsAddress = "192.168.0.14:12010";
+        viewModel.OptionalSettingsActorName = "SettingsMonitor";
+
+        viewModel.StartWorkersCommand.Execute(null);
+
+        await WaitForAsync(() => workerService.StartCallCount == 1);
+        Assert.NotNull(workerService.LastStartRequest);
+        var request = workerService.LastStartRequest!;
+        Assert.Equal("192.168.0.14", request.SettingsHost);
+        Assert.Equal(12010, request.SettingsPort);
+        Assert.Equal("SettingsMonitor", request.SettingsName);
+        await WaitForAsync(() => string.Equals(viewModel.WorkerLauncherStatus, "Started 32 worker(s).", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task StartWorkersCommand_BlocksInvalidWorkerPort_WithoutCallingWorkerService()
     {
         var workerService = new RecordingWorkerProcessService();
