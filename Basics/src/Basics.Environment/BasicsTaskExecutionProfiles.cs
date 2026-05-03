@@ -10,7 +10,8 @@ public sealed record BasicsTaskExecutionProfile(
     BasicsSizingOverrides Sizing,
     BasicsReproductionSchedulingPolicy Scheduling,
     BasicsExecutionStopCriteria StopCriteria,
-    BasicsTaskSettings? TaskSettings = null);
+    BasicsTaskSettings? TaskSettings = null,
+    BasicsPpoOptimizerOptions? PpoOptimizer = null);
 
 public static class BasicsTaskExecutionProfiles
 {
@@ -54,7 +55,8 @@ public static class BasicsTaskExecutionProfiles
             }
         },
         StopCriteria: new BasicsExecutionStopCriteria(),
-        TaskSettings: new BasicsTaskSettings());
+        TaskSettings: new BasicsTaskSettings(),
+        PpoOptimizer: new BasicsPpoOptimizerOptions());
 
     private static readonly BasicsTaskExecutionProfile ConservativeBooleanProfile = new(
         OutputObservationMode: BasicsOutputObservationMode.EventedOutput,
@@ -108,7 +110,8 @@ public static class BasicsTaskExecutionProfiles
             }
         },
         StopCriteria: new BasicsExecutionStopCriteria(),
-        TaskSettings: new BasicsTaskSettings());
+        TaskSettings: new BasicsTaskSettings(),
+        PpoOptimizer: new BasicsPpoOptimizerOptions());
 
     private static readonly BasicsTaskExecutionProfile RicherExplorationProfile = DefaultProfile with
     {

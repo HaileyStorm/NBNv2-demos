@@ -99,6 +99,8 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.True(profile.TaskSettings.Multiplication.BehaviorOccupancyEnabled);
         Assert.Equal(0.35f, profile.TaskSettings.Multiplication.BehaviorStageGateStart);
         Assert.Equal(0.50f, profile.TaskSettings.Multiplication.BehaviorStageGateFull);
+        Assert.NotNull(profile.PpoOptimizer);
+        Assert.False(profile.PpoOptimizer!.Enabled);
         Assert.True(profile.AdaptiveDiversity.Enabled);
         Assert.Equal(8, profile.AdaptiveDiversity.StallGenerationWindow);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);
@@ -119,6 +121,8 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(4, profile.AdaptiveDiversity.StallGenerationWindow);
         Assert.Equal(2, profile.VariationBand.MaxInternalNeuronDelta);
         Assert.True(profile.VariationBand.AllowAxonReroute);
+        Assert.NotNull(profile.PpoOptimizer);
+        Assert.False(profile.PpoOptimizer!.Enabled);
         Assert.Null(profile.StopCriteria.MaximumGenerations);
     }
 }

@@ -103,6 +103,23 @@ public sealed class BasicsTraceabilityTests
                     BehaviorStageGateStart = 0.33f,
                     BehaviorStageGateFull = 0.55f
                 }
+            },
+            PpoOptimizer: new BasicsPpoOptimizerOptions
+            {
+                Enabled = true,
+                EndpointAddress = "127.0.0.1:12090",
+                ManagerActorName = "PpoManager",
+                ObjectiveName = "multiplication",
+                RewardSignal = "basics.fitness",
+                RolloutTickCount = 256,
+                RolloutBatchCount = 8,
+                ClipEpsilon = 0.15f,
+                DiscountGamma = 0.98f,
+                GaeLambda = 0.90f,
+                LearningRate = 0.0002f,
+                OptimizationEpochCount = 5,
+                MinibatchSize = 16,
+                Seed = 1234
             });
 
         var trace = BasicsTraceability.BuildPlanTrace(plan);
@@ -125,6 +142,20 @@ public sealed class BasicsTraceabilityTests
         Assert.False(trace.TaskSettings.Multiplication.BehaviorOccupancyEnabled);
         Assert.Equal(0.33f, trace.TaskSettings.Multiplication.BehaviorStageGateStart);
         Assert.Equal(0.55f, trace.TaskSettings.Multiplication.BehaviorStageGateFull);
+        Assert.True(trace.PpoOptimizer.Enabled);
+        Assert.Equal("127.0.0.1:12090", trace.PpoOptimizer.EndpointAddress);
+        Assert.Equal("PpoManager", trace.PpoOptimizer.ManagerActorName);
+        Assert.Equal("multiplication", trace.PpoOptimizer.ObjectiveName);
+        Assert.Equal("basics.fitness", trace.PpoOptimizer.RewardSignal);
+        Assert.Equal((ulong)256, trace.PpoOptimizer.RolloutTickCount);
+        Assert.Equal((ulong)8, trace.PpoOptimizer.RolloutBatchCount);
+        Assert.Equal(0.15f, trace.PpoOptimizer.ClipEpsilon);
+        Assert.Equal(0.98f, trace.PpoOptimizer.DiscountGamma);
+        Assert.Equal(0.90f, trace.PpoOptimizer.GaeLambda);
+        Assert.Equal(0.0002f, trace.PpoOptimizer.LearningRate);
+        Assert.Equal((uint)5, trace.PpoOptimizer.OptimizationEpochCount);
+        Assert.Equal((uint)16, trace.PpoOptimizer.MinibatchSize);
+        Assert.Equal((ulong)1234, trace.PpoOptimizer.Seed);
         Assert.Equal(48, trace.SizingOverrides.InitialPopulationCount);
         Assert.Equal(12, trace.SizingOverrides.MaxConcurrentBrains);
         Assert.Single(trace.InitialBrainSeeds);

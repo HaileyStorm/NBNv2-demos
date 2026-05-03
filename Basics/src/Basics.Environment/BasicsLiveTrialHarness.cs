@@ -147,6 +147,22 @@ public sealed record BasicsLiveTrialSchedulingSnapshot(
     double FitnessExponent,
     double DiversityBoost);
 
+public sealed record BasicsLiveTrialPpoOptimizerSnapshot(
+    bool Enabled,
+    string EndpointAddress,
+    string ManagerActorName,
+    string ObjectiveName,
+    string RewardSignal,
+    ulong RolloutTickCount,
+    ulong RolloutBatchCount,
+    float ClipEpsilon,
+    float DiscountGamma,
+    float GaeLambda,
+    float LearningRate,
+    uint OptimizationEpochCount,
+    uint MinibatchSize,
+    ulong Seed);
+
 public sealed record BasicsLiveTrialConfigurationSnapshot(
     string ClientName,
     string TaskId,
@@ -159,7 +175,8 @@ public sealed record BasicsLiveTrialConfigurationSnapshot(
     BasicsLiveTrialVariationBandSnapshot VariationBand,
     BasicsLiveTrialSeedShapeSnapshot SeedShape,
     BasicsLiveTrialSizingSnapshot Sizing,
-    BasicsLiveTrialSchedulingSnapshot Scheduling);
+    BasicsLiveTrialSchedulingSnapshot Scheduling,
+    BasicsLiveTrialPpoOptimizerSnapshot PpoOptimizer);
 
 public sealed record BasicsLiveTrialPlanSummary(
     string TaskId,
@@ -647,7 +664,22 @@ public sealed class BasicsLiveTrialHarness
                 options.Scheduling.RunAllocation.MinRunsPerPair,
                 options.Scheduling.RunAllocation.MaxRunsPerPair,
                 options.Scheduling.RunAllocation.FitnessExponent,
-                options.Scheduling.RunAllocation.DiversityBoost));
+                options.Scheduling.RunAllocation.DiversityBoost),
+            PpoOptimizer: new BasicsLiveTrialPpoOptimizerSnapshot(
+                options.PpoOptimizer.Enabled,
+                options.PpoOptimizer.EndpointAddress,
+                options.PpoOptimizer.ManagerActorName,
+                options.PpoOptimizer.ObjectiveName,
+                options.PpoOptimizer.RewardSignal,
+                options.PpoOptimizer.RolloutTickCount,
+                options.PpoOptimizer.RolloutBatchCount,
+                options.PpoOptimizer.ClipEpsilon,
+                options.PpoOptimizer.DiscountGamma,
+                options.PpoOptimizer.GaeLambda,
+                options.PpoOptimizer.LearningRate,
+                options.PpoOptimizer.OptimizationEpochCount,
+                options.PpoOptimizer.MinibatchSize,
+                options.PpoOptimizer.Seed));
 
     private static BasicsEnvironmentOptions ApplyConfigurationSnapshot(
         BasicsEnvironmentOptions current,
@@ -714,6 +746,23 @@ public sealed class BasicsLiveTrialHarness
             {
                 ParentSelection = parentSelection,
                 RunAllocation = runAllocation
+            },
+            PpoOptimizer = new BasicsPpoOptimizerOptions
+            {
+                Enabled = snapshot.PpoOptimizer.Enabled,
+                EndpointAddress = snapshot.PpoOptimizer.EndpointAddress,
+                ManagerActorName = snapshot.PpoOptimizer.ManagerActorName,
+                ObjectiveName = snapshot.PpoOptimizer.ObjectiveName,
+                RewardSignal = snapshot.PpoOptimizer.RewardSignal,
+                RolloutTickCount = snapshot.PpoOptimizer.RolloutTickCount,
+                RolloutBatchCount = snapshot.PpoOptimizer.RolloutBatchCount,
+                ClipEpsilon = snapshot.PpoOptimizer.ClipEpsilon,
+                DiscountGamma = snapshot.PpoOptimizer.DiscountGamma,
+                GaeLambda = snapshot.PpoOptimizer.GaeLambda,
+                LearningRate = snapshot.PpoOptimizer.LearningRate,
+                OptimizationEpochCount = snapshot.PpoOptimizer.OptimizationEpochCount,
+                MinibatchSize = snapshot.PpoOptimizer.MinibatchSize,
+                Seed = snapshot.PpoOptimizer.Seed
             }
         };
     }

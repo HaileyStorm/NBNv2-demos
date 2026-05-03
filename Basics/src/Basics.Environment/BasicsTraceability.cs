@@ -134,6 +134,22 @@ public sealed record BasicsTaskSettingsTraceRecord(
     BasicsScalarGridTaskSettingsTraceRecord Gt,
     BasicsMultiplicationTaskSettingsTraceRecord Multiplication);
 
+public sealed record BasicsPpoOptimizerTraceRecord(
+    bool Enabled,
+    string EndpointAddress,
+    string ManagerActorName,
+    string ObjectiveName,
+    string RewardSignal,
+    ulong RolloutTickCount,
+    ulong RolloutBatchCount,
+    float ClipEpsilon,
+    float DiscountGamma,
+    float GaeLambda,
+    float LearningRate,
+    uint OptimizationEpochCount,
+    uint MinibatchSize,
+    ulong Seed);
+
 public sealed record BasicsExecutionPlanTraceRecord(
     int SchemaVersion,
     DateTimeOffset PlannedAtUtc,
@@ -151,7 +167,8 @@ public sealed record BasicsExecutionPlanTraceRecord(
     BasicsReproductionTraceRecord Reproduction,
     BasicsMetricsTraceRecord Metrics,
     BasicsStopCriteriaTraceRecord StopCriteria,
-    BasicsTaskSettingsTraceRecord TaskSettings);
+    BasicsTaskSettingsTraceRecord TaskSettings,
+    BasicsPpoOptimizerTraceRecord PpoOptimizer);
 
 public static class BasicsTraceability
 {
@@ -162,6 +179,7 @@ public static class BasicsTraceability
         ArgumentNullException.ThrowIfNull(plan);
 
         var taskSettings = plan.TaskSettings ?? new BasicsTaskSettings();
+        var ppo = plan.PpoOptimizer ?? new BasicsPpoOptimizerOptions();
         return new BasicsExecutionPlanTraceRecord(
             SchemaVersion: SchemaVersion,
             PlannedAtUtc: plan.PlannedAtUtc,
@@ -250,7 +268,22 @@ public static class BasicsTraceability
                     taskSettings.Multiplication.AccuracyTolerance,
                     taskSettings.Multiplication.BehaviorOccupancyEnabled,
                     taskSettings.Multiplication.BehaviorStageGateStart,
-                    taskSettings.Multiplication.BehaviorStageGateFull)));
+                    taskSettings.Multiplication.BehaviorStageGateFull)),
+            PpoOptimizer: new BasicsPpoOptimizerTraceRecord(
+                ppo.Enabled,
+                ppo.EndpointAddress,
+                ppo.ManagerActorName,
+                ppo.ObjectiveName,
+                ppo.RewardSignal,
+                ppo.RolloutTickCount,
+                ppo.RolloutBatchCount,
+                ppo.ClipEpsilon,
+                ppo.DiscountGamma,
+                ppo.GaeLambda,
+                ppo.LearningRate,
+                ppo.OptimizationEpochCount,
+                ppo.MinibatchSize,
+                ppo.Seed));
     }
 
     public static BasicsBuildTraceRecord BuildBuildTrace(

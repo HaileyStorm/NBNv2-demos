@@ -120,6 +120,80 @@ public sealed class MainWindowViewModelBehaviorChartTests
     }
 
     [Fact]
+    public void PpoOptimizerSettings_AreSerializedIntoEnvironmentOptions()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.PpoOptimizerEnabled = true;
+        viewModel.PpoEndpointAddress = "127.0.0.1:12090";
+        viewModel.PpoManagerActorName = "PpoManager";
+        viewModel.PpoObjectiveName = "multiplication";
+        viewModel.PpoRewardSignal = "basics.fitness";
+        viewModel.PpoRolloutTickCountText = "256";
+        viewModel.PpoRolloutBatchCountText = "8";
+        viewModel.PpoClipEpsilonText = "0.15";
+        viewModel.PpoDiscountGammaText = "0.98";
+        viewModel.PpoGaeLambdaText = "0.90";
+        viewModel.PpoLearningRateText = "0.0002";
+        viewModel.PpoOptimizationEpochCountText = "5";
+        viewModel.PpoMinibatchSizeText = "16";
+        viewModel.PpoSeedText = "1234";
+
+        var options = BuildEnvironmentOptions(viewModel);
+
+        Assert.True(options.PpoOptimizer.Enabled);
+        Assert.Equal("127.0.0.1:12090", options.PpoOptimizer.EndpointAddress);
+        Assert.Equal("PpoManager", options.PpoOptimizer.ManagerActorName);
+        Assert.Equal("multiplication", options.PpoOptimizer.ObjectiveName);
+        Assert.Equal("basics.fitness", options.PpoOptimizer.RewardSignal);
+        Assert.Equal((ulong)256, options.PpoOptimizer.RolloutTickCount);
+        Assert.Equal((ulong)8, options.PpoOptimizer.RolloutBatchCount);
+        Assert.Equal(0.15f, options.PpoOptimizer.ClipEpsilon);
+        Assert.Equal(0.98f, options.PpoOptimizer.DiscountGamma);
+        Assert.Equal(0.90f, options.PpoOptimizer.GaeLambda);
+        Assert.Equal(0.0002f, options.PpoOptimizer.LearningRate);
+        Assert.Equal((uint)5, options.PpoOptimizer.OptimizationEpochCount);
+        Assert.Equal((uint)16, options.PpoOptimizer.MinibatchSize);
+        Assert.Equal((ulong)1234, options.PpoOptimizer.Seed);
+    }
+
+    [Fact]
+    public void DisabledPpoOptimizer_IgnoresHiddenHyperparameterText()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.PpoOptimizerEnabled = false;
+        viewModel.PpoRolloutTickCountText = "not-a-number";
+        viewModel.PpoClipEpsilonText = "not-a-number";
+
+        var options = BuildEnvironmentOptions(viewModel);
+
+        Assert.False(options.PpoOptimizer.Enabled);
+        Assert.Equal((ulong)128, options.PpoOptimizer.RolloutTickCount);
+        Assert.Equal(0.2f, options.PpoOptimizer.ClipEpsilon);
+    }
+
+    [Fact]
+    public void MultiplicationSelection_ShowsPpoSettings_WithoutAutoEnablingService()
+    {
+        var viewModel = CreateViewModel();
+
+        viewModel.SelectedTask = viewModel.Tasks.First(task => task.TaskId == "multiplication");
+
+        Assert.True(viewModel.ShowPpoOptimizerSettings);
+        Assert.False(viewModel.PpoOptimizerEnabled);
+        Assert.False(viewModel.ShowPpoOptimizerConfiguration);
+
+        viewModel.PpoOptimizerEnabled = true;
+
+        Assert.True(viewModel.ShowPpoOptimizerConfiguration);
+        Assert.Contains("multiplication", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
+
+        viewModel.SelectedTask = viewModel.Tasks.First(task => task.TaskId == "and");
+
+        Assert.False(viewModel.PpoOptimizerEnabled);
+        Assert.False(viewModel.ShowPpoOptimizerConfiguration);
+    }
+
+    [Fact]
     public void BehaviorTaskSettingChanges_RaiseTaskAndChartBindingNotifications()
     {
         var viewModel = CreateViewModel();
@@ -131,6 +205,19 @@ public sealed class MainWindowViewModelBehaviorChartTests
         Assert.Contains(nameof(MainWindowViewModel.ShowMultiplicationTaskSettings), changed);
         Assert.Contains(nameof(MainWindowViewModel.FitnessTertiaryChartValues), changed);
         Assert.Contains(nameof(MainWindowViewModel.FitnessQuaternaryChartValues), changed);
+    }
+
+    [Fact]
+    public void PpoSettingChanges_RaiseVisibilityAndDetailNotifications()
+    {
+        var viewModel = CreateViewModel();
+        var changed = ObservePropertyChanges(viewModel);
+
+        viewModel.PpoOptimizerEnabled = true;
+
+        Assert.Contains(nameof(MainWindowViewModel.ShowPpoOptimizerSettings), changed);
+        Assert.Contains(nameof(MainWindowViewModel.ShowPpoOptimizerConfiguration), changed);
+        Assert.Contains(nameof(MainWindowViewModel.PpoOptimizerDetail), changed);
     }
 
     private static MainWindowViewModel CreateViewModel()

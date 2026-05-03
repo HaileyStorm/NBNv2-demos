@@ -411,6 +411,60 @@
                                        TextWrapping="Wrap" />
                         </Grid>
 
+                        <Grid IsVisible="{Binding ShowPpoOptimizerSettings}"
+                              ColumnDefinitions="Auto,*"
+                              RowDefinitions="Auto,Auto,Auto,Auto"
+                              ColumnSpacing="12"
+                              RowSpacing="10">
+                            <CheckBox Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                                      Content="PPO optional core service"
+                                      IsChecked="{Binding PpoOptimizerEnabled}"
+                                      ToolTip.Tip="Capture PPO manager discovery and hyperparameter settings with the Basics plan. Leave unchecked to use only the local Basics generation loop." />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                       Text="{Binding PpoOptimizerDetail}"
+                                       Foreground="#6C7A89"
+                                       TextWrapping="Wrap" />
+                            <Grid Grid.Row="2"
+                                  Grid.ColumnSpan="2"
+                                  IsVisible="{Binding ShowPpoOptimizerConfiguration}"
+                                  ColumnDefinitions="Auto,140,Auto,140,Auto,140"
+                                  RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                                  ColumnSpacing="12"
+                                  RowSpacing="10">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="PPO address" VerticalAlignment="Center"
+                                           ToolTip.Tip="Optional host:port hint. Leave blank to discover service.endpoint.ppo_manager through SettingsMonitor." />
+                                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding PpoEndpointAddress}" Watermark="discover" />
+                                <TextBlock Grid.Row="0" Grid.Column="2" Text="Actor" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding PpoManagerActorName}" />
+                                <TextBlock Grid.Row="0" Grid.Column="4" Text="Seed" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="5" Text="{Binding PpoSeedText}" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Objective" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PpoObjectiveName}" />
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="Reward signal" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="3" Grid.ColumnSpan="3" Text="{Binding PpoRewardSignal}" />
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Rollout ticks" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding PpoRolloutTickCountText}" />
+                                <TextBlock Grid.Row="2" Grid.Column="2" Text="Rollout batches" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding PpoRolloutBatchCountText}" />
+                                <TextBlock Grid.Row="2" Grid.Column="4" Text="Minibatch" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="2" Grid.Column="5" Text="{Binding PpoMinibatchSizeText}" />
+
+                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Clip epsilon" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding PpoClipEpsilonText}" />
+                                <TextBlock Grid.Row="3" Grid.Column="2" Text="Gamma" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding PpoDiscountGammaText}" />
+                                <TextBlock Grid.Row="3" Grid.Column="4" Text="GAE lambda" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="3" Grid.Column="5" Text="{Binding PpoGaeLambdaText}" />
+
+                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Learning rate" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding PpoLearningRateText}" />
+                                <TextBlock Grid.Row="4" Grid.Column="2" Text="Epochs" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="4" Grid.Column="3" Text="{Binding PpoOptimizationEpochCountText}" />
+                            </Grid>
+                        </Grid>
+
                         <TextBlock IsVisible="{Binding ShowUnavailableTaskSettingsMessage}"
                                    Text="This task does not expose custom evaluation settings yet."
                                    Foreground="#6C7A89"

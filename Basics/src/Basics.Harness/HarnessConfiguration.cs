@@ -116,7 +116,24 @@ internal sealed record HarnessFileConfig
                     MaxConcurrentBrains = normalizedEnvironment.Sizing.MaxConcurrentBrains
                 },
                 Reproduction = reproduction,
-                Scheduling = scheduling
+                Scheduling = scheduling,
+                PpoOptimizer = new BasicsPpoOptimizerOptions
+                {
+                    Enabled = normalizedEnvironment.PpoOptimizer.Enabled,
+                    EndpointAddress = normalizedEnvironment.PpoOptimizer.EndpointAddress,
+                    ManagerActorName = normalizedEnvironment.PpoOptimizer.ManagerActorName,
+                    ObjectiveName = normalizedEnvironment.PpoOptimizer.ObjectiveName,
+                    RewardSignal = normalizedEnvironment.PpoOptimizer.RewardSignal,
+                    RolloutTickCount = normalizedEnvironment.PpoOptimizer.RolloutTickCount,
+                    RolloutBatchCount = normalizedEnvironment.PpoOptimizer.RolloutBatchCount,
+                    ClipEpsilon = normalizedEnvironment.PpoOptimizer.ClipEpsilon,
+                    DiscountGamma = normalizedEnvironment.PpoOptimizer.DiscountGamma,
+                    GaeLambda = normalizedEnvironment.PpoOptimizer.GaeLambda,
+                    LearningRate = normalizedEnvironment.PpoOptimizer.LearningRate,
+                    OptimizationEpochCount = normalizedEnvironment.PpoOptimizer.OptimizationEpochCount,
+                    MinibatchSize = normalizedEnvironment.PpoOptimizer.MinibatchSize,
+                    Seed = normalizedEnvironment.PpoOptimizer.Seed
+                }
             },
             MaxTrialCount = Trials.MaxTrialCount,
             TrialTimeout = TimeSpan.FromSeconds(Trials.TrialTimeoutSeconds),
@@ -213,6 +230,25 @@ internal sealed record HarnessEnvironmentConfig
     public HarnessTemplateConfig Template { get; init; } = new();
     public HarnessSizingConfig Sizing { get; init; } = new();
     public HarnessSchedulingConfig Scheduling { get; init; } = new();
+    public HarnessPpoOptimizerConfig PpoOptimizer { get; init; } = new();
+}
+
+internal sealed record HarnessPpoOptimizerConfig
+{
+    public bool Enabled { get; init; }
+    public string EndpointAddress { get; init; } = string.Empty;
+    public string ManagerActorName { get; init; } = "PpoManager";
+    public string ObjectiveName { get; init; } = "reward";
+    public string RewardSignal { get; init; } = "output.reward";
+    public ulong RolloutTickCount { get; init; } = 128;
+    public ulong RolloutBatchCount { get; init; } = 4;
+    public float ClipEpsilon { get; init; } = 0.2f;
+    public float DiscountGamma { get; init; } = 0.99f;
+    public float GaeLambda { get; init; } = 0.95f;
+    public float LearningRate { get; init; } = 0.0003f;
+    public uint OptimizationEpochCount { get; init; } = 4;
+    public uint MinibatchSize { get; init; } = 32;
+    public ulong Seed { get; init; } = 42;
 }
 
 internal sealed record HarnessTemplateConfig

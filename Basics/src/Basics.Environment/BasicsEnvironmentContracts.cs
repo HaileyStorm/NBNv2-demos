@@ -664,6 +664,116 @@ public sealed record BasicsTaskSettings
     }
 }
 
+public sealed record BasicsPpoOptimizerOptions
+{
+    public bool Enabled { get; init; }
+    public string EndpointAddress { get; init; } = string.Empty;
+    public string ManagerActorName { get; init; } = "PpoManager";
+    public string ObjectiveName { get; init; } = "reward";
+    public string RewardSignal { get; init; } = "output.reward";
+    public ulong RolloutTickCount { get; init; } = 128;
+    public ulong RolloutBatchCount { get; init; } = 4;
+    public float ClipEpsilon { get; init; } = 0.2f;
+    public float DiscountGamma { get; init; } = 0.99f;
+    public float GaeLambda { get; init; } = 0.95f;
+    public float LearningRate { get; init; } = 0.0003f;
+    public uint OptimizationEpochCount { get; init; } = 4;
+    public uint MinibatchSize { get; init; } = 32;
+    public ulong Seed { get; init; } = 42;
+
+    public BasicsContractValidationResult Validate()
+    {
+        if (!Enabled)
+        {
+            return BasicsContractValidationResult.Success;
+        }
+
+        var errors = new List<string>();
+        if (!string.IsNullOrWhiteSpace(EndpointAddress) && !IsValidHostPort(EndpointAddress))
+        {
+            errors.Add("PPO endpoint address must be empty for discovery or use host:port.");
+        }
+
+        if (string.IsNullOrWhiteSpace(ManagerActorName))
+        {
+            errors.Add("PPO manager actor name is required when PPO is enabled.");
+        }
+
+        if (string.IsNullOrWhiteSpace(ObjectiveName))
+        {
+            errors.Add("PPO objective name is required when PPO is enabled.");
+        }
+
+        if (string.IsNullOrWhiteSpace(RewardSignal))
+        {
+            errors.Add("PPO reward signal is required when PPO is enabled.");
+        }
+
+        if (RolloutTickCount == 0)
+        {
+            errors.Add("PPO rollout tick count must be > 0.");
+        }
+
+        if (RolloutBatchCount == 0)
+        {
+            errors.Add("PPO rollout batch count must be > 0.");
+        }
+
+        if (RolloutBatchCount > uint.MaxValue)
+        {
+            errors.Add($"PPO rollout batch count must be <= {uint.MaxValue}.");
+        }
+
+        if (!float.IsFinite(ClipEpsilon) || ClipEpsilon <= 0f || ClipEpsilon > 1f)
+        {
+            errors.Add("PPO clip epsilon must be a finite value greater than 0 and <= 1.");
+        }
+
+        if (!float.IsFinite(DiscountGamma) || DiscountGamma <= 0f || DiscountGamma > 1f)
+        {
+            errors.Add("PPO discount gamma must be a finite value greater than 0 and <= 1.");
+        }
+
+        if (!float.IsFinite(GaeLambda) || GaeLambda <= 0f || GaeLambda > 1f)
+        {
+            errors.Add("PPO GAE lambda must be a finite value greater than 0 and <= 1.");
+        }
+
+        if (!float.IsFinite(LearningRate) || LearningRate <= 0f)
+        {
+            errors.Add("PPO learning rate must be a finite value greater than 0.");
+        }
+
+        if (OptimizationEpochCount == 0)
+        {
+            errors.Add("PPO optimization epoch count must be > 0.");
+        }
+
+        if (MinibatchSize == 0)
+        {
+            errors.Add("PPO minibatch size must be > 0.");
+        }
+
+        return BasicsContractValidationResult.FromErrors(errors);
+    }
+
+    private static bool IsValidHostPort(string value)
+    {
+        var trimmed = value.Trim();
+        var separatorIndex = trimmed.LastIndexOf(':');
+        if (separatorIndex <= 0 || separatorIndex == trimmed.Length - 1)
+        {
+            return false;
+        }
+
+        var host = trimmed[..separatorIndex].Trim();
+        var portText = trimmed[(separatorIndex + 1)..].Trim();
+        return host.Length > 0
+               && int.TryParse(portText, out var port)
+               && port is > 0 and <= 65535;
+    }
+}
+
 public sealed record BasicsEnvironmentOptions
 {
     public string ClientName { get; init; } = "nbn.basics.environment";
@@ -686,6 +796,7 @@ public sealed record BasicsEnvironmentOptions
     public BasicsReproductionSchedulingPolicy Scheduling { get; init; } = BasicsReproductionSchedulingPolicy.Default;
     public BasicsExecutionStopCriteria StopCriteria { get; init; } = new();
     public BasicsTaskSettings TaskSettings { get; init; } = new();
+    public BasicsPpoOptimizerOptions PpoOptimizer { get; init; } = new();
 
     public BasicsContractValidationResult Validate()
     {
@@ -713,6 +824,7 @@ public sealed record BasicsEnvironmentOptions
         AddValidationErrors(Scheduling.Validate(), errors);
         AddValidationErrors(StopCriteria.Validate(), errors);
         AddValidationErrors(TaskSettings.ValidateForTask(SelectedTask.TaskId), errors);
+        AddValidationErrors(PpoOptimizer.Validate(), errors);
         foreach (var seed in InitialBrainSeeds)
         {
             AddValidationErrors(seed.Validate(), errors);
@@ -750,7 +862,8 @@ public sealed record BasicsEnvironmentPlan(
     BasicsMetricsContract Metrics,
     BasicsExecutionStopCriteria StopCriteria,
     DateTimeOffset PlannedAtUtc,
-    BasicsTaskSettings? TaskSettings = null);
+    BasicsTaskSettings? TaskSettings = null,
+    BasicsPpoOptimizerOptions? PpoOptimizer = null);
 
 public sealed record BasicsTaskContract(
     string TaskId,

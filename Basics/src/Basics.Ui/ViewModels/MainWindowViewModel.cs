@@ -185,6 +185,20 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _multiplicationBehaviorOccupancyEnabled = true;
     private string _multiplicationBehaviorRampStartText = "0.35";
     private string _multiplicationBehaviorRampFullText = "0.50";
+    private bool _ppoOptimizerEnabled;
+    private string _ppoEndpointAddress = string.Empty;
+    private string _ppoManagerActorName = "PpoManager";
+    private string _ppoObjectiveName = "reward";
+    private string _ppoRewardSignal = "output.reward";
+    private string _ppoRolloutTickCountText = "128";
+    private string _ppoRolloutBatchCountText = "4";
+    private string _ppoClipEpsilonText = "0.2";
+    private string _ppoDiscountGammaText = "0.99";
+    private string _ppoGaeLambdaText = "0.95";
+    private string _ppoLearningRateText = "0.0003";
+    private string _ppoOptimizationEpochCountText = "4";
+    private string _ppoMinibatchSizeText = "32";
+    private string _ppoSeedText = "42";
     private string _fitnessWeightText = "0.55";
     private string _diversityWeightText = "0.35";
     private string _speciesBalanceWeightText = "0.15";
@@ -790,6 +804,120 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    public bool PpoOptimizerEnabled
+    {
+        get => _ppoOptimizerEnabled;
+        set
+        {
+            if (SetProperty(ref _ppoOptimizerEnabled, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string PpoEndpointAddress
+    {
+        get => _ppoEndpointAddress;
+        set
+        {
+            if (SetProperty(ref _ppoEndpointAddress, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string PpoManagerActorName
+    {
+        get => _ppoManagerActorName;
+        set
+        {
+            if (SetProperty(ref _ppoManagerActorName, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string PpoObjectiveName
+    {
+        get => _ppoObjectiveName;
+        set
+        {
+            if (SetProperty(ref _ppoObjectiveName, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string PpoRewardSignal
+    {
+        get => _ppoRewardSignal;
+        set
+        {
+            if (SetProperty(ref _ppoRewardSignal, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
+    public string PpoRolloutTickCountText
+    {
+        get => _ppoRolloutTickCountText;
+        set => SetPpoTextProperty(ref _ppoRolloutTickCountText, value);
+    }
+
+    public string PpoRolloutBatchCountText
+    {
+        get => _ppoRolloutBatchCountText;
+        set => SetPpoTextProperty(ref _ppoRolloutBatchCountText, value);
+    }
+
+    public string PpoClipEpsilonText
+    {
+        get => _ppoClipEpsilonText;
+        set => SetPpoTextProperty(ref _ppoClipEpsilonText, value);
+    }
+
+    public string PpoDiscountGammaText
+    {
+        get => _ppoDiscountGammaText;
+        set => SetPpoTextProperty(ref _ppoDiscountGammaText, value);
+    }
+
+    public string PpoGaeLambdaText
+    {
+        get => _ppoGaeLambdaText;
+        set => SetPpoTextProperty(ref _ppoGaeLambdaText, value);
+    }
+
+    public string PpoLearningRateText
+    {
+        get => _ppoLearningRateText;
+        set => SetPpoTextProperty(ref _ppoLearningRateText, value);
+    }
+
+    public string PpoOptimizationEpochCountText
+    {
+        get => _ppoOptimizationEpochCountText;
+        set => SetPpoTextProperty(ref _ppoOptimizationEpochCountText, value);
+    }
+
+    public string PpoMinibatchSizeText
+    {
+        get => _ppoMinibatchSizeText;
+        set => SetPpoTextProperty(ref _ppoMinibatchSizeText, value);
+    }
+
+    public string PpoSeedText
+    {
+        get => _ppoSeedText;
+        set => SetPpoTextProperty(ref _ppoSeedText, value);
+    }
+
     public bool ShowTaskSettingsCard => SelectedTask is not null;
 
     public bool ShowBooleanTaskSettings
@@ -799,11 +927,20 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public bool ShowMultiplicationTaskSettings => SelectedTask?.TaskId == "multiplication";
 
+    public bool ShowPpoOptimizerSettings => ShowTaskSettingsCard;
+
+    public bool ShowPpoOptimizerConfiguration => ShowPpoOptimizerSettings && PpoOptimizerEnabled;
+
     public bool ShowUnavailableTaskSettingsMessage
         => ShowTaskSettingsCard
            && !ShowBooleanTaskSettings
            && !ShowGtTaskSettings
            && !ShowMultiplicationTaskSettings;
+
+    public string PpoOptimizerDetail
+        => PpoOptimizerEnabled
+            ? $"PPO optional core service config is captured for {SelectedTask?.DisplayName ?? "the selected task"} using {PpoManagerActorName.Trim()} via {(string.IsNullOrWhiteSpace(PpoEndpointAddress) ? "service.endpoint.ppo_manager discovery" : PpoEndpointAddress.Trim())}. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}."
+            : "PPO optional core service config is disabled for this task; Basics will use the local reproduction/speciation generation loop.";
 
     public string TaskSettingsDetail
     {
@@ -1539,6 +1676,21 @@ public sealed class MainWindowViewModel : ViewModelBase
             MultiplicationBehaviorOccupancyEnabled = taskSettings.Multiplication.BehaviorOccupancyEnabled;
             MultiplicationBehaviorRampStartText = taskSettings.Multiplication.BehaviorStageGateStart.ToString("0.0##", CultureInfo.InvariantCulture);
             MultiplicationBehaviorRampFullText = taskSettings.Multiplication.BehaviorStageGateFull.ToString("0.0##", CultureInfo.InvariantCulture);
+            var ppo = profile.PpoOptimizer ?? new BasicsPpoOptimizerOptions();
+            PpoOptimizerEnabled = ppo.Enabled;
+            PpoEndpointAddress = ppo.EndpointAddress;
+            PpoManagerActorName = ppo.ManagerActorName;
+            PpoObjectiveName = ppo.ObjectiveName;
+            PpoRewardSignal = ppo.RewardSignal;
+            PpoRolloutTickCountText = ppo.RolloutTickCount.ToString(CultureInfo.InvariantCulture);
+            PpoRolloutBatchCountText = ppo.RolloutBatchCount.ToString(CultureInfo.InvariantCulture);
+            PpoClipEpsilonText = ppo.ClipEpsilon.ToString("0.0###", CultureInfo.InvariantCulture);
+            PpoDiscountGammaText = ppo.DiscountGamma.ToString("0.0###", CultureInfo.InvariantCulture);
+            PpoGaeLambdaText = ppo.GaeLambda.ToString("0.0###", CultureInfo.InvariantCulture);
+            PpoLearningRateText = ppo.LearningRate.ToString("0.0####", CultureInfo.InvariantCulture);
+            PpoOptimizationEpochCountText = ppo.OptimizationEpochCount.ToString(CultureInfo.InvariantCulture);
+            PpoMinibatchSizeText = ppo.MinibatchSize.ToString(CultureInfo.InvariantCulture);
+            PpoSeedText = ppo.Seed.ToString(CultureInfo.InvariantCulture);
             SelectedDiversityPreset = DiversityPresets.FirstOrDefault(option => option.Value == profile.DiversityPreset)
                 ?? SelectedDiversityPreset;
 
@@ -2223,6 +2375,25 @@ public sealed class MainWindowViewModel : ViewModelBase
                 BehaviorStageGateFull = ParseRequiredFloat(MultiplicationBehaviorRampFullText, "Multiplication behavior ramp full score", errors)
             }
         };
+        var ppoOptimizer = PpoOptimizerEnabled
+            ? new BasicsPpoOptimizerOptions
+            {
+                Enabled = true,
+                EndpointAddress = PpoEndpointAddress.Trim(),
+                ManagerActorName = PpoManagerActorName.Trim(),
+                ObjectiveName = PpoObjectiveName.Trim(),
+                RewardSignal = PpoRewardSignal.Trim(),
+                RolloutTickCount = ParseRequiredULong(PpoRolloutTickCountText, "PPO rollout tick count", errors),
+                RolloutBatchCount = ParseRequiredULong(PpoRolloutBatchCountText, "PPO rollout batch count", errors),
+                ClipEpsilon = ParseRequiredFloat(PpoClipEpsilonText, "PPO clip epsilon", errors),
+                DiscountGamma = ParseRequiredFloat(PpoDiscountGammaText, "PPO discount gamma", errors),
+                GaeLambda = ParseRequiredFloat(PpoGaeLambdaText, "PPO GAE lambda", errors),
+                LearningRate = ParseRequiredFloat(PpoLearningRateText, "PPO learning rate", errors),
+                OptimizationEpochCount = ParseRequiredUInt(PpoOptimizationEpochCountText, "PPO optimization epoch count", errors),
+                MinibatchSize = ParseRequiredUInt(PpoMinibatchSizeText, "PPO minibatch size", errors),
+                Seed = ParseRequiredULong(PpoSeedText, "PPO seed", errors)
+            }
+            : new BasicsPpoOptimizerOptions();
         var diversityPreset = SelectedDiversityPreset?.Value ?? BasicsDiversityPreset.Medium;
         var reproductionConfig = ReproductionSettings.CreateDefaultConfig();
         reproductionConfig.ProtectIoRegionNeuronCounts = true;
@@ -2252,6 +2423,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             Scheduling = scheduling,
             StopCriteria = stopCriteria,
             TaskSettings = taskSettings,
+            PpoOptimizer = ppoOptimizer,
             InitialBrainSeeds = InitialBrainSeeds.Select(seed => new BasicsInitialBrainSeed(
                 seed.DisplayName,
                 seed.DefinitionBytes.ToArray(),
@@ -3208,6 +3380,17 @@ public sealed class MainWindowViewModel : ViewModelBase
         return value;
     }
 
+    private static ulong ParseRequiredULong(string text, string fieldName, ICollection<string> errors)
+    {
+        if (!ulong.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            errors.Add($"{fieldName} must be a positive integer.");
+            return 0;
+        }
+
+        return value;
+    }
+
     private static double ParseRequiredDouble(string text, string fieldName, ICollection<string> errors)
     {
         if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
@@ -3338,10 +3521,21 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowBooleanTaskSettings));
         OnPropertyChanged(nameof(ShowGtTaskSettings));
         OnPropertyChanged(nameof(ShowMultiplicationTaskSettings));
+        OnPropertyChanged(nameof(ShowPpoOptimizerSettings));
+        OnPropertyChanged(nameof(ShowPpoOptimizerConfiguration));
         OnPropertyChanged(nameof(ShowUnavailableTaskSettingsMessage));
         OnPropertyChanged(nameof(ShowAccuracyMetricToggles));
         OnPropertyChanged(nameof(TaskSettingsDetail));
+        OnPropertyChanged(nameof(PpoOptimizerDetail));
         UpdateChartBindings();
+    }
+
+    private void SetPpoTextProperty(ref string storage, string value)
+    {
+        if (SetProperty(ref storage, value))
+        {
+            RaiseTaskSettingsBindings();
+        }
     }
 
     private void ResetCharts()

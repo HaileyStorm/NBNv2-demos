@@ -229,6 +229,44 @@ public sealed class BasicsContractTests
     }
 
     [Fact]
+    public void PpoOptimizerOptions_ValidateOnlyWhenEnabled()
+    {
+        var disabled = new BasicsPpoOptimizerOptions
+        {
+            RolloutTickCount = 0,
+            ClipEpsilon = 2f
+        };
+
+        var disabledValidation = disabled.Validate();
+        var enabledValidation = disabled with { Enabled = true };
+
+        Assert.True(disabledValidation.IsValid);
+        Assert.False(enabledValidation.Validate().IsValid);
+    }
+
+    [Fact]
+    public void EnvironmentOptions_ValidatePpoOptimizer_WhenEnabled()
+    {
+        var options = new BasicsEnvironmentOptions
+        {
+            PpoOptimizer = new BasicsPpoOptimizerOptions
+            {
+                Enabled = true,
+                EndpointAddress = "127.0.0.1",
+                RolloutTickCount = 0,
+                ClipEpsilon = 1.5f
+            }
+        };
+
+        var validation = options.Validate();
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, error => error.Contains("PPO endpoint address", StringComparison.Ordinal));
+        Assert.Contains(validation.Errors, error => error.Contains("rollout tick count", StringComparison.Ordinal));
+        Assert.Contains(validation.Errors, error => error.Contains("clip epsilon", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void OutputSamplingPolicy_RejectsReadyWindowsBelowOne()
     {
         var policy = new BasicsOutputSamplingPolicy
