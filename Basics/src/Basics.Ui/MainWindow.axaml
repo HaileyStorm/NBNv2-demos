@@ -416,15 +416,19 @@
                               RowDefinitions="Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
-                            <CheckBox Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
-                                      Content="PPO optional core service"
+                            <TextBlock Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                                       Text="{Binding OptimizationModeTitle}"
+                                       FontWeight="SemiBold"
+                                       Foreground="#182436" />
+                            <CheckBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                      Content="Use PPO core service as generation controller"
                                       IsChecked="{Binding PpoOptimizerEnabled}"
-                                      ToolTip.Tip="Run PPO through IO Gateway. IO discovers service.endpoint.ppo_manager internally." />
-                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                      ToolTip.Tip="When enabled, PPO controls the generation loop through IO Gateway. IO discovers service.endpoint.ppo_manager internally." />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
                                        Text="{Binding PpoOptimizerDetail}"
                                        Foreground="#6C7A89"
                                        TextWrapping="Wrap" />
-                            <Grid Grid.Row="2"
+                            <Grid Grid.Row="3"
                                   Grid.ColumnSpan="2"
                                   IsVisible="{Binding ShowPpoOptimizerConfiguration}"
                                   ColumnDefinitions="Auto,140,Auto,140,Auto,140"
@@ -630,12 +634,15 @@
                         CornerRadius="16"
                         Padding="18">
                     <StackPanel Spacing="14">
-                        <TextBlock Text="Reproduction + Speciation Scheduling"
+                        <TextBlock Text="{Binding SchedulingSectionTitle}"
                                    FontSize="18"
                                    FontWeight="SemiBold"
                                    Foreground="#182436" />
+                        <TextBlock Text="{Binding SchedulingSectionDetail}"
+                                   TextWrapping="Wrap"
+                                   Foreground="#6C7A89" />
                         <Grid ColumnDefinitions="Auto,140,Auto,140,Auto,140"
-                              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Strength source" VerticalAlignment="Center" />
@@ -662,42 +669,56 @@
                                 </ComboBox.ItemTemplate>
                             </ComboBox>
 
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Fitness weight" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FitnessWeightText}" />
-                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Diversity weight" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding DiversityWeightText}" />
-                            <TextBlock Grid.Row="1" Grid.Column="4" Text="Species-balance" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding SpeciesBalanceWeightText}" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="6"
+                                       IsVisible="{Binding ShowPpoSchedulingNotice}"
+                                       Text="Detailed local parent weighting, run allocation, and adaptive stall controls are paused while PPO owns generation control."
+                                       Foreground="#6C7A89"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap" />
+                        </Grid>
 
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Elite fraction" VerticalAlignment="Center"
+                        <Grid IsVisible="{Binding ShowLocalReproductionSchedulingControls}"
+                              ColumnDefinitions="Auto,140,Auto,140,Auto,140"
+                              RowDefinitions="Auto,Auto,Auto,Auto"
+                              ColumnSpacing="12"
+                              RowSpacing="10">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Fitness weight" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding FitnessWeightText}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Diversity weight" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding DiversityWeightText}" />
+                            <TextBlock Grid.Row="0" Grid.Column="4" Text="Species-balance" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="5" Text="{Binding SpeciesBalanceWeightText}" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Elite fraction" VerticalAlignment="Center"
                                        ToolTip.Tip="Fraction of the ranked population that is automatically carried into the next generation before breeding fills the rest." />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding EliteFractionText}" />
-                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Exploration" VerticalAlignment="Center"
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding EliteFractionText}" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Exploration" VerticalAlignment="Center"
                                        ToolTip.Tip="Fraction of parent slots reserved for lower-ranked exploratory picks instead of purely score-ranked picks." />
-                            <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding ExplorationFractionText}" />
-                            <TextBlock Grid.Row="2" Grid.Column="4" Text="Fitness exponent" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="2" Grid.Column="5" Text="{Binding FitnessExponentText}" />
+                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding ExplorationFractionText}" />
+                            <TextBlock Grid.Row="1" Grid.Column="4" Text="Fitness exponent" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding FitnessExponentText}" />
 
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Max parents/species" VerticalAlignment="Center"
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Max parents/species" VerticalAlignment="Center"
                                        ToolTip.Tip="Caps how many parent candidates any one species can contribute before exploration picks from the remainder." />
-                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MaxParentsPerSpeciesText}" />
-                            <CheckBox Grid.Row="3" Grid.Column="2"
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxParentsPerSpeciesText}" />
+                            <CheckBox Grid.Row="2" Grid.Column="2"
                                       Content="Adaptive stall boost"
                                       IsChecked="{Binding AdaptiveDiversityEnabled}"
                                       VerticalAlignment="Center"
                                       ToolTip.Tip="When enabled, Basics increases diversity pressure after a task-specific number of stagnant generations." />
-                            <TextBlock Grid.Row="3" Grid.Column="4" Text="Stall window" VerticalAlignment="Center"
+                            <TextBlock Grid.Row="2" Grid.Column="4" Text="Stall window" VerticalAlignment="Center"
                                        ToolTip.Tip="Number of consecutive non-improving generations before the adaptive diversity bump begins." />
-                            <TextBox Grid.Row="3" Grid.Column="5" Text="{Binding AdaptiveDiversityStallGenerationWindowText}" />
+                            <TextBox Grid.Row="2" Grid.Column="5" Text="{Binding AdaptiveDiversityStallGenerationWindowText}" />
 
-                            <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="6"
+                            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="6"
                                        Text="Adaptive stall boost is on by default for every task. Task defaults currently use shorter windows for easier tasks and a longer window for multiplication."
                                        Foreground="#6C7A89"
                                        VerticalAlignment="Center"
                                        TextWrapping="Wrap" />
                         </Grid>
 
-                        <Grid ColumnDefinitions="Auto,120,Auto,120,Auto,120"
+                        <Grid IsVisible="{Binding ShowLocalReproductionSchedulingControls}"
+                              ColumnDefinitions="Auto,120,Auto,120,Auto,120"
                               ColumnSpacing="12">
                             <TextBlock Grid.Column="0" Text="Min runs/pair" VerticalAlignment="Center"
                                        ToolTip.Tip="Lower bound for how many reproduction attempts a selected parent pair receives after scheduler weighting." />

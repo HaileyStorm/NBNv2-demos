@@ -905,16 +905,35 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public bool ShowPpoOptimizerConfiguration => ShowPpoOptimizerSettings && PpoOptimizerEnabled;
 
+    public bool ShowLocalReproductionSchedulingControls => !PpoOptimizerEnabled;
+
+    public bool ShowPpoSchedulingNotice => PpoOptimizerEnabled;
+
     public bool ShowUnavailableTaskSettingsMessage
         => ShowTaskSettingsCard
            && !ShowBooleanTaskSettings
            && !ShowGtTaskSettings
            && !ShowMultiplicationTaskSettings;
 
+    public string OptimizationModeTitle
+        => PpoOptimizerEnabled
+            ? "Optimization Mode: PPO Core Service"
+            : "Optimization Mode: Local Reproduction";
+
     public string PpoOptimizerDetail
         => PpoOptimizerEnabled
-            ? $"PPO optional core service will be requested through IO Gateway for {SelectedTask?.DisplayName ?? "the selected task"}. IO discovers service.endpoint.ppo_manager internally. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}."
-            : "PPO optional core service config is disabled for this task; Basics will use the local reproduction/speciation generation loop.";
+            ? $"PPO owns generation control for {SelectedTask?.DisplayName ?? "the selected task"} through IO Gateway. IO discovers service.endpoint.ppo_manager internally; local reproduction/speciation settings stay available only as parent context and fallback. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}."
+            : "Local reproduction/speciation owns generation control. PPO remains off and no PPO endpoint is configured by Basics.";
+
+    public string SchedulingSectionTitle
+        => PpoOptimizerEnabled
+            ? "PPO Parent Context + Fallback"
+            : "Local Reproduction + Speciation Scheduling";
+
+    public string SchedulingSectionDetail
+        => PpoOptimizerEnabled
+            ? "PPO selects and optimizes generation candidates through IO Gateway. Basics still applies the diversity preset, strength source, and IO-neuron protection when it supplies parent context or falls back after recoverable PPO gating."
+            : "Local reproduction/speciation selects parent pairs, allocates reproduction runs, and applies adaptive diversity pressure directly.";
 
     public string TaskSettingsDetail
     {
@@ -2231,11 +2250,6 @@ public sealed class MainWindowViewModel : ViewModelBase
             return true;
         }
 
-        if (TryParseHostPort(IoAddress, out var ioHost, out _))
-        {
-            settingsHost = ioHost;
-        }
-
         return true;
     }
 
@@ -2279,25 +2293,27 @@ public sealed class MainWindowViewModel : ViewModelBase
             MaxConcurrentBrains = ParseOptionalInt(MaxConcurrentBrainsOverrideText, "Max-concurrent override", errors)
         };
 
-        var scheduling = new BasicsReproductionSchedulingPolicy
-        {
-            ParentSelection = new BasicsParentSelectionPolicy
+        var scheduling = PpoOptimizerEnabled
+            ? new BasicsReproductionSchedulingPolicy()
+            : new BasicsReproductionSchedulingPolicy
             {
-                FitnessWeight = ParseRequiredDouble(FitnessWeightText, "Fitness weight", errors),
-                DiversityWeight = ParseRequiredDouble(DiversityWeightText, "Diversity weight", errors),
-                SpeciesBalanceWeight = ParseRequiredDouble(SpeciesBalanceWeightText, "Species-balance weight", errors),
-                EliteFraction = ParseRequiredDouble(EliteFractionText, "Elite fraction", errors),
-                ExplorationFraction = ParseRequiredDouble(ExplorationFractionText, "Exploration fraction", errors),
-                MaxParentsPerSpecies = ParseRequiredInt(MaxParentsPerSpeciesText, "Max parents per species", errors)
-            },
-            RunAllocation = new BasicsRunAllocationPolicy
-            {
-                MinRunsPerPair = ParseRequiredUInt(MinRunsPerPairText, "Min runs per pair", errors),
-                MaxRunsPerPair = ParseRequiredUInt(MaxRunsPerPairText, "Max runs per pair", errors),
-                FitnessExponent = ParseRequiredDouble(FitnessExponentText, "Fitness exponent", errors),
-                DiversityBoost = ParseRequiredDouble(DiversityBoostText, "Diversity boost", errors)
-            }
-        };
+                ParentSelection = new BasicsParentSelectionPolicy
+                {
+                    FitnessWeight = ParseRequiredDouble(FitnessWeightText, "Fitness weight", errors),
+                    DiversityWeight = ParseRequiredDouble(DiversityWeightText, "Diversity weight", errors),
+                    SpeciesBalanceWeight = ParseRequiredDouble(SpeciesBalanceWeightText, "Species-balance weight", errors),
+                    EliteFraction = ParseRequiredDouble(EliteFractionText, "Elite fraction", errors),
+                    ExplorationFraction = ParseRequiredDouble(ExplorationFractionText, "Exploration fraction", errors),
+                    MaxParentsPerSpecies = ParseRequiredInt(MaxParentsPerSpeciesText, "Max parents per species", errors)
+                },
+                RunAllocation = new BasicsRunAllocationPolicy
+                {
+                    MinRunsPerPair = ParseRequiredUInt(MinRunsPerPairText, "Min runs per pair", errors),
+                    MaxRunsPerPair = ParseRequiredUInt(MaxRunsPerPairText, "Max runs per pair", errors),
+                    FitnessExponent = ParseRequiredDouble(FitnessExponentText, "Fitness exponent", errors),
+                    DiversityBoost = ParseRequiredDouble(DiversityBoostText, "Diversity boost", errors)
+                }
+            };
 
         var seedTemplate = new BasicsSeedTemplateContract
         {
@@ -2314,14 +2330,16 @@ public sealed class MainWindowViewModel : ViewModelBase
             RequireBothTargets = RequireBothStopTargets,
             MaximumGenerations = ParseOptionalInt(MaximumGenerationsText, "Maximum generations", errors)
         };
-        var adaptiveDiversity = new BasicsAdaptiveDiversityOptions
-        {
-            Enabled = AdaptiveDiversityEnabled,
-            StallGenerationWindow = ParseRequiredInt(
-                AdaptiveDiversityStallGenerationWindowText,
-                "Adaptive stall window",
-                errors)
-        };
+        var adaptiveDiversity = PpoOptimizerEnabled
+            ? new BasicsAdaptiveDiversityOptions()
+            : new BasicsAdaptiveDiversityOptions
+            {
+                Enabled = AdaptiveDiversityEnabled,
+                StallGenerationWindow = ParseRequiredInt(
+                    AdaptiveDiversityStallGenerationWindowText,
+                    "Adaptive stall window",
+                    errors)
+            };
         var outputSamplingPolicy = new BasicsOutputSamplingPolicy
         {
             MaxReadyWindowTicks = ParseRequiredInt(MaxReadyWindowTicksText, "Ready window ticks", errors),
@@ -3493,10 +3511,15 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowMultiplicationTaskSettings));
         OnPropertyChanged(nameof(ShowPpoOptimizerSettings));
         OnPropertyChanged(nameof(ShowPpoOptimizerConfiguration));
+        OnPropertyChanged(nameof(ShowLocalReproductionSchedulingControls));
+        OnPropertyChanged(nameof(ShowPpoSchedulingNotice));
         OnPropertyChanged(nameof(ShowUnavailableTaskSettingsMessage));
         OnPropertyChanged(nameof(ShowAccuracyMetricToggles));
         OnPropertyChanged(nameof(TaskSettingsDetail));
+        OnPropertyChanged(nameof(OptimizationModeTitle));
         OnPropertyChanged(nameof(PpoOptimizerDetail));
+        OnPropertyChanged(nameof(SchedulingSectionTitle));
+        OnPropertyChanged(nameof(SchedulingSectionDetail));
         UpdateChartBindings();
     }
 

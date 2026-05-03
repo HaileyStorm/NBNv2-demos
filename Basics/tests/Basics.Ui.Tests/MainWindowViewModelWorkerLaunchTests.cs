@@ -49,7 +49,7 @@ public sealed class MainWindowViewModelWorkerLaunchTests
     }
 
     [Fact]
-    public async Task StartWorkersCommand_WhenSettingsAddressBlank_UsesIoHostForSettings()
+    public async Task StartWorkersCommand_WhenSettingsAddressBlank_UsesLocalSettingsMonitor()
     {
         var workerService = new RecordingWorkerProcessService();
         var viewModel = CreateViewModel(workerService);
@@ -66,7 +66,7 @@ public sealed class MainWindowViewModelWorkerLaunchTests
         await WaitForAsync(() => workerService.StartCallCount == 1);
         Assert.NotNull(workerService.LastStartRequest);
         var request = workerService.LastStartRequest!;
-        Assert.Equal("192.168.0.14", request.SettingsHost);
+        Assert.Equal("127.0.0.1", request.SettingsHost);
         Assert.Equal(12010, request.SettingsPort);
         Assert.Equal("127.0.0.1", request.AdvertiseHost);
     }

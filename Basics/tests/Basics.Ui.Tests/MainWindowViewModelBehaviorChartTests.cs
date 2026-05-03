@@ -177,16 +177,41 @@ public sealed class MainWindowViewModelBehaviorChartTests
         Assert.True(viewModel.ShowPpoOptimizerSettings);
         Assert.False(viewModel.PpoOptimizerEnabled);
         Assert.False(viewModel.ShowPpoOptimizerConfiguration);
+        Assert.True(viewModel.ShowLocalReproductionSchedulingControls);
+        Assert.False(viewModel.ShowPpoSchedulingNotice);
+        Assert.Equal("Optimization Mode: Local Reproduction", viewModel.OptimizationModeTitle);
 
         viewModel.PpoOptimizerEnabled = true;
 
         Assert.True(viewModel.ShowPpoOptimizerConfiguration);
+        Assert.False(viewModel.ShowLocalReproductionSchedulingControls);
+        Assert.True(viewModel.ShowPpoSchedulingNotice);
+        Assert.Equal("Optimization Mode: PPO Core Service", viewModel.OptimizationModeTitle);
+        Assert.Equal("PPO Parent Context + Fallback", viewModel.SchedulingSectionTitle);
+        Assert.Contains("generation control", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("multiplication", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
 
         viewModel.SelectedTask = viewModel.Tasks.First(task => task.TaskId == "and");
 
         Assert.False(viewModel.PpoOptimizerEnabled);
         Assert.False(viewModel.ShowPpoOptimizerConfiguration);
+        Assert.True(viewModel.ShowLocalReproductionSchedulingControls);
+    }
+
+    [Fact]
+    public void PpoControllingMode_IgnoresHiddenLocalSchedulingText()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.PpoOptimizerEnabled = true;
+        viewModel.FitnessWeightText = "not-a-number";
+        viewModel.MinRunsPerPairText = "not-a-number";
+        viewModel.AdaptiveDiversityStallGenerationWindowText = "not-a-number";
+
+        var options = BuildEnvironmentOptions(viewModel);
+
+        Assert.True(options.PpoOptimizer.Enabled);
+        Assert.Equal(new BasicsReproductionSchedulingPolicy(), options.Scheduling);
+        Assert.Equal(new BasicsAdaptiveDiversityOptions(), options.AdaptiveDiversity);
     }
 
     [Fact]
@@ -213,7 +238,12 @@ public sealed class MainWindowViewModelBehaviorChartTests
 
         Assert.Contains(nameof(MainWindowViewModel.ShowPpoOptimizerSettings), changed);
         Assert.Contains(nameof(MainWindowViewModel.ShowPpoOptimizerConfiguration), changed);
+        Assert.Contains(nameof(MainWindowViewModel.ShowLocalReproductionSchedulingControls), changed);
+        Assert.Contains(nameof(MainWindowViewModel.ShowPpoSchedulingNotice), changed);
+        Assert.Contains(nameof(MainWindowViewModel.OptimizationModeTitle), changed);
         Assert.Contains(nameof(MainWindowViewModel.PpoOptimizerDetail), changed);
+        Assert.Contains(nameof(MainWindowViewModel.SchedulingSectionTitle), changed);
+        Assert.Contains(nameof(MainWindowViewModel.SchedulingSectionDetail), changed);
     }
 
     private static MainWindowViewModel CreateViewModel()
