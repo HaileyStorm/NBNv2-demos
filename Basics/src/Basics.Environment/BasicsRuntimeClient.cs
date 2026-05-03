@@ -3,6 +3,7 @@ using System.Threading.Channels;
 using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
+using Nbn.Proto.Ppo;
 using Nbn.Proto.Repro;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Speciation;
@@ -124,6 +125,16 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
 
     Task<Nbn.Proto.Repro.ReproduceResult?> AssessCompatibilityByArtifactsAsync(
         AssessCompatibilityByArtifactsRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<PpoStatusResponse?> GetPpoStatusAsync(CancellationToken cancellationToken = default);
+
+    Task<PpoStartRunResponse?> StartPpoRunAsync(
+        PpoStartRunRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<PpoStopRunResponse?> StopPpoRunAsync(
+        PpoStopRunRequest request,
         CancellationToken cancellationToken = default);
 
     Task<SpeciationAssignResponse?> AssignSpeciationAsync(
@@ -1076,6 +1087,84 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         }
     }
 
+    public async Task<PpoStatusResponse?> GetPpoStatusAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+
+        try
+        {
+            var response = await _system.Root.RequestAsync<PpoStatusResult>(
+                    _ioPid,
+                    new PpoStatus { Request = new PpoStatusRequest() },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return response?.Response;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<PpoStartRunResponse?> StartPpoRunAsync(
+        PpoStartRunRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(request);
+
+        try
+        {
+            var response = await _system.Root.RequestAsync<PpoStartRunResult>(
+                    _ioPid,
+                    new PpoStartRun { Request = request },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return response?.Response;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<PpoStopRunResponse?> StopPpoRunAsync(
+        PpoStopRunRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(request);
+
+        try
+        {
+            var response = await _system.Root.RequestAsync<PpoStopRunResult>(
+                    _ioPid,
+                    new PpoStopRun { Request = request },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return response?.Response;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public async Task<SpeciationAssignResponse?> AssignSpeciationAsync(
         SpeciationAssignRequest request,
         CancellationToken cancellationToken = default)
@@ -1659,6 +1748,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             NbnCommonReflection.Descriptor,
             NbnControlReflection.Descriptor,
             NbnIoReflection.Descriptor,
+            NbnPpoReflection.Descriptor,
             NbnSettingsReflection.Descriptor,
             NbnReproReflection.Descriptor,
             NbnSpeciationReflection.Descriptor);

@@ -124,8 +124,6 @@ public sealed class MainWindowViewModelBehaviorChartTests
     {
         var viewModel = CreateViewModel();
         viewModel.PpoOptimizerEnabled = true;
-        viewModel.PpoEndpointAddress = "127.0.0.1:12090";
-        viewModel.PpoManagerActorName = "PpoManager";
         viewModel.PpoObjectiveName = "multiplication";
         viewModel.PpoRewardSignal = "basics.fitness";
         viewModel.PpoRolloutTickCountText = "256";
@@ -141,8 +139,6 @@ public sealed class MainWindowViewModelBehaviorChartTests
         var options = BuildEnvironmentOptions(viewModel);
 
         Assert.True(options.PpoOptimizer.Enabled);
-        Assert.Equal("127.0.0.1:12090", options.PpoOptimizer.EndpointAddress);
-        Assert.Equal("PpoManager", options.PpoOptimizer.ManagerActorName);
         Assert.Equal("multiplication", options.PpoOptimizer.ObjectiveName);
         Assert.Equal("basics.fitness", options.PpoOptimizer.RewardSignal);
         Assert.Equal((ulong)256, options.PpoOptimizer.RolloutTickCount);
@@ -167,7 +163,7 @@ public sealed class MainWindowViewModelBehaviorChartTests
         var options = BuildEnvironmentOptions(viewModel);
 
         Assert.False(options.PpoOptimizer.Enabled);
-        Assert.Equal((ulong)128, options.PpoOptimizer.RolloutTickCount);
+        Assert.Equal((ulong)16, options.PpoOptimizer.RolloutTickCount);
         Assert.Equal(0.2f, options.PpoOptimizer.ClipEpsilon);
     }
 

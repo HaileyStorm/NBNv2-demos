@@ -252,7 +252,6 @@ public sealed class BasicsContractTests
             PpoOptimizer = new BasicsPpoOptimizerOptions
             {
                 Enabled = true,
-                EndpointAddress = "127.0.0.1",
                 RolloutTickCount = 0,
                 ClipEpsilon = 1.5f
             }
@@ -261,7 +260,6 @@ public sealed class BasicsContractTests
         var validation = options.Validate();
 
         Assert.False(validation.IsValid);
-        Assert.Contains(validation.Errors, error => error.Contains("PPO endpoint address", StringComparison.Ordinal));
         Assert.Contains(validation.Errors, error => error.Contains("rollout tick count", StringComparison.Ordinal));
         Assert.Contains(validation.Errors, error => error.Contains("clip epsilon", StringComparison.Ordinal));
     }

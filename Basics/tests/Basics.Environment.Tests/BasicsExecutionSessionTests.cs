@@ -10,6 +10,7 @@ using Nbn.Shared.Format;
 using Nbn.Shared.Validation;
 using System.Security.Cryptography;
 using System.Text.Json;
+using ProtoPpo = Nbn.Proto.Ppo;
 using Repro = Nbn.Proto.Repro;
 using System.Reflection;
 using System.Collections.Concurrent;
@@ -3021,7 +3022,8 @@ public sealed class BasicsExecutionSessionTests
                     {
                         InitialPopulationCount = 2,
                         MinimumPopulationCount = 2,
-                        MaximumPopulationCount = 3
+                        MaximumPopulationCount = 3,
+                        MaxConcurrentBrains = 2
                     }
                 },
                 new AndTaskPlugin(),
@@ -3048,6 +3050,21 @@ public sealed class BasicsExecutionSessionTests
         {
             await session.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public void ExecutionSession_PpoReproductionGateMiss_IsTreatedAsRecoverable()
+    {
+        var helper = typeof(BasicsExecutionSession).GetMethod(
+            "IsPpoReproductionGateMiss",
+            BindingFlags.NonPublic | BindingFlags.Static,
+            binder: null,
+            types: new[] { typeof(string) },
+            modifiers: null);
+        Assert.NotNull(helper);
+
+        Assert.True((bool)helper!.Invoke(null, new object[] { "repro_spot_check_overlap_mismatch" })!);
+        Assert.False((bool)helper.Invoke(null, new object[] { "ppo_speciation_commit_failed" })!);
     }
 
     [Fact]
@@ -3335,6 +3352,7 @@ public sealed class BasicsExecutionSessionTests
         public int? OutputVectorWidthOverride { get; init; }
         public bool ReuseSingleChildArtifactOnReproduce { get; init; }
         public bool ForceIncompatibleDistinctParents { get; init; }
+        public bool PpoAvailable { get; init; }
         public OutputVectorSource InitialOutputVectorSource { get; init; } = OutputVectorSource.Potential;
         public int TransientResetTickPhaseInProgressCount { get; set; }
         public int MaxObservedConcurrentSpawnRequests => _maxObservedConcurrentSpawnRequests;
@@ -3351,6 +3369,9 @@ public sealed class BasicsExecutionSessionTests
         public List<(Guid BrainId, bool ResetBuffer, bool ResetAccumulator)> ResetBrainRuntimeStateRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
         public List<Repro.ReproduceResult> ReproduceResults { get; } = new();
+        public List<ProtoPpo.PpoStartRunRequest> PpoStartRequests { get; } = new();
+        public List<ProtoPpo.PpoStopRunRequest> PpoStopRequests { get; } = new();
+        public Queue<ProtoPpo.PpoRunDescriptor> PpoStatusRuns { get; } = new();
         public List<TimeSpan> AwaitPlacementTimeouts { get; } = new();
         public List<TimeSpan> VectorWaitTimeouts { get; } = new();
         public List<TimeSpan> EventWaitTimeouts { get; } = new();
@@ -3995,6 +4016,98 @@ public sealed class BasicsExecutionSessionTests
                     AbortReason = compatible ? string.Empty : "test_incompatible_distinct_parents"
                 },
                 RequestedRunCount = 1
+            });
+        }
+
+        public Task<ProtoPpo.PpoStatusResponse?> GetPpoStatusAsync(CancellationToken cancellationToken = default)
+        {
+            if (!PpoAvailable)
+            {
+                return Task.FromResult<ProtoPpo.PpoStatusResponse?>(new ProtoPpo.PpoStatusResponse
+                {
+                    FailureReason = ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                    FailureDetail = "test PPO manager unavailable"
+                });
+            }
+
+            var response = new ProtoPpo.PpoStatusResponse
+            {
+                FailureReason = ProtoPpo.PpoFailureReason.PpoFailureNone
+            };
+            if (PpoStatusRuns.TryDequeue(out var run))
+            {
+                var terminal = run.Clone();
+                if (string.IsNullOrWhiteSpace(terminal.RunId) && PpoStartRequests.Count > 0)
+                {
+                    terminal.RunId = PpoStartRequests[^1].RunId;
+                }
+
+                response.LastRun = terminal;
+            }
+            else if (PpoStartRequests.Count > 0)
+            {
+                response.ActiveRun = new ProtoPpo.PpoRunDescriptor
+                {
+                    RunId = PpoStartRequests[^1].RunId,
+                    State = ProtoPpo.PpoRunState.Running,
+                    StatusDetail = "running"
+                };
+            }
+
+            return Task.FromResult<ProtoPpo.PpoStatusResponse?>(response);
+        }
+
+        public Task<ProtoPpo.PpoStartRunResponse?> StartPpoRunAsync(
+            ProtoPpo.PpoStartRunRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            PpoStartRequests.Add(request.Clone());
+            if (!PpoAvailable)
+            {
+                return Task.FromResult<ProtoPpo.PpoStartRunResponse?>(new ProtoPpo.PpoStartRunResponse
+                {
+                    FailureReason = ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                    FailureDetail = "test PPO manager unavailable"
+                });
+            }
+
+            return Task.FromResult<ProtoPpo.PpoStartRunResponse?>(new ProtoPpo.PpoStartRunResponse
+            {
+                FailureReason = ProtoPpo.PpoFailureReason.PpoFailureNone,
+                Accepted = true,
+                Run = new ProtoPpo.PpoRunDescriptor
+                {
+                    RunId = request.RunId,
+                    State = ProtoPpo.PpoRunState.Running,
+                    StatusDetail = "running"
+                }
+            });
+        }
+
+        public Task<ProtoPpo.PpoStopRunResponse?> StopPpoRunAsync(
+            ProtoPpo.PpoStopRunRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            PpoStopRequests.Add(request.Clone());
+            if (!PpoAvailable)
+            {
+                return Task.FromResult<ProtoPpo.PpoStopRunResponse?>(new ProtoPpo.PpoStopRunResponse
+                {
+                    FailureReason = ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                    FailureDetail = "test PPO manager unavailable"
+                });
+            }
+
+            return Task.FromResult<ProtoPpo.PpoStopRunResponse?>(new ProtoPpo.PpoStopRunResponse
+            {
+                FailureReason = ProtoPpo.PpoFailureReason.PpoFailureNone,
+                Stopped = true,
+                Run = new ProtoPpo.PpoRunDescriptor
+                {
+                    RunId = request.RunId,
+                    State = ProtoPpo.PpoRunState.Cancelled,
+                    StatusDetail = request.Reason
+                }
             });
         }
 

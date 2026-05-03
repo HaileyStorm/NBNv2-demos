@@ -186,18 +186,16 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _multiplicationBehaviorRampStartText = "0.35";
     private string _multiplicationBehaviorRampFullText = "0.50";
     private bool _ppoOptimizerEnabled;
-    private string _ppoEndpointAddress = string.Empty;
-    private string _ppoManagerActorName = "PpoManager";
-    private string _ppoObjectiveName = "reward";
-    private string _ppoRewardSignal = "output.reward";
-    private string _ppoRolloutTickCountText = "128";
-    private string _ppoRolloutBatchCountText = "4";
+    private string _ppoObjectiveName = "multiplication";
+    private string _ppoRewardSignal = "basics.fitness";
+    private string _ppoRolloutTickCountText = "16";
+    private string _ppoRolloutBatchCountText = "1";
     private string _ppoClipEpsilonText = "0.2";
     private string _ppoDiscountGammaText = "0.99";
     private string _ppoGaeLambdaText = "0.95";
     private string _ppoLearningRateText = "0.0003";
-    private string _ppoOptimizationEpochCountText = "4";
-    private string _ppoMinibatchSizeText = "32";
+    private string _ppoOptimizationEpochCountText = "2";
+    private string _ppoMinibatchSizeText = "1";
     private string _ppoSeedText = "42";
     private string _fitnessWeightText = "0.55";
     private string _diversityWeightText = "0.35";
@@ -816,30 +814,6 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
-    public string PpoEndpointAddress
-    {
-        get => _ppoEndpointAddress;
-        set
-        {
-            if (SetProperty(ref _ppoEndpointAddress, value))
-            {
-                RaiseTaskSettingsBindings();
-            }
-        }
-    }
-
-    public string PpoManagerActorName
-    {
-        get => _ppoManagerActorName;
-        set
-        {
-            if (SetProperty(ref _ppoManagerActorName, value))
-            {
-                RaiseTaskSettingsBindings();
-            }
-        }
-    }
-
     public string PpoObjectiveName
     {
         get => _ppoObjectiveName;
@@ -939,7 +913,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string PpoOptimizerDetail
         => PpoOptimizerEnabled
-            ? $"PPO optional core service config is captured for {SelectedTask?.DisplayName ?? "the selected task"} using {PpoManagerActorName.Trim()} via {(string.IsNullOrWhiteSpace(PpoEndpointAddress) ? "service.endpoint.ppo_manager discovery" : PpoEndpointAddress.Trim())}. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}."
+            ? $"PPO optional core service will be requested through IO Gateway for {SelectedTask?.DisplayName ?? "the selected task"}. IO discovers service.endpoint.ppo_manager internally. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}."
             : "PPO optional core service config is disabled for this task; Basics will use the local reproduction/speciation generation loop.";
 
     public string TaskSettingsDetail
@@ -1678,8 +1652,6 @@ public sealed class MainWindowViewModel : ViewModelBase
             MultiplicationBehaviorRampFullText = taskSettings.Multiplication.BehaviorStageGateFull.ToString("0.0##", CultureInfo.InvariantCulture);
             var ppo = profile.PpoOptimizer ?? new BasicsPpoOptimizerOptions();
             PpoOptimizerEnabled = ppo.Enabled;
-            PpoEndpointAddress = ppo.EndpointAddress;
-            PpoManagerActorName = ppo.ManagerActorName;
             PpoObjectiveName = ppo.ObjectiveName;
             PpoRewardSignal = ppo.RewardSignal;
             PpoRolloutTickCountText = ppo.RolloutTickCount.ToString(CultureInfo.InvariantCulture);
@@ -2379,8 +2351,6 @@ public sealed class MainWindowViewModel : ViewModelBase
             ? new BasicsPpoOptimizerOptions
             {
                 Enabled = true,
-                EndpointAddress = PpoEndpointAddress.Trim(),
-                ManagerActorName = PpoManagerActorName.Trim(),
                 ObjectiveName = PpoObjectiveName.Trim(),
                 RewardSignal = PpoRewardSignal.Trim(),
                 RolloutTickCount = ParseRequiredULong(PpoRolloutTickCountText, "PPO rollout tick count", errors),

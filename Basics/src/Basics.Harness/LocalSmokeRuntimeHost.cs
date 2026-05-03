@@ -10,6 +10,7 @@ using Nbn.Proto.Signal;
 using Nbn.Proto.Viz;
 using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.IO;
+using Nbn.Runtime.Ppo;
 using Nbn.Runtime.Reproduction;
 using Nbn.Runtime.Speciation;
 using Nbn.Runtime.WorkerNode;
@@ -18,6 +19,7 @@ using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
 using ProtoSettings = Nbn.Proto.Settings;
+using ProtoPpo = Nbn.Proto.Ppo;
 using ProtoSpec = Nbn.Proto.Speciation;
 
 namespace Nbn.Demos.Basics.Harness;
@@ -43,6 +45,7 @@ internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
         PID hiveMindPid,
         PID ioGatewayPid,
         PID reproductionManagerPid,
+        PID ppoManagerPid,
         PID speciationManagerPid,
         PID workerPid,
         Guid workerId)
@@ -54,6 +57,7 @@ internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
         HiveMindPid = hiveMindPid;
         IoGatewayPid = ioGatewayPid;
         ReproductionManagerPid = reproductionManagerPid;
+        PpoManagerPid = ppoManagerPid;
         SpeciationManagerPid = speciationManagerPid;
         WorkerPid = workerPid;
         WorkerId = workerId;
@@ -72,6 +76,8 @@ internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
     public PID IoGatewayPid { get; }
 
     public PID ReproductionManagerPid { get; }
+
+    public PID PpoManagerPid { get; }
 
     public PID SpeciationManagerPid { get; }
 
@@ -97,6 +103,7 @@ internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
                 NbnCommonReflection.Descriptor,
                 NbnControlReflection.Descriptor,
                     NbnIoReflection.Descriptor,
+                    ProtoPpo.NbnPpoReflection.Descriptor,
                     NbnReproReflection.Descriptor,
                     NbnSignalsReflection.Descriptor,
                     NbnSettingsReflection.Descriptor,
@@ -108,6 +115,7 @@ internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
         var root = system.Root;
         var localIoPid = new PID(string.Empty, IoNames.Gateway);
         var localReproPid = new PID(string.Empty, ReproductionNames.Manager);
+        var localPpoPid = new PID(string.Empty, PpoNames.Manager);
         var localSpeciationPid = new PID(string.Empty, SpeciationNames.Manager);
 
         var availability = new WorkerResourceAvailability(
@@ -137,13 +145,24 @@ internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
                 ioGatewayPid: localIoPid)),
             SpeciationNames.Manager);
 
+        var ppoManagerPid = root.SpawnNamed(
+            Props.FromProducer(() => new PpoManagerActor(localIoPid, localReproPid, localSpeciationPid)),
+            PpoNames.Manager);
+
         var ioGatewayPid = root.SpawnNamed(
             Props.FromProducer(() => new IoGatewayActor(
                 CreateIoOptions(options.IoPort),
                 hiveMindPid: hiveMindPid,
                 reproPid: reproductionManagerPid,
-                speciationPid: speciationManagerPid)),
+                speciationPid: speciationManagerPid,
+                ppoPid: ppoManagerPid)),
             IoNames.Gateway);
+        root.Send(
+            ppoManagerPid,
+            new PpoManagerActor.DependencyPidsConfigured(
+                ioGatewayPid,
+                reproductionManagerPid,
+                speciationManagerPid));
 
         var workerId = Guid.NewGuid();
         var workerPid = root.SpawnNamed(
@@ -167,6 +186,7 @@ internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
             hiveMindPid,
             ioGatewayPid,
             reproductionManagerPid,
+            ppoManagerPid,
             speciationManagerPid,
             workerPid,
             workerId);

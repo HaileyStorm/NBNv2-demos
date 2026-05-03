@@ -3,6 +3,7 @@ using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Speciation;
 using Nbn.Shared;
+using ProtoPpo = Nbn.Proto.Ppo;
 using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Demos.Basics.Environment.Tests;
@@ -262,6 +263,31 @@ public sealed class BasicsEnvironmentPlannerTests
             Repro.ReproduceByArtifactsRequest request,
             CancellationToken cancellationToken = default)
             => Task.FromResult<Repro.ReproduceResult?>(null);
+
+        public Task<ProtoPpo.PpoStatusResponse?> GetPpoStatusAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<ProtoPpo.PpoStatusResponse?>(new ProtoPpo.PpoStatusResponse
+            {
+                FailureReason = ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                FailureDetail = "test PPO manager unavailable"
+            });
+
+        public Task<ProtoPpo.PpoStartRunResponse?> StartPpoRunAsync(
+            ProtoPpo.PpoStartRunRequest request,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<ProtoPpo.PpoStartRunResponse?>(new ProtoPpo.PpoStartRunResponse
+            {
+                FailureReason = ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                FailureDetail = "test PPO manager unavailable"
+            });
+
+        public Task<ProtoPpo.PpoStopRunResponse?> StopPpoRunAsync(
+            ProtoPpo.PpoStopRunRequest request,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<ProtoPpo.PpoStopRunResponse?>(new ProtoPpo.PpoStopRunResponse
+            {
+                FailureReason = ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                FailureDetail = "test PPO manager unavailable"
+            });
 
         public Task<SpeciationAssignResponse?> AssignSpeciationAsync(
             SpeciationAssignRequest request,

@@ -57,25 +57,25 @@ internal sealed record HarnessFileConfig
         {
             ParentSelection = new BasicsParentSelectionPolicy
             {
-                FitnessWeight = Environment.Scheduling.FitnessWeight,
-                DiversityWeight = Environment.Scheduling.DiversityWeight,
-                SpeciesBalanceWeight = Environment.Scheduling.SpeciesBalanceWeight,
-                EliteFraction = Environment.Scheduling.EliteFraction,
-                ExplorationFraction = Environment.Scheduling.ExplorationFraction,
-                MaxParentsPerSpecies = Environment.Scheduling.MaxParentsPerSpecies
+                FitnessWeight = normalizedEnvironment.Scheduling.FitnessWeight,
+                DiversityWeight = normalizedEnvironment.Scheduling.DiversityWeight,
+                SpeciesBalanceWeight = normalizedEnvironment.Scheduling.SpeciesBalanceWeight,
+                EliteFraction = normalizedEnvironment.Scheduling.EliteFraction,
+                ExplorationFraction = normalizedEnvironment.Scheduling.ExplorationFraction,
+                MaxParentsPerSpecies = normalizedEnvironment.Scheduling.MaxParentsPerSpecies
             },
             RunAllocation = new BasicsRunAllocationPolicy
             {
-                MinRunsPerPair = Environment.Scheduling.MinRunsPerPair,
-                MaxRunsPerPair = Environment.Scheduling.MaxRunsPerPair,
-                FitnessExponent = Environment.Scheduling.FitnessExponent,
-                DiversityBoost = Environment.Scheduling.DiversityBoost
+                MinRunsPerPair = normalizedEnvironment.Scheduling.MinRunsPerPair,
+                MaxRunsPerPair = normalizedEnvironment.Scheduling.MaxRunsPerPair,
+                FitnessExponent = normalizedEnvironment.Scheduling.FitnessExponent,
+                DiversityBoost = normalizedEnvironment.Scheduling.DiversityBoost
             }
         };
 
         var reproduction = BasicsReproductionPolicy.CreateDefault() with
         {
-            StrengthSource = ParseStrengthSource(Environment.StrengthSource)
+            StrengthSource = ParseStrengthSource(normalizedEnvironment.StrengthSource)
         };
 
         var options = new BasicsLiveTrialHarnessOptions
@@ -120,8 +120,6 @@ internal sealed record HarnessFileConfig
                 PpoOptimizer = new BasicsPpoOptimizerOptions
                 {
                     Enabled = normalizedEnvironment.PpoOptimizer.Enabled,
-                    EndpointAddress = normalizedEnvironment.PpoOptimizer.EndpointAddress,
-                    ManagerActorName = normalizedEnvironment.PpoOptimizer.ManagerActorName,
                     ObjectiveName = normalizedEnvironment.PpoOptimizer.ObjectiveName,
                     RewardSignal = normalizedEnvironment.PpoOptimizer.RewardSignal,
                     RolloutTickCount = normalizedEnvironment.PpoOptimizer.RolloutTickCount,
@@ -154,14 +152,21 @@ internal sealed record HarnessFileConfig
         return (options, plugin);
     }
 
-    private static HarnessEnvironmentConfig NormalizeEnvironment(HarnessEnvironmentConfig environment)
-        => environment with
+    private static HarnessEnvironmentConfig NormalizeEnvironment(HarnessEnvironmentConfig? environment)
+    {
+        var current = environment ?? new HarnessEnvironmentConfig();
+        var template = current.Template ?? new HarnessTemplateConfig();
+        return current with
         {
-            Template = environment.Template with
+            Template = template with
             {
-                Description = ResolveTemplateDescription(environment.Template.Description)
-            }
+                Description = ResolveTemplateDescription(template.Description)
+            },
+            Sizing = current.Sizing ?? new HarnessSizingConfig(),
+            Scheduling = current.Scheduling ?? new HarnessSchedulingConfig(),
+            PpoOptimizer = current.PpoOptimizer ?? new HarnessPpoOptimizerConfig()
         };
+    }
 
     private static string ResolveTemplateDescription(string? description)
     {
@@ -236,18 +241,16 @@ internal sealed record HarnessEnvironmentConfig
 internal sealed record HarnessPpoOptimizerConfig
 {
     public bool Enabled { get; init; }
-    public string EndpointAddress { get; init; } = string.Empty;
-    public string ManagerActorName { get; init; } = "PpoManager";
-    public string ObjectiveName { get; init; } = "reward";
-    public string RewardSignal { get; init; } = "output.reward";
-    public ulong RolloutTickCount { get; init; } = 128;
-    public ulong RolloutBatchCount { get; init; } = 4;
+    public string ObjectiveName { get; init; } = "multiplication";
+    public string RewardSignal { get; init; } = "basics.fitness";
+    public ulong RolloutTickCount { get; init; } = 16;
+    public ulong RolloutBatchCount { get; init; } = 1;
     public float ClipEpsilon { get; init; } = 0.2f;
     public float DiscountGamma { get; init; } = 0.99f;
     public float GaeLambda { get; init; } = 0.95f;
     public float LearningRate { get; init; } = 0.0003f;
-    public uint OptimizationEpochCount { get; init; } = 4;
-    public uint MinibatchSize { get; init; } = 32;
+    public uint OptimizationEpochCount { get; init; } = 2;
+    public uint MinibatchSize { get; init; } = 1;
     public ulong Seed { get; init; } = 42;
 }
 

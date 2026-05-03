@@ -149,8 +149,6 @@ public sealed record BasicsLiveTrialSchedulingSnapshot(
 
 public sealed record BasicsLiveTrialPpoOptimizerSnapshot(
     bool Enabled,
-    string EndpointAddress,
-    string ManagerActorName,
     string ObjectiveName,
     string RewardSignal,
     ulong RolloutTickCount,
@@ -667,8 +665,6 @@ public sealed class BasicsLiveTrialHarness
                 options.Scheduling.RunAllocation.DiversityBoost),
             PpoOptimizer: new BasicsLiveTrialPpoOptimizerSnapshot(
                 options.PpoOptimizer.Enabled,
-                options.PpoOptimizer.EndpointAddress,
-                options.PpoOptimizer.ManagerActorName,
                 options.PpoOptimizer.ObjectiveName,
                 options.PpoOptimizer.RewardSignal,
                 options.PpoOptimizer.RolloutTickCount,
@@ -750,8 +746,6 @@ public sealed class BasicsLiveTrialHarness
             PpoOptimizer = new BasicsPpoOptimizerOptions
             {
                 Enabled = snapshot.PpoOptimizer.Enabled,
-                EndpointAddress = snapshot.PpoOptimizer.EndpointAddress,
-                ManagerActorName = snapshot.PpoOptimizer.ManagerActorName,
                 ObjectiveName = snapshot.PpoOptimizer.ObjectiveName,
                 RewardSignal = snapshot.PpoOptimizer.RewardSignal,
                 RolloutTickCount = snapshot.PpoOptimizer.RolloutTickCount,

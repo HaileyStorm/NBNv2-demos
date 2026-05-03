@@ -136,8 +136,6 @@ public sealed record BasicsTaskSettingsTraceRecord(
 
 public sealed record BasicsPpoOptimizerTraceRecord(
     bool Enabled,
-    string EndpointAddress,
-    string ManagerActorName,
     string ObjectiveName,
     string RewardSignal,
     ulong RolloutTickCount,
@@ -271,8 +269,6 @@ public static class BasicsTraceability
                     taskSettings.Multiplication.BehaviorStageGateFull)),
             PpoOptimizer: new BasicsPpoOptimizerTraceRecord(
                 ppo.Enabled,
-                ppo.EndpointAddress,
-                ppo.ManagerActorName,
                 ppo.ObjectiveName,
                 ppo.RewardSignal,
                 ppo.RolloutTickCount,

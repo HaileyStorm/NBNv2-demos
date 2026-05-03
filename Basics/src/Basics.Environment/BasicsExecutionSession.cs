@@ -8,6 +8,7 @@ using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
+using ProtoPpo = Nbn.Proto.Ppo;
 using Repro = Nbn.Proto.Repro;
 using ProtoSpec = Nbn.Proto.Speciation;
 
@@ -18,6 +19,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan VectorObservationTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EventedObservationTimeout = VectorObservationTimeout;
     private static readonly TimeSpan InitialBrainActivationTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan PpoCompletionPollDelay = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan PpoCompletionTimeout = TimeSpan.FromSeconds(120);
+    private static readonly TimeSpan PpoStopTimeout = TimeSpan.FromSeconds(5);
     // Basics uses an explicit caller-side wait budget so burst placement does not fail on HiveMind's short idle-only default.
     private static readonly TimeSpan DefaultSpawnPlacementTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RetryableSpawnFailureBackoff = TimeSpan.FromMilliseconds(250);
@@ -478,13 +482,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         behaviorPressureHistory);
                 }
 
-                population = await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
+                var breedingPopulation = plan.PpoOptimizer?.Enabled == true
+                    ? population
+                    : await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
                 var breedingProgressStopwatch = Stopwatch.StartNew();
                 var breedingProgressPublished = false;
 
                 var nextGeneration = await BreedNextGenerationAsync(
                         plan,
-                        population,
+                        breedingPopulation,
                         targetPopulation,
                         minimumPopulation,
                         stalledGenerationCount,
@@ -510,7 +516,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                                 detail,
                                 speciationEpochId,
                                 generation,
-                                population,
+                                breedingPopulation,
                                 activePopulationCount,
                                 reproductionCalls,
                                 reproductionRunsObserved,
@@ -538,6 +544,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             reproductionRunsObserved += runs;
                         })
                     .ConfigureAwait(false);
+
+                population = await TeardownPopulationBrainsAsync(breedingPopulation, CancellationToken.None).ConfigureAwait(false);
 
                 if (nextGeneration.Count == 0)
                 {
@@ -1284,6 +1292,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var maxConcurrent = ResolveEvaluationConcurrency(plan.Capacity.RecommendedMaxConcurrentBrains);
         var chunkCount = (int)Math.Ceiling(population.Count / (double)maxConcurrent);
         var setupConcurrency = ResolveSetupConcurrency(plan.Capacity.EligibleWorkerCount, maxConcurrent);
+        var retainEvaluatedBrainsForPpo = plan.PpoOptimizer?.Enabled == true;
         using var setupGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
         using var spawnRequestGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
         using var placementWaitGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
@@ -1442,10 +1451,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
                 batchEvaluations = completedEvaluations.ToArray();
             }
-            var cleanedBatchMembers = await TeardownPopulationBrainsAsync(
-                    batchEvaluations.Select(static result => result.Member).ToArray(),
-                    CancellationToken.None)
-                .ConfigureAwait(false);
+            var cleanedBatchMembers = retainEvaluatedBrainsForPpo
+                ? batchEvaluations.Select(static result => result.Member).ToList()
+                : await TeardownPopulationBrainsAsync(
+                        batchEvaluations.Select(static result => result.Member).ToArray(),
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
             var batchResults = batchEvaluations
                 .Zip(cleanedBatchMembers, static (result, cleanedMember) => result with { Member = cleanedMember })
                 .ToArray();
@@ -1462,7 +1473,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 speciationEpochId,
                 generation,
                 evaluated.ToArray(),
-                activeBrainCount: 0,
+                activeBrainCount: retainEvaluatedBrainsForPpo
+                    ? evaluated.Count(static member => member.ActiveBrainId != Guid.Empty)
+                    : 0,
                 reproductionCalls,
                 reproductionRunsObserved,
                     effectiveTemplateDefinition,
@@ -3310,12 +3323,6 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 targetPopulation - nextGeneration.Count,
                 refinementChildBudget - refinementChildCount,
                 explorationChildBudget - explorationChildCount);
-            onBreedProgress?.Invoke(
-                adaptiveBoostSteps > 0
-                    ? $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId} via {pairingReason}; requesting {runCount} child run(s). Adaptive diversity {plan.DiversityPreset} -> {effectivePreset} after {stalledGenerationCount} stalled generation(s); lane={lane.ToString().ToLowerInvariant()} refinement={refinementChildCount}/{refinementChildBudget} exploration={explorationChildCount}/{explorationChildBudget}."
-                    : $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId} via {pairingReason}; requesting {runCount} child run(s). Diversity preset {plan.DiversityPreset}.",
-                nextGeneration.Count);
-
             var reproduceConfig = plan.Reproduction.Config.Clone();
             ApplyVariationBand(reproduceConfig, laneVariationBand);
             BasicsDiversityTuning.ApplyAdaptiveBoost(reproduceConfig, laneAdaptiveBoostSteps);
@@ -3324,23 +3331,71 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ApplyRefinementReproductionTuning(reproduceConfig);
             }
             reproduceConfig.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
-            var result = await _runtimeClient.ReproduceByArtifactsAsync(
-                    new Repro.ReproduceByArtifactsRequest
-                    {
-                        ParentADef = parentA.Definition.Clone(),
-                        ParentBDef = parentB.Definition.Clone(),
-                        StrengthSource = plan.Reproduction.StrengthSource,
-                        Config = reproduceConfig,
-                        Seed = NextSeed(),
-                        RunCount = runCount
-                    },
+            if (!await AreDefinitionsCompatibleForReproductionAsync(
+                    parentA.Definition,
+                    parentB.Definition,
+                    plan,
+                    reproduceConfig,
+                    compatibilityCache,
                     cancellationToken)
-                .ConfigureAwait(false);
-            var observedRunCount = result is null || result.RequestedRunCount == 0
-                ? runCount
-                : result.RequestedRunCount;
+                .ConfigureAwait(false))
+            {
+                continue;
+            }
+
+            IReadOnlyList<ReproductionChildDefinition> childDefinitions;
+            uint observedRunCount;
+            var usePpoOptimizer = plan.PpoOptimizer?.Enabled == true
+                && parentA.ActiveBrainId != Guid.Empty
+                && parentB.ActiveBrainId != Guid.Empty
+                && parentA.ActiveBrainId != parentB.ActiveBrainId;
+            var breedingMethod = usePpoOptimizer ? "ppo-io" : "reproduction";
+            onBreedProgress?.Invoke(
+                adaptiveBoostSteps > 0
+                    ? $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId} via {pairingReason}; requesting {runCount} child run(s). method={breedingMethod}. Adaptive diversity {plan.DiversityPreset} -> {effectivePreset} after {stalledGenerationCount} stalled generation(s); lane={lane.ToString().ToLowerInvariant()} refinement={refinementChildCount}/{refinementChildBudget} exploration={explorationChildCount}/{explorationChildBudget}."
+                    : $"Selected parents {parentA.SpeciesId} × {parentB.SpeciesId} via {pairingReason}; requesting {runCount} child run(s). method={breedingMethod}. Diversity preset {plan.DiversityPreset}.",
+                nextGeneration.Count);
+
+            if (usePpoOptimizer)
+            {
+                var ppoRunId = $"basics-{plan.SelectedTask.TaskId}-g{parentA.EvaluationGeneration ?? 0}-{attempt}-{Guid.NewGuid():N}";
+                childDefinitions = await RunPpoBreedingAsync(
+                        ppoRunId,
+                        plan,
+                        parentA,
+                        parentB,
+                        reproduceConfig,
+                        runCount,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                observedRunCount = (uint)Math.Min(uint.MaxValue, Math.Max(1, childDefinitions.Count));
+                if (childDefinitions.Count == 0)
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                var result = await _runtimeClient.ReproduceByArtifactsAsync(
+                        new Repro.ReproduceByArtifactsRequest
+                        {
+                            ParentADef = parentA.Definition.Clone(),
+                            ParentBDef = parentB.Definition.Clone(),
+                            StrengthSource = plan.Reproduction.StrengthSource,
+                            Config = reproduceConfig,
+                            Seed = NextSeed(),
+                            RunCount = runCount
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                observedRunCount = result is null || result.RequestedRunCount == 0
+                    ? runCount
+                    : result.RequestedRunCount;
+                childDefinitions = ExtractChildDefinitions(result);
+            }
+
             onReproductionObserved?.Invoke(observedRunCount);
-            foreach (var child in ExtractChildDefinitions(result))
+            foreach (var child in childDefinitions)
             {
                 if (nextGeneration.Count >= targetPopulation)
                 {
@@ -3353,19 +3408,21 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     continue;
                 }
                 var childComplexity = await ResolveDefinitionComplexityAsync(child.Definition, knownShape: null, cancellationToken).ConfigureAwait(false);
-                var membership = await CommitArtifactMembershipAsync(
-                        child.Definition,
-                        new[]
-                        {
-                            CreateSpeciationParentRef(parentA.Definition, parentA.ActiveBrainId),
-                            CreateSpeciationParentRef(parentB.Definition, parentB.ActiveBrainId)
-                        },
-                        explicitSpeciesId: null,
-                        explicitSpeciesDisplayName: null,
-                        decisionReason: "basics_generation_child",
-                        decisionMetadataJson: BuildSpeciationDecisionMetadataJson(child.Report, child.MutationSummary),
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                var membership = child.SpeciationDecision is null
+                    ? await CommitArtifactMembershipAsync(
+                            child.Definition,
+                            new[]
+                            {
+                                CreateSpeciationParentRef(parentA.Definition, parentA.ActiveBrainId),
+                                CreateSpeciationParentRef(parentB.Definition, parentB.ActiveBrainId)
+                            },
+                            explicitSpeciesId: null,
+                            explicitSpeciesDisplayName: null,
+                            decisionReason: "basics_generation_child",
+                            decisionMetadataJson: BuildSpeciationDecisionMetadataJson(child.Report, child.MutationSummary),
+                            cancellationToken)
+                        .ConfigureAwait(false)
+                    : ResolvePpoCommittedMembership(child.SpeciationDecision, parentA);
                 var childMember = new PopulationMember(
                     child.Definition.Clone(),
                     membership.SpeciesId,
@@ -4013,6 +4070,45 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         return compatible;
     }
 
+    private async Task<bool> AreDefinitionsCompatibleForReproductionAsync(
+        ArtifactRef parentA,
+        ArtifactRef parentB,
+        BasicsEnvironmentPlan plan,
+        Repro.ReproduceConfig reproduceConfig,
+        Dictionary<string, bool> compatibilityCache,
+        CancellationToken cancellationToken)
+    {
+        if (!HasArtifactRef(parentA) || !HasArtifactRef(parentB))
+        {
+            return false;
+        }
+
+        var pairKey = BuildCompatibilityPairKey(parentA, parentB);
+        if (compatibilityCache.TryGetValue(pairKey, out var cached))
+        {
+            return cached;
+        }
+
+        var config = reproduceConfig.Clone();
+        config.SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever;
+
+        var result = await _runtimeClient.AssessCompatibilityByArtifactsAsync(
+                new Repro.AssessCompatibilityByArtifactsRequest
+                {
+                    ParentADef = parentA.Clone(),
+                    ParentBDef = parentB.Clone(),
+                    StrengthSource = plan.Reproduction.StrengthSource,
+                    Config = config,
+                    Seed = NextSeed(),
+                    RunCount = 1
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+        var compatible = result?.Report?.Compatible ?? false;
+        compatibilityCache[pairKey] = compatible;
+        return compatible;
+    }
+
     private static string BuildCompatibilityPairKey(ArtifactRef left, ArtifactRef right)
     {
         var leftSha = left.ToSha256Hex();
@@ -4356,6 +4452,199 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         return definitions;
+    }
+
+    private async Task<IReadOnlyList<ReproductionChildDefinition>> RunPpoBreedingAsync(
+        string runId,
+        BasicsEnvironmentPlan plan,
+        PopulationMember parentA,
+        PopulationMember parentB,
+        Repro.ReproduceConfig reproduceConfig,
+        uint runCount,
+        CancellationToken cancellationToken)
+    {
+        var options = plan.PpoOptimizer ?? new BasicsPpoOptimizerOptions();
+        var request = new ProtoPpo.PpoStartRunRequest
+        {
+            RunId = runId,
+            ObjectiveName = string.IsNullOrWhiteSpace(options.ObjectiveName)
+                ? plan.SelectedTask.TaskId
+                : options.ObjectiveName.Trim(),
+            MetadataJson = JsonSerializer.Serialize(new
+            {
+                source = "basics",
+                task_id = plan.SelectedTask.TaskId,
+                reward_signal = options.RewardSignal,
+                requested_child_slots = runCount,
+                parent_a_species = parentA.SpeciesId,
+                parent_b_species = parentB.SpeciesId
+            }),
+            Hyperparameters = new ProtoPpo.PpoHyperparameters
+            {
+                RewardSignal = string.IsNullOrWhiteSpace(options.RewardSignal)
+                    ? "basics.fitness"
+                    : options.RewardSignal.Trim(),
+                RolloutTickCount = options.RolloutTickCount,
+                RolloutBatchCount = Math.Max(1UL, Math.Min(options.RolloutBatchCount, runCount)),
+                ClipEpsilon = options.ClipEpsilon,
+                DiscountGamma = options.DiscountGamma,
+                GaeLambda = options.GaeLambda,
+                LearningRate = options.LearningRate,
+                OptimizationEpochCount = options.OptimizationEpochCount,
+                MinibatchSize = options.MinibatchSize,
+                Seed = options.Seed == 0 ? NextSeed() : options.Seed + NextSeed()
+            },
+            ReproduceConfig = reproduceConfig.Clone(),
+            StrengthSource = plan.Reproduction.StrengthSource
+        };
+        request.ParentBrainIds.Add(parentA.ActiveBrainId.ToProtoUuid());
+        request.ParentBrainIds.Add(parentB.ActiveBrainId.ToProtoUuid());
+
+        var started = await _runtimeClient.StartPpoRunAsync(request, cancellationToken).ConfigureAwait(false);
+        if (started is null)
+        {
+            throw new InvalidOperationException("PPO start returned no response through IO Gateway.");
+        }
+
+        if (started.FailureReason != ProtoPpo.PpoFailureReason.PpoFailureNone || !started.Accepted)
+        {
+            throw new InvalidOperationException(
+                $"PPO start failed: {started.FailureReason} {started.FailureDetail}".Trim());
+        }
+
+        ProtoPpo.PpoRunDescriptor terminal;
+        try
+        {
+            terminal = await WaitForPpoRunAsync(runId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+        {
+            await StopPpoRunBestEffortAsync(runId, ex.Message).ConfigureAwait(false);
+            throw;
+        }
+
+        if (terminal.State != ProtoPpo.PpoRunState.Completed)
+        {
+            if (IsPpoReproductionGateMiss(terminal.StatusDetail))
+            {
+                return Array.Empty<ReproductionChildDefinition>();
+            }
+
+            throw new InvalidOperationException(
+                $"PPO run {runId} did not complete: {terminal.State} {terminal.StatusDetail}".Trim());
+        }
+
+        return ExtractPpoChildDefinitions(terminal);
+    }
+
+    private static bool IsPpoReproductionGateMiss(string? statusDetail)
+        => !string.IsNullOrWhiteSpace(statusDetail)
+           && statusDetail.TrimStart().StartsWith("repro_", StringComparison.Ordinal);
+
+    private async Task<ProtoPpo.PpoRunDescriptor> WaitForPpoRunAsync(string runId, CancellationToken cancellationToken)
+    {
+        using var timeout = new CancellationTokenSource(PpoCompletionTimeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        while (!linked.IsCancellationRequested)
+        {
+            var status = await _runtimeClient.GetPpoStatusAsync(linked.Token).ConfigureAwait(false);
+            if (status is null)
+            {
+                throw new InvalidOperationException("PPO status returned no response through IO Gateway.");
+            }
+
+            if (status.FailureReason != ProtoPpo.PpoFailureReason.PpoFailureNone)
+            {
+                throw new InvalidOperationException(
+                    $"PPO status failed: {status.FailureReason} {status.FailureDetail}".Trim());
+            }
+
+            var run = status?.LastRun?.RunId == runId
+                ? status.LastRun
+                : status?.ActiveRun?.RunId == runId
+                    ? status.ActiveRun
+                    : null;
+            if (run is not null
+                && run.State is ProtoPpo.PpoRunState.Completed
+                    or ProtoPpo.PpoRunState.Failed
+                    or ProtoPpo.PpoRunState.Cancelled)
+            {
+                return run.Clone();
+            }
+
+            try
+            {
+                await Task.Delay(PpoCompletionPollDelay, linked.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+        }
+
+        throw new TimeoutException($"PPO run {runId} did not complete within {PpoCompletionTimeout.TotalSeconds:0} seconds.");
+    }
+
+    private async Task StopPpoRunBestEffortAsync(string runId, string reason)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(PpoStopTimeout);
+            await _runtimeClient.StopPpoRunAsync(
+                    new ProtoPpo.PpoStopRunRequest
+                    {
+                        RunId = runId,
+                        Reason = string.IsNullOrWhiteSpace(reason)
+                            ? "basics_ppo_wait_aborted"
+                            : reason.Trim()
+                    },
+                    timeout.Token)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // The original timeout/cancellation path is more useful to the caller than best-effort stop failures.
+        }
+    }
+
+    private static IReadOnlyList<ReproductionChildDefinition> ExtractPpoChildDefinitions(ProtoPpo.PpoRunDescriptor run)
+    {
+        var definitions = new List<ReproductionChildDefinition>();
+        var seenDefinitionShas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in run.ExecutionReport?.Candidates ?? Enumerable.Empty<ProtoPpo.PpoCandidateResult>())
+        {
+            if (!HasArtifactRef(candidate.ChildDef) || !seenDefinitionShas.Add(candidate.ChildDef.ToSha256Hex()))
+            {
+                continue;
+            }
+
+            definitions.Add(new ReproductionChildDefinition(
+                candidate.ChildDef.Clone(),
+                candidate.ReproductionReport?.Clone(),
+                candidate.MutationSummary?.Clone(),
+                candidate.SpeciationDecision?.Clone()));
+        }
+
+        return definitions;
+    }
+
+    private static (string SpeciesId, string SpeciesDisplayName) ResolvePpoCommittedMembership(
+        ProtoSpec.SpeciationDecision decision,
+        PopulationMember fallbackParent)
+    {
+        if (!decision.Success && !decision.ImmutableConflict)
+        {
+            throw new InvalidOperationException(
+                $"PPO speciation commit failed: {decision.FailureReason} {decision.FailureDetail}".Trim());
+        }
+
+        var speciesId = string.IsNullOrWhiteSpace(decision.SpeciesId)
+            ? NormalizeSpeciesId(fallbackParent.SpeciesId)
+            : NormalizeSpeciesId(decision.SpeciesId);
+        var displayName = string.IsNullOrWhiteSpace(decision.SpeciesDisplayName)
+            ? speciesId
+            : decision.SpeciesDisplayName;
+        return (speciesId, displayName);
     }
 
     private static string BuildSpeciationDecisionMetadataJson(
@@ -5745,7 +6034,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private sealed record ReproductionChildDefinition(
         ArtifactRef Definition,
         Repro.SimilarityReport? Report,
-        Repro.MutationSummary? MutationSummary);
+        Repro.MutationSummary? MutationSummary,
+        ProtoSpec.SpeciationDecision? SpeciationDecision = null);
 
     private readonly record struct CandidateSelection(
         PopulationMember Member,

@@ -107,8 +107,6 @@ public sealed class BasicsTraceabilityTests
             PpoOptimizer: new BasicsPpoOptimizerOptions
             {
                 Enabled = true,
-                EndpointAddress = "127.0.0.1:12090",
-                ManagerActorName = "PpoManager",
                 ObjectiveName = "multiplication",
                 RewardSignal = "basics.fitness",
                 RolloutTickCount = 256,
@@ -143,8 +141,6 @@ public sealed class BasicsTraceabilityTests
         Assert.Equal(0.33f, trace.TaskSettings.Multiplication.BehaviorStageGateStart);
         Assert.Equal(0.55f, trace.TaskSettings.Multiplication.BehaviorStageGateFull);
         Assert.True(trace.PpoOptimizer.Enabled);
-        Assert.Equal("127.0.0.1:12090", trace.PpoOptimizer.EndpointAddress);
-        Assert.Equal("PpoManager", trace.PpoOptimizer.ManagerActorName);
         Assert.Equal("multiplication", trace.PpoOptimizer.ObjectiveName);
         Assert.Equal("basics.fitness", trace.PpoOptimizer.RewardSignal);
         Assert.Equal((ulong)256, trace.PpoOptimizer.RolloutTickCount);
