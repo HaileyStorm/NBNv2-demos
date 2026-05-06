@@ -13,6 +13,7 @@ using Nbn.Demos.Basics.Tasks;
 using Nbn.Demos.Basics.Ui.Services;
 using Nbn.Proto;
 using Nbn.Shared;
+using ProtoPpo = Nbn.Proto.Ppo;
 using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Demos.Basics.Ui.ViewModels;
@@ -26,6 +27,11 @@ public sealed record ChartAxisValueTickItem(
     double Y,
     double LabelTop,
     string LabelText);
+
+public sealed record PpoServiceStatusSummary(
+    string Status,
+    string Detail,
+    bool IsReady);
 
 public sealed class MainWindowViewModel : ViewModelBase
 {
@@ -88,7 +94,10 @@ public sealed class MainWindowViewModel : ViewModelBase
         nameof(WinnerExportDetail),
         nameof(WorkerLauncherStatus),
         nameof(WorkerLauncherDetail),
-        nameof(IsWorkerLauncherBusy)
+        nameof(IsWorkerLauncherBusy),
+        nameof(PpoServiceStatus),
+        nameof(PpoServiceDetail),
+        nameof(IsPpoServiceStatusBusy)
     };
 
     private readonly UiDispatcher _dispatcher;
@@ -197,6 +206,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _ppoOptimizationEpochCountText = "2";
     private string _ppoMinibatchSizeText = "1";
     private string _ppoSeedText = "42";
+    private string _ppoServiceStatus = "PPO service status not checked.";
+    private string _ppoServiceDetail = "Enable PPO and connect to IO to check the manager through IO Gateway.";
+    private bool _isPpoServiceStatusBusy;
     private string _fitnessWeightText = "0.55";
     private string _diversityWeightText = "0.35";
     private string _speciesBalanceWeightText = "0.15";
@@ -269,6 +281,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         ApplySuggestedBoundsCommand = new RelayCommand(ApplySuggestedBounds, () => _lastPlan is not null);
         StartWorkersCommand = new AsyncRelayCommand(StartWorkersAsync, CanStartWorkers);
         StopWorkersCommand = new AsyncRelayCommand(StopWorkersAsync, CanStopWorkers);
+        RefreshPpoServiceStatusCommand = new AsyncRelayCommand(RefreshPpoServiceStatusAsync, CanRefreshPpoServiceStatus);
         AddInitialBrainsCommand = new AsyncRelayCommand(AddInitialBrainsAsync);
         ClearInitialBrainsCommand = new RelayCommand(ClearInitialBrains, () => InitialBrainSeeds.Count > 0);
 
@@ -326,6 +339,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AsyncRelayCommand StartWorkersCommand { get; }
 
     public AsyncRelayCommand StopWorkersCommand { get; }
+
+    public AsyncRelayCommand RefreshPpoServiceStatusCommand { get; }
 
     public AsyncRelayCommand AddInitialBrainsCommand { get; }
 
@@ -809,6 +824,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             if (SetProperty(ref _ppoOptimizerEnabled, value))
             {
+                RefreshPpoServiceStatusForMode();
                 RaiseTaskSettingsBindings();
             }
         }
@@ -905,6 +921,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public bool ShowPpoOptimizerConfiguration => ShowPpoOptimizerSettings && PpoOptimizerEnabled;
 
+    public bool ShowPpoServiceStatus => ShowPpoOptimizerSettings && PpoOptimizerEnabled;
+
     public bool ShowLocalReproductionSchedulingControls => !PpoOptimizerEnabled;
 
     public bool ShowPpoSchedulingNotice => PpoOptimizerEnabled;
@@ -917,7 +935,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string OptimizationModeTitle
         => PpoOptimizerEnabled
-            ? "Optimization Mode: PPO Core Service"
+            ? "Generation Controller: PPO Core Service"
             : "Optimization Mode: Local Reproduction";
 
     public string PpoOptimizerDetail
@@ -927,13 +945,37 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string SchedulingSectionTitle
         => PpoOptimizerEnabled
-            ? "PPO Parent Context + Fallback"
+            ? "PPO Parent Context"
             : "Local Reproduction + Speciation Scheduling";
 
     public string SchedulingSectionDetail
         => PpoOptimizerEnabled
             ? "PPO selects and optimizes generation candidates through IO Gateway. Basics still applies the diversity preset, strength source, and IO-neuron protection when it supplies parent context to the PPO manager."
             : "Local reproduction/speciation selects parent pairs, allocates reproduction runs, and applies adaptive diversity pressure directly.";
+
+    public string PpoServiceStatus
+    {
+        get => _ppoServiceStatus;
+        private set => SetProperty(ref _ppoServiceStatus, value);
+    }
+
+    public string PpoServiceDetail
+    {
+        get => _ppoServiceDetail;
+        private set => SetProperty(ref _ppoServiceDetail, value);
+    }
+
+    public bool IsPpoServiceStatusBusy
+    {
+        get => _isPpoServiceStatusBusy;
+        private set
+        {
+            if (SetProperty(ref _isPpoServiceStatusBusy, value))
+            {
+                RaiseCommandStates();
+            }
+        }
+    }
 
     public string TaskSettingsDetail
     {
@@ -1306,6 +1348,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 CapacityStatus = "Connected. Fetching capacity through IO...";
                 RaiseCommandStates();
             });
+            QueuePpoServiceStatusRefresh();
 
             await FetchCapacityAsync().ConfigureAwait(false);
         }
@@ -1323,6 +1366,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             ConnectionStatus = "Disconnected";
             CapacityStatus = "No capacity snapshot fetched.";
+            PpoServiceStatus = "PPO service status not checked.";
+            PpoServiceDetail = "Connect to IO to check PPO manager availability through IO Gateway.";
             ExecutionStatus = "Idle";
             ExecutionDetail = "Connect to IO, build capacity bounds, then start an implemented task plugin.";
             RaiseCommandStates();
@@ -1779,6 +1824,18 @@ public sealed class MainWindowViewModel : ViewModelBase
                 return;
             }
 
+            if (options.PpoOptimizer.Enabled
+                && !await RefreshPpoServiceStatusAsync().ConfigureAwait(false))
+            {
+                _dispatcher.Post(() =>
+                {
+                    ExecutionStatus = "Start blocked.";
+                    ExecutionDetail = PpoServiceDetail;
+                    RaiseCommandStates();
+                });
+                return;
+            }
+
             SetExecutionPhase(
                 "Starting...",
                 $"Building the {options.SelectedTask.DisplayName} execution plan and sizing the initial population.");
@@ -1958,6 +2015,184 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private async Task<bool> RefreshPpoServiceStatusAsync()
+    {
+        if (!PpoOptimizerEnabled)
+        {
+            _dispatcher.Post(() =>
+            {
+                PpoServiceStatus = "PPO service disabled.";
+                PpoServiceDetail = "Local reproduction/speciation owns generation control.";
+                RaiseCommandStates();
+            });
+            return true;
+        }
+
+        var runtimeClient = _runtimeClient;
+        if (runtimeClient is null)
+        {
+            _dispatcher.Post(() =>
+            {
+                PpoServiceStatus = "PPO status unavailable.";
+                PpoServiceDetail = "Connect to IO before checking PPO manager availability.";
+                RaiseCommandStates();
+            });
+            return false;
+        }
+
+        _dispatcher.Post(() =>
+        {
+            IsPpoServiceStatusBusy = true;
+            PpoServiceStatus = "Checking PPO core service...";
+            PpoServiceDetail = "Asking IO Gateway for PPO manager status.";
+        });
+
+        try
+        {
+            var status = await runtimeClient.GetPpoStatusAsync().ConfigureAwait(false);
+            var summary = BuildPpoServiceStatus(status);
+            _dispatcher.Post(() =>
+            {
+                PpoServiceStatus = summary.Status;
+                PpoServiceDetail = summary.Detail;
+            });
+            return summary.IsReady;
+        }
+        catch (Exception ex)
+        {
+            var detail = ex.GetBaseException().Message;
+            _dispatcher.Post(() =>
+            {
+                PpoServiceStatus = "PPO status unavailable.";
+                PpoServiceDetail = $"IO Gateway PPO status check failed: {detail}";
+            });
+            return false;
+        }
+        finally
+        {
+            _dispatcher.Post(() =>
+            {
+                IsPpoServiceStatusBusy = false;
+                RaiseCommandStates();
+            });
+        }
+    }
+
+    private bool CanRefreshPpoServiceStatus()
+        => PpoOptimizerEnabled
+           && _runtimeClient is not null
+           && !IsPpoServiceStatusBusy;
+
+    private void QueuePpoServiceStatusRefresh()
+    {
+        if (!PpoOptimizerEnabled)
+        {
+            return;
+        }
+
+        if (_runtimeClient is null)
+        {
+            RefreshPpoServiceStatusForMode();
+            return;
+        }
+
+        _ = RefreshPpoServiceStatusAsync();
+    }
+
+    private void RefreshPpoServiceStatusForMode()
+    {
+        if (!PpoOptimizerEnabled)
+        {
+            PpoServiceStatus = "PPO service disabled.";
+            PpoServiceDetail = "Local reproduction/speciation owns generation control.";
+            RaiseCommandStates();
+            return;
+        }
+
+        if (_runtimeClient is null)
+        {
+            PpoServiceStatus = "PPO status unavailable.";
+            PpoServiceDetail = "Connect to IO to check PPO manager availability through IO Gateway.";
+            RaiseCommandStates();
+            return;
+        }
+
+        QueuePpoServiceStatusRefresh();
+    }
+
+    private static PpoServiceStatusSummary BuildPpoServiceStatus(ProtoPpo.PpoStatusResponse? status)
+    {
+        if (status is null)
+        {
+            return new PpoServiceStatusSummary(
+                "PPO status unavailable.",
+                "IO Gateway returned no PPO status response. PPO may be running, but IO cannot confirm service.endpoint.ppo_manager through SettingsMonitor.",
+                IsReady: false);
+        }
+
+        if (status.FailureReason != ProtoPpo.PpoFailureReason.PpoFailureNone)
+        {
+            var detail = string.IsNullOrWhiteSpace(status.FailureDetail)
+                ? "no failure detail"
+                : status.FailureDetail.Trim();
+            return new PpoServiceStatusSummary(
+                "PPO manager not visible to IO.",
+                $"IO reported {status.FailureReason}: {detail}. PPO may be running, but this IO Gateway has not discovered service.endpoint.ppo_manager in its SettingsMonitor. Verify Workbench, IO, and PPO use the same SettingsMonitor host, port, and actor name.",
+                IsReady: false);
+        }
+
+        var dependencies = status.Dependencies;
+        if (dependencies is null)
+        {
+            return new PpoServiceStatusSummary(
+                "PPO manager visible; dependencies unknown.",
+                "IO reached the PPO manager, but the manager did not return dependency status for IO, reproduction, and speciation.",
+                IsReady: false);
+        }
+
+        var missing = new List<string>();
+        if (!dependencies.IoAvailable)
+        {
+            missing.Add("IO");
+        }
+
+        if (!dependencies.ReproductionAvailable)
+        {
+            missing.Add("reproduction");
+        }
+
+        if (!dependencies.SpeciationAvailable)
+        {
+            missing.Add("speciation");
+        }
+
+        if (missing.Count != 0)
+        {
+            return new PpoServiceStatusSummary(
+                "PPO manager visible; dependencies missing.",
+                $"PPO is registered, but missing dependency endpoint(s): {string.Join(", ", missing)}. Ensure IO, reproduction, and speciation endpoints are registered in the same SettingsMonitor before starting a PPO run.",
+                IsReady: false);
+        }
+
+        var endpoints = new[]
+            {
+                FormatPpoEndpoint("IO", dependencies.IoEndpoint),
+                FormatPpoEndpoint("reproduction", dependencies.ReproductionEndpoint),
+                FormatPpoEndpoint("speciation", dependencies.SpeciationEndpoint)
+            }
+            .Where(static value => !string.IsNullOrWhiteSpace(value));
+        var endpointDetail = string.Join("; ", endpoints);
+        return new PpoServiceStatusSummary(
+            "PPO core service ready.",
+            string.IsNullOrWhiteSpace(endpointDetail)
+                ? "IO reached the PPO manager and all required dependencies are available."
+                : $"IO reached the PPO manager and all required dependencies are available: {endpointDetail}.",
+            IsReady: true);
+    }
+
+    private static string FormatPpoEndpoint(string label, string endpoint)
+        => string.IsNullOrWhiteSpace(endpoint) ? string.Empty : $"{label} {endpoint.Trim()}";
+
     private IEnumerable<BasicsRuntimeClientOptions> BuildRunScopedRuntimeClientCandidates(BasicsRuntimeClientOptions runtimeOptions)
     {
         yield return runtimeOptions;
@@ -2101,6 +2336,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         ApplySuggestedBoundsCommand.RaiseCanExecuteChanged();
         StartWorkersCommand.RaiseCanExecuteChanged();
         StopWorkersCommand.RaiseCanExecuteChanged();
+        RefreshPpoServiceStatusCommand.RaiseCanExecuteChanged();
         AddInitialBrainsCommand.RaiseCanExecuteChanged();
         ClearInitialBrainsCommand.RaiseCanExecuteChanged();
     }
@@ -3511,6 +3747,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowMultiplicationTaskSettings));
         OnPropertyChanged(nameof(ShowPpoOptimizerSettings));
         OnPropertyChanged(nameof(ShowPpoOptimizerConfiguration));
+        OnPropertyChanged(nameof(ShowPpoServiceStatus));
         OnPropertyChanged(nameof(ShowLocalReproductionSchedulingControls));
         OnPropertyChanged(nameof(ShowPpoSchedulingNotice));
         OnPropertyChanged(nameof(ShowUnavailableTaskSettingsMessage));

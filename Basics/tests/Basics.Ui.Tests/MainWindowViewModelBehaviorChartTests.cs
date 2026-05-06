@@ -5,6 +5,7 @@ using Nbn.Demos.Basics.Ui.Services;
 using Nbn.Demos.Basics.Ui.ViewModels;
 using Nbn.Proto;
 using Nbn.Shared;
+using ProtoPpo = Nbn.Proto.Ppo;
 
 namespace Nbn.Demos.Basics.Ui.Tests;
 
@@ -184,12 +185,14 @@ public sealed class MainWindowViewModelBehaviorChartTests
         viewModel.PpoOptimizerEnabled = true;
 
         Assert.True(viewModel.ShowPpoOptimizerConfiguration);
+        Assert.True(viewModel.ShowPpoServiceStatus);
         Assert.False(viewModel.ShowLocalReproductionSchedulingControls);
         Assert.True(viewModel.ShowPpoSchedulingNotice);
-        Assert.Equal("Optimization Mode: PPO Core Service", viewModel.OptimizationModeTitle);
-        Assert.Equal("PPO Parent Context + Fallback", viewModel.SchedulingSectionTitle);
+        Assert.Equal("Generation Controller: PPO Core Service", viewModel.OptimizationModeTitle);
+        Assert.Equal("PPO Parent Context", viewModel.SchedulingSectionTitle);
         Assert.Contains("generation control", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("multiplication", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Connect to IO", viewModel.PpoServiceDetail, StringComparison.Ordinal);
 
         viewModel.SelectedTask = viewModel.Tasks.First(task => task.TaskId == "and");
 
@@ -238,12 +241,66 @@ public sealed class MainWindowViewModelBehaviorChartTests
 
         Assert.Contains(nameof(MainWindowViewModel.ShowPpoOptimizerSettings), changed);
         Assert.Contains(nameof(MainWindowViewModel.ShowPpoOptimizerConfiguration), changed);
+        Assert.Contains(nameof(MainWindowViewModel.ShowPpoServiceStatus), changed);
         Assert.Contains(nameof(MainWindowViewModel.ShowLocalReproductionSchedulingControls), changed);
         Assert.Contains(nameof(MainWindowViewModel.ShowPpoSchedulingNotice), changed);
         Assert.Contains(nameof(MainWindowViewModel.OptimizationModeTitle), changed);
         Assert.Contains(nameof(MainWindowViewModel.PpoOptimizerDetail), changed);
         Assert.Contains(nameof(MainWindowViewModel.SchedulingSectionTitle), changed);
         Assert.Contains(nameof(MainWindowViewModel.SchedulingSectionDetail), changed);
+    }
+
+    [Fact]
+    public void PpoStatusSummary_NamesDiscoveryMismatch_WhenIoCannotSeeManager()
+    {
+        var summary = BuildPpoServiceStatus(new ProtoPpo.PpoStatusResponse
+        {
+            FailureReason = ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+            FailureDetail = "PpoStatus failed: PPO manager endpoint is not configured."
+        });
+
+        Assert.False(summary.IsReady);
+        Assert.Equal("PPO manager not visible to IO.", summary.Status);
+        Assert.Contains("service.endpoint.ppo_manager", summary.Detail, StringComparison.Ordinal);
+        Assert.Contains("same SettingsMonitor host, port, and actor name", summary.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PpoStatusSummary_ReportsReadyDependencies_WhenManagerIsAvailable()
+    {
+        var summary = BuildPpoServiceStatus(new ProtoPpo.PpoStatusResponse
+        {
+            FailureReason = ProtoPpo.PpoFailureReason.PpoFailureNone,
+            Dependencies = new ProtoPpo.PpoDependencyStatus
+            {
+                IoAvailable = true,
+                IoEndpoint = "127.0.0.1:12020/io-gateway",
+                ReproductionAvailable = true,
+                ReproductionEndpoint = "127.0.0.1:12070/ReproductionManager",
+                SpeciationAvailable = true,
+                SpeciationEndpoint = "127.0.0.1:12080/SpeciationManager"
+            }
+        });
+
+        Assert.True(summary.IsReady);
+        Assert.Equal("PPO core service ready.", summary.Status);
+        Assert.Contains("IO 127.0.0.1:12020/io-gateway", summary.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ApplyExecutionSnapshot_ShowsPpoDiscoveryFailureText()
+    {
+        var viewModel = CreateViewModel();
+        var snapshot = CreateSnapshot(
+            state: BasicsExecutionState.Failed,
+            statusText: "PPO core service unavailable.",
+            detailText: "PPO status failed: PpoFailureServiceUnavailable PpoStatus failed: PPO manager endpoint is not configured. PPO may be running, but this IO Gateway has not discovered service.endpoint.ppo_manager in its SettingsMonitor. Verify Workbench, IO, and PPO use the same SettingsMonitor host, port, and actor name, or disable PPO.");
+
+        ApplySnapshot(viewModel, snapshot);
+
+        Assert.Equal("PPO core service unavailable.", viewModel.ExecutionStatus);
+        Assert.Contains("service.endpoint.ppo_manager", viewModel.ExecutionDetail, StringComparison.Ordinal);
+        Assert.Contains("same SettingsMonitor host, port, and actor name", viewModel.ExecutionDetail, StringComparison.OrdinalIgnoreCase);
     }
 
     private static MainWindowViewModel CreateViewModel()
@@ -289,6 +346,9 @@ public sealed class MainWindowViewModelBehaviorChartTests
     }
 
     private static BasicsExecutionSnapshot CreateSnapshot(
+        BasicsExecutionState state = BasicsExecutionState.Running,
+        string statusText = "Generation 3 evaluated.",
+        string detailText = "snapshot for chart test",
         IReadOnlyList<float>? behaviorOccupancyHistory = null,
         IReadOnlyList<float>? behaviorPressureHistory = null,
         IReadOnlyList<float>? balancedAccuracyHistory = null,
@@ -297,9 +357,9 @@ public sealed class MainWindowViewModelBehaviorChartTests
         IReadOnlyList<float>? interiorAccuracyHistory = null,
         BasicsExecutionBestCandidateSummary? bestCandidate = null)
         => new(
-            State: BasicsExecutionState.Running,
-            StatusText: "Generation 3 evaluated.",
-            DetailText: "snapshot for chart test",
+            State: state,
+            StatusText: statusText,
+            DetailText: detailText,
             SpeciationEpochId: null,
             EvaluationFailureCount: 0,
             EvaluationFailureSummary: string.Empty,
@@ -330,6 +390,16 @@ public sealed class MainWindowViewModelBehaviorChartTests
             BehaviorOccupancyHistory = behaviorOccupancyHistory ?? Array.Empty<float>(),
             BehaviorPressureHistory = behaviorPressureHistory ?? Array.Empty<float>()
         };
+
+    private static PpoServiceStatusSummary BuildPpoServiceStatus(ProtoPpo.PpoStatusResponse? status)
+    {
+        var method = typeof(MainWindowViewModel).GetMethod(
+            "BuildPpoServiceStatus",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        return Assert.IsType<PpoServiceStatusSummary>(method!.Invoke(null, new object?[] { status }));
+    }
 
     private static BasicsExecutionBestCandidateSummary CreateBestCandidate(
         float balancedAccuracy,

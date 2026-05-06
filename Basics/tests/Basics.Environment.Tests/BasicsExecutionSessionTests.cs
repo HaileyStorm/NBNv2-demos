@@ -3094,6 +3094,7 @@ public sealed class BasicsExecutionSessionTests
         Assert.Equal(BasicsExecutionState.Failed, final.State);
         Assert.Equal("PPO core service unavailable.", final.StatusText);
         Assert.Contains("service.endpoint.ppo_manager", final.DetailText, StringComparison.Ordinal);
+        Assert.Contains("same SettingsMonitor host, port, and actor name", final.DetailText, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, final.Generation);
         Assert.Equal(0, runtimeClient.SpawnRequestCount);
         Assert.Empty(runtimeClient.PpoStartRequests);

@@ -4604,7 +4604,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         while (true);
 
         return string.IsNullOrWhiteSpace(lastFailure)
-            ? "PPO status failed: IO Gateway did not return a PPO status response. Start the PPO manager service or disable PPO."
+            ? "PPO status failed: IO Gateway did not return a PPO status response. PPO may be running, but IO cannot confirm service.endpoint.ppo_manager through SettingsMonitor."
             : lastFailure;
     }
 
@@ -4612,21 +4612,21 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     {
         if (status is null)
         {
-            failure = "PPO status failed: IO Gateway did not return a PPO status response. Start the PPO manager service or disable PPO.";
+            failure = "PPO status failed: IO Gateway did not return a PPO status response. PPO may be running, but IO cannot confirm service.endpoint.ppo_manager through SettingsMonitor.";
             return false;
         }
 
         if (status.FailureReason != ProtoPpo.PpoFailureReason.PpoFailureNone)
         {
             failure = $"PPO status failed: {status.FailureReason} {status.FailureDetail}".Trim()
-                + " Start the PPO manager service so IO can discover service.endpoint.ppo_manager, or disable PPO.";
+                + " PPO may be running, but this IO Gateway has not discovered service.endpoint.ppo_manager in its SettingsMonitor. Verify Workbench, IO, and PPO use the same SettingsMonitor host, port, and actor name, or disable PPO.";
             return false;
         }
 
         var dependencies = status.Dependencies;
         if (dependencies is null)
         {
-            failure = "PPO status failed: PPO manager did not report dependency status. Start the PPO manager service or disable PPO.";
+            failure = "PPO status failed: PPO manager did not report dependency status. Verify the PPO manager and IO Gateway are using the same SettingsMonitor, or disable PPO.";
             return false;
         }
 

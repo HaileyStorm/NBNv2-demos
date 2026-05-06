@@ -413,7 +413,7 @@
 
                         <Grid IsVisible="{Binding ShowPpoOptimizerSettings}"
                               ColumnDefinitions="Auto,*"
-                              RowDefinitions="Auto,Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
@@ -429,6 +429,25 @@
                                        Foreground="#6C7A89"
                                        TextWrapping="Wrap" />
                             <Grid Grid.Row="3"
+                                  Grid.ColumnSpan="2"
+                                  IsVisible="{Binding ShowPpoServiceStatus}"
+                                  ColumnDefinitions="*,Auto"
+                                  RowDefinitions="Auto,Auto"
+                                  ColumnSpacing="12"
+                                  RowSpacing="4">
+                                <TextBlock Grid.Row="0" Grid.Column="0"
+                                           Text="{Binding PpoServiceStatus}"
+                                           FontWeight="SemiBold"
+                                           Foreground="#182436" />
+                                <Button Grid.Row="0" Grid.Column="1"
+                                        Content="Check"
+                                        Command="{Binding RefreshPpoServiceStatusCommand}" />
+                                <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                           Text="{Binding PpoServiceDetail}"
+                                           Foreground="#6C7A89"
+                                           TextWrapping="Wrap" />
+                            </Grid>
+                            <Grid Grid.Row="4"
                                   Grid.ColumnSpan="2"
                                   IsVisible="{Binding ShowPpoOptimizerConfiguration}"
                                   ColumnDefinitions="Auto,140,Auto,140,Auto,140"
