@@ -22,6 +22,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static readonly TimeSpan PpoCompletionPollDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan PpoCompletionTimeout = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan PpoStopTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DefaultPpoAvailabilityProbeTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DefaultPpoAvailabilityProbePollDelay = TimeSpan.FromMilliseconds(250);
     // Basics uses an explicit caller-side wait budget so burst placement does not fail on HiveMind's short idle-only default.
     private static readonly TimeSpan DefaultSpawnPlacementTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RetryableSpawnFailureBackoff = TimeSpan.FromMilliseconds(250);
@@ -48,6 +50,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private readonly TimeSpan _spawnPlacementTimeout;
     private readonly TimeSpan _evaluationProgressPublishInterval;
     private readonly TimeSpan _breedingProgressPublishInterval;
+    private readonly TimeSpan _ppoAvailabilityProbeTimeout;
+    private readonly TimeSpan _ppoAvailabilityProbePollDelay;
 
     private readonly record struct ObservationAttemptResult(
         BasicsTaskObservation? Observation,
@@ -80,7 +84,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         TimeSpan? minimumSpawnRequestInterval = null,
         TimeSpan? spawnPlacementTimeout = null,
         TimeSpan? evaluationProgressPublishInterval = null,
-        TimeSpan? breedingProgressPublishInterval = null)
+        TimeSpan? breedingProgressPublishInterval = null,
+        TimeSpan? ppoAvailabilityProbeTimeout = null,
+        TimeSpan? ppoAvailabilityProbePollDelay = null)
     {
         _runtimeClient = runtimeClient ?? throw new ArgumentNullException(nameof(runtimeClient));
         _publishingOptions = publishingOptions ?? throw new ArgumentNullException(nameof(publishingOptions));
@@ -88,6 +94,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         _spawnPlacementTimeout = spawnPlacementTimeout ?? DefaultSpawnPlacementTimeout;
         _evaluationProgressPublishInterval = evaluationProgressPublishInterval ?? DefaultEvaluationProgressPublishInterval;
         _breedingProgressPublishInterval = breedingProgressPublishInterval ?? DefaultBreedingProgressPublishInterval;
+        _ppoAvailabilityProbeTimeout = ppoAvailabilityProbeTimeout ?? DefaultPpoAvailabilityProbeTimeout;
+        _ppoAvailabilityProbePollDelay = ppoAvailabilityProbePollDelay ?? DefaultPpoAvailabilityProbePollDelay;
     }
 
     public async Task<BasicsExecutionSnapshot> RunAsync(
@@ -179,6 +187,37 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         try
         {
+            if (plan.PpoOptimizer?.Enabled == true)
+            {
+                PublishStartupStatus(
+                    "Checking PPO core service...",
+                    "Asking IO Gateway for PPO manager status before generation seeding begins.");
+                var ppoUnavailableReason = await WaitForPpoAvailabilityAsync(cancellationToken).ConfigureAwait(false);
+                if (ppoUnavailableReason is not null)
+                {
+                    return CreateFinalSnapshot(
+                        plan.StopCriteria,
+                        publishSnapshot,
+                        BasicsExecutionState.Failed,
+                        "PPO core service unavailable.",
+                        ppoUnavailableReason,
+                        speciationEpochId,
+                        0,
+                        Array.Empty<PopulationMember>(),
+                        0,
+                        reproductionCalls,
+                        reproductionRunsObserved,
+                        effectiveTemplateDefinition,
+                        seedShape,
+                        accuracyHistory,
+                        fitnessHistory,
+                        lastObservedSnapshot,
+                        bestAccuracySoFar,
+                        bestFitnessSoFar,
+                        bestCandidateSoFar);
+                }
+            }
+
             var template = await ResolveTemplateDefinitionAsync(plan.SeedTemplate, cancellationToken).ConfigureAwait(false);
             effectiveTemplateDefinition = template.TemplateDefinition;
             seedShape = template.SeedShape;
@@ -4540,6 +4579,84 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static bool IsPpoReproductionGateMiss(string? statusDetail)
         => !string.IsNullOrWhiteSpace(statusDetail)
            && statusDetail.TrimStart().StartsWith("repro_", StringComparison.Ordinal);
+
+    private async Task<string?> WaitForPpoAvailabilityAsync(CancellationToken cancellationToken)
+    {
+        var deadlineUtc = DateTimeOffset.UtcNow + _ppoAvailabilityProbeTimeout;
+        string? lastFailure = null;
+
+        do
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var status = await _runtimeClient.GetPpoStatusAsync(cancellationToken).ConfigureAwait(false);
+            if (TryValidatePpoStatus(status, out lastFailure))
+            {
+                return null;
+            }
+
+            if (DateTimeOffset.UtcNow >= deadlineUtc)
+            {
+                break;
+            }
+
+            await Task.Delay(_ppoAvailabilityProbePollDelay, cancellationToken).ConfigureAwait(false);
+        }
+        while (true);
+
+        return string.IsNullOrWhiteSpace(lastFailure)
+            ? "PPO status failed: IO Gateway did not return a PPO status response. Start the PPO manager service or disable PPO."
+            : lastFailure;
+    }
+
+    private static bool TryValidatePpoStatus(ProtoPpo.PpoStatusResponse? status, out string? failure)
+    {
+        if (status is null)
+        {
+            failure = "PPO status failed: IO Gateway did not return a PPO status response. Start the PPO manager service or disable PPO.";
+            return false;
+        }
+
+        if (status.FailureReason != ProtoPpo.PpoFailureReason.PpoFailureNone)
+        {
+            failure = $"PPO status failed: {status.FailureReason} {status.FailureDetail}".Trim()
+                + " Start the PPO manager service so IO can discover service.endpoint.ppo_manager, or disable PPO.";
+            return false;
+        }
+
+        var dependencies = status.Dependencies;
+        if (dependencies is null)
+        {
+            failure = "PPO status failed: PPO manager did not report dependency status. Start the PPO manager service or disable PPO.";
+            return false;
+        }
+
+        var missing = new List<string>();
+        if (!dependencies.IoAvailable)
+        {
+            missing.Add("IO Gateway");
+        }
+
+        if (!dependencies.ReproductionAvailable)
+        {
+            missing.Add("Reproduction manager");
+        }
+
+        if (!dependencies.SpeciationAvailable)
+        {
+            missing.Add("Speciation manager");
+        }
+
+        if (missing.Count > 0)
+        {
+            failure =
+                $"PPO manager is registered, but missing dependency endpoint(s): {string.Join(", ", missing)}. "
+                + "Ensure IO, reproduction, and speciation endpoints are registered in SettingsMonitor before starting a PPO run.";
+            return false;
+        }
+
+        failure = null;
+        return true;
+    }
 
     private async Task<ProtoPpo.PpoRunDescriptor> WaitForPpoRunAsync(string runId, CancellationToken cancellationToken)
     {

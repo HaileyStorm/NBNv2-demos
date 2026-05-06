@@ -922,7 +922,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string PpoOptimizerDetail
         => PpoOptimizerEnabled
-            ? $"PPO owns generation control for {SelectedTask?.DisplayName ?? "the selected task"} through IO Gateway. IO discovers service.endpoint.ppo_manager internally; local reproduction/speciation settings stay available only as parent context and fallback. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}."
+            ? $"PPO owns generation control for {SelectedTask?.DisplayName ?? "the selected task"} through IO Gateway. IO discovers service.endpoint.ppo_manager internally; the PPO manager service must already be running and registered. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}."
             : "Local reproduction/speciation owns generation control. PPO remains off and no PPO endpoint is configured by Basics.";
 
     public string SchedulingSectionTitle
@@ -932,7 +932,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string SchedulingSectionDetail
         => PpoOptimizerEnabled
-            ? "PPO selects and optimizes generation candidates through IO Gateway. Basics still applies the diversity preset, strength source, and IO-neuron protection when it supplies parent context or falls back after recoverable PPO gating."
+            ? "PPO selects and optimizes generation candidates through IO Gateway. Basics still applies the diversity preset, strength source, and IO-neuron protection when it supplies parent context to the PPO manager."
             : "Local reproduction/speciation selects parent pairs, allocates reproduction runs, and applies adaptive diversity pressure directly.";
 
     public string TaskSettingsDetail

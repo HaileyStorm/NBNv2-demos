@@ -3068,6 +3068,39 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_PpoEnabledWithoutManager_FailsBeforeGenerationSeeding()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            PpoAvailable = false
+        };
+        await using var session = CreateSession(
+            runtimeClient,
+            ppoAvailabilityProbeTimeout: TimeSpan.Zero,
+            ppoAvailabilityProbePollDelay: TimeSpan.FromMilliseconds(1));
+
+        var snapshots = new List<BasicsExecutionSnapshot>();
+        var final = await session.RunAsync(
+            CreatePlan(
+                BasicsOutputObservationMode.EventedOutput,
+                new BasicsExecutionStopCriteria { MaximumGenerations = 3 }) with
+            {
+                PpoOptimizer = new BasicsPpoOptimizerOptions { Enabled = true }
+            },
+            new AndTaskPlugin(),
+            snapshots.Add,
+            CancellationToken.None);
+
+        Assert.Equal(BasicsExecutionState.Failed, final.State);
+        Assert.Equal("PPO core service unavailable.", final.StatusText);
+        Assert.Contains("service.endpoint.ppo_manager", final.DetailText, StringComparison.Ordinal);
+        Assert.Equal(0, final.Generation);
+        Assert.Equal(0, runtimeClient.SpawnRequestCount);
+        Assert.Empty(runtimeClient.PpoStartRequests);
+        Assert.Contains(snapshots, snapshot => snapshot.StatusText == "Checking PPO core service...");
+    }
+
+    [Fact]
     public void ExecutionSession_SpeciationMetadata_SanitizesNonFiniteSimilarityScores()
     {
         var helper = typeof(BasicsExecutionSession).GetMethod(
@@ -3168,14 +3201,18 @@ public sealed class BasicsExecutionSessionTests
         TimeSpan? minimumSpawnRequestInterval = null,
         TimeSpan? spawnPlacementTimeout = null,
         TimeSpan? evaluationProgressPublishInterval = null,
-        TimeSpan? breedingProgressPublishInterval = null)
+        TimeSpan? breedingProgressPublishInterval = null,
+        TimeSpan? ppoAvailabilityProbeTimeout = null,
+        TimeSpan? ppoAvailabilityProbePollDelay = null)
         => new(
             runtimeClient,
             publishingOptions ?? new BasicsTemplatePublishingOptions { BindHost = "127.0.0.1" },
             minimumSpawnRequestInterval ?? TimeSpan.FromMilliseconds(1),
             spawnPlacementTimeout,
             evaluationProgressPublishInterval,
-            breedingProgressPublishInterval);
+            breedingProgressPublishInterval,
+            ppoAvailabilityProbeTimeout,
+            ppoAvailabilityProbePollDelay);
 
     private static string ResolvePairKey(Repro.ReproduceByArtifactsRequest request)
         => ResolvePairKey(
@@ -4032,7 +4069,16 @@ public sealed class BasicsExecutionSessionTests
 
             var response = new ProtoPpo.PpoStatusResponse
             {
-                FailureReason = ProtoPpo.PpoFailureReason.PpoFailureNone
+                FailureReason = ProtoPpo.PpoFailureReason.PpoFailureNone,
+                Dependencies = new ProtoPpo.PpoDependencyStatus
+                {
+                    IoAvailable = true,
+                    IoEndpoint = "127.0.0.1:12050/io-gateway",
+                    ReproductionAvailable = true,
+                    ReproductionEndpoint = "127.0.0.1:12080/ReproductionManager",
+                    SpeciationAvailable = true,
+                    SpeciationEndpoint = "127.0.0.1:12070/SpeciationManager"
+                }
             };
             if (PpoStatusRuns.TryDequeue(out var run))
             {
