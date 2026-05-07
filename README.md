@@ -6,6 +6,8 @@ This repository holds External World demo projects for NBN. Each demo is a consu
 
 - Agent guidance for this repo: [`AGENTS.md`](AGENTS.md)
 - Repo-local Codex agent roles: [`.codex/config.toml`](.codex/config.toml) and [`.codex/agents/`](.codex/agents)
+- Codex model policy: repo-local agents use GPT-5.5 or `gpt-5.3-codex-spark` only; GPT-5.4 is retired.
+- Codex model-policy check: [`tools/verify-codex-model-policy.sh`](tools/verify-codex-model-policy.sh)
 - Canonical NBN specification: [`../NBNv2/docs/NBNv2.md`](../NBNv2/docs/NBNv2.md)
 - Canonical IO/runtime design note: [`../NBNv2/src/Nbn.Runtime.IO/Design.md`](../NBNv2/src/Nbn.Runtime.IO/Design.md)
 - Canonical shared contract ownership: [`../NBNv2/src/Nbn.Shared/Design.md`](../NBNv2/src/Nbn.Shared/Design.md)

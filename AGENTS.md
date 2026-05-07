@@ -55,6 +55,15 @@
 - When the spec or repo surface is large, split it across fresh read-only agents and compress the findings with `packetizer` before editing.
 - Continue to refer back to `../NBNv2/docs/NBNv2.md` and nearby `Design.md` docs throughout edits, verification, and handoff; re-run targeted repo agents when scope shifts.
 
+## Codex model policy
+
+- Repo-local Codex agents may use only GPT-5.5 or `gpt-5.3-codex-spark`.
+- Do not add, restore, or pin GPT-5.4 for repo-local agents.
+- Use GPT-5.5 as the default non-Spark model for correctness-heavy demo guard roles and any fallback from Spark quota limits.
+- When a Spark role cannot run because of quota, rerun the same scoped task on GPT-5.5. Use medium reasoning by default for Spark replacement unless the task is ambiguous, cross-cutting, or correctness-critical.
+- Keep Spark for low-risk read-only discovery, packetizing, and narrowly scoped mapping where its speed is useful and quota is available.
+- Before landing Codex agent model changes, run `tools/verify-codex-model-policy.sh`.
+
 ## Repo-specific agent roles
 
 - Local role wiring for this repo lives in `.codex/config.toml` and `.codex/agents/*.toml`.
@@ -383,6 +392,7 @@
 
 ## Verification expectations
 
+- For Codex agent model/config changes, run `tools/verify-codex-model-policy.sh`.
 - For demo-only changes, run the demo-local checks that actually exist.
 - For approved `../NBNv2` changes triggered by demo work, minimum verification is:
   - `dotnet test ../NBNv2/tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~Nbn.Tests.Proto.ProtoCompatibilityTests`

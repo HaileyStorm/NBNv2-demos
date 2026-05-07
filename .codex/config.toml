@@ -1,4 +1,7 @@
 # Project-specific multi-agent roles for NBNv2-demos.
+# Model policy: use only GPT-5.5 and gpt-5.3-codex-spark in role configs.
+# If a Spark role is blocked by quota, rerun that scoped task on GPT-5.5,
+# usually with medium reasoning unless the task demands high reasoning.
 
 [agents.explorer]
 description = "Read-heavy scout for demo ownership, call paths, sibling-runtime touchpoints, and candidate files."
