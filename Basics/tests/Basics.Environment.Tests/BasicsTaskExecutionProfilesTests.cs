@@ -82,11 +82,11 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(3, profile.VariationBand.MaxInternalNeuronDelta);
         Assert.Equal(14, profile.VariationBand.MaxAxonDelta);
         Assert.True(profile.VariationBand.AllowFunctionMutation);
-        Assert.Equal(64, profile.Sizing.InitialPopulationCount);
-        Assert.Equal(64, profile.Sizing.MinimumPopulationCount);
-        Assert.Equal(64, profile.Sizing.MaximumPopulationCount);
+        Assert.Equal(256, profile.Sizing.InitialPopulationCount);
+        Assert.Equal(256, profile.Sizing.MinimumPopulationCount);
+        Assert.Equal(256, profile.Sizing.MaximumPopulationCount);
         Assert.Equal((uint)3, profile.Sizing.ReproductionRunCount);
-        Assert.Equal(64, profile.Sizing.MaxConcurrentBrains);
+        Assert.Equal(256, profile.Sizing.MaxConcurrentBrains);
         Assert.Equal(0.43d, profile.Scheduling.ParentSelection.DiversityWeight);
         Assert.Equal(0.53d, profile.Scheduling.ParentSelection.ExplorationFraction);
         Assert.Equal((uint)3, profile.Scheduling.RunAllocation.MinRunsPerPair);
@@ -101,6 +101,10 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(0.50f, profile.TaskSettings.Multiplication.BehaviorStageGateFull);
         Assert.NotNull(profile.PpoOptimizer);
         Assert.False(profile.PpoOptimizer!.Enabled);
+        Assert.Equal((ulong)256, profile.PpoOptimizer.RolloutTickCount);
+        Assert.Equal((ulong)16, profile.PpoOptimizer.RolloutBatchCount);
+        Assert.Equal((uint)8, profile.PpoOptimizer.OptimizationEpochCount);
+        Assert.Equal((uint)16, profile.PpoOptimizer.MinibatchSize);
         Assert.True(profile.AdaptiveDiversity.Enabled);
         Assert.Equal(8, profile.AdaptiveDiversity.StallGenerationWindow);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);

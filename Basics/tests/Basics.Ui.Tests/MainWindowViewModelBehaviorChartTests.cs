@@ -188,9 +188,11 @@ public sealed class MainWindowViewModelBehaviorChartTests
         Assert.True(viewModel.ShowPpoServiceStatus);
         Assert.False(viewModel.ShowLocalReproductionSchedulingControls);
         Assert.True(viewModel.ShowPpoSchedulingNotice);
-        Assert.Equal("Generation Controller: PPO Core Service", viewModel.OptimizationModeTitle);
-        Assert.Equal("PPO Parent Context", viewModel.SchedulingSectionTitle);
+        Assert.Equal("Generation Controller: PPO Rollout Service", viewModel.OptimizationModeTitle);
+        Assert.Equal("PPO Rollout Parent Context", viewModel.SchedulingSectionTitle);
         Assert.Contains("generation control", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("artifact rollout", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("do not yet drive reward-gradient policy updates", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("multiplication", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Connect to IO", viewModel.PpoServiceDetail, StringComparison.Ordinal);
 

@@ -57,6 +57,7 @@ class RunMetrics:
     combo: Combo
     status: str
     attempt: int
+    optimization_mode: str = "local-reproduction"
     report_path: Path | None = None
     error: str = ""
     harness_exit_code: int | None = None
@@ -119,6 +120,38 @@ def parse_args() -> argparse.Namespace:
         "--allow-short-runs",
         action="store_true",
         help="Allow --duration-seconds below 300 for smoke/debug runs.",
+    )
+    parser.add_argument(
+        "--ppo-rollout-controller",
+        action="store_true",
+        help=(
+            "Enable the current PPO rollout-controller path in generated harness configs. "
+            "This benchmarks artifact rollout orchestration, not reward-gradient PPO learning."
+        ),
+    )
+    parser.add_argument(
+        "--ppo-rollout-ticks",
+        type=int,
+        default=256,
+        help="PPO rollout tick count written when --ppo-rollout-controller is set. Default: 256.",
+    )
+    parser.add_argument(
+        "--ppo-rollout-batches",
+        type=int,
+        default=16,
+        help="PPO rollout batch count written when --ppo-rollout-controller is set. Default: 16.",
+    )
+    parser.add_argument(
+        "--ppo-minibatch-size",
+        type=int,
+        default=16,
+        help="PPO minibatch size written when --ppo-rollout-controller is set. Default: 16.",
+    )
+    parser.add_argument(
+        "--ppo-epochs",
+        type=int,
+        default=8,
+        help="PPO optimization epoch count written when --ppo-rollout-controller is set. Default: 8.",
     )
     parser.add_argument(
         "--populations",
@@ -419,6 +452,15 @@ def validate_args(args: argparse.Namespace, *, require_binaries: bool) -> None:
         raise SystemExit("--worker-warmup-seconds must be >= 0.")
     if args.skip_degradation_ratio < 1.0:
         raise SystemExit("--skip-degradation-ratio must be >= 1.0.")
+    if args.ppo_rollout_controller:
+        if args.ppo_rollout_ticks <= 0:
+            raise SystemExit("--ppo-rollout-ticks must be > 0.")
+        if args.ppo_rollout_batches <= 0:
+            raise SystemExit("--ppo-rollout-batches must be > 0.")
+        if args.ppo_minibatch_size <= 0:
+            raise SystemExit("--ppo-minibatch-size must be > 0.")
+        if args.ppo_epochs <= 0:
+            raise SystemExit("--ppo-epochs must be > 0.")
 
     if not require_binaries:
         return
@@ -537,6 +579,10 @@ def combo_makes_sense(population: int, worker_count: int, max_concurrent: int) -
 
 def stable_combo_id(combo: Combo) -> str:
     return f"p{combo.population:03d}_w{combo.worker_count:03d}_c{combo.max_concurrent:03d}"
+
+
+def optimization_mode(args: argparse.Namespace) -> str:
+    return "ppo-rollout-controller" if args.ppo_rollout_controller else "local-reproduction"
 
 
 def tcp_address_parts(address: str) -> tuple[str, int]:
@@ -667,8 +713,9 @@ def write_harness_config(args: argparse.Namespace, combo: Combo, combo_dir: Path
     config_path = combo_dir / "harness_config.json"
     template_store = combo_dir / "templates"
     harness_port = args.harness_port_base + combo_index
+    mode = optimization_mode(args)
     config = {
-        "RunLabel": f"bench-multiplication-{stable_combo_id(combo)}",
+        "RunLabel": f"bench-multiplication-{mode}-{stable_combo_id(combo)}",
         "OutputDirectory": str(combo_dir / "harness_reports"),
         "Runtime": {
             "IoAddress": args.io_address,
@@ -722,6 +769,20 @@ def write_harness_config(args: argparse.Namespace, combo: Combo, combo_dir: Path
                 "MaxRunsPerPair": 6,
                 "FitnessExponent": 1.30,
                 "DiversityBoost": 0.15,
+            },
+            "PpoOptimizer": {
+                "Enabled": args.ppo_rollout_controller,
+                "ObjectiveName": "multiplication",
+                "RewardSignal": "basics.fitness",
+                "RolloutTickCount": args.ppo_rollout_ticks,
+                "RolloutBatchCount": args.ppo_rollout_batches,
+                "ClipEpsilon": 0.20,
+                "DiscountGamma": 0.99,
+                "GaeLambda": 0.95,
+                "LearningRate": 0.0003,
+                "OptimizationEpochCount": args.ppo_epochs,
+                "MinibatchSize": args.ppo_minibatch_size,
+                "Seed": 42,
             },
         },
         "Trials": {
@@ -935,12 +996,18 @@ def run_combo(args: argparse.Namespace, state: BenchmarkState, combo: Combo, com
             config_path = write_harness_config(args, combo, attempt_dir, combo_index)
             exit_code, report_path = run_harness(args, config_path, attempt_dir)
             metrics = parse_report(combo, attempt, exit_code, report_path)
+            metrics.optimization_mode = optimization_mode(args)
             last_metrics = metrics
             append_result_files(state, metrics)
             if metrics.success:
                 return metrics
         except Exception as exc:
-            metrics = RunMetrics(combo=combo, status="failed", attempt=attempt, error=str(exc))
+            metrics = RunMetrics(
+                combo=combo,
+                status="failed",
+                attempt=attempt,
+                optimization_mode=optimization_mode(args),
+                error=str(exc))
             last_metrics = metrics
             append_result_files(state, metrics)
         finally:
@@ -954,6 +1021,7 @@ def result_row(metrics: RunMetrics) -> dict[str, Any]:
         "population": metrics.combo.population,
         "worker_count": metrics.combo.worker_count,
         "max_concurrent": metrics.combo.max_concurrent,
+        "optimization_mode": metrics.optimization_mode,
         "reason": metrics.combo.reason,
         "status": metrics.status,
         "attempt": metrics.attempt,
@@ -1023,9 +1091,14 @@ def write_final_results_csv(state: BenchmarkState) -> None:
         writer.writerows(rows)
 
 
-def skip_combo(state: BenchmarkState, combo: Combo, reason: str) -> None:
+def skip_combo(args: argparse.Namespace, state: BenchmarkState, combo: Combo, reason: str) -> None:
     state.skipped_by_key[combo.key] = reason
-    metrics = RunMetrics(combo=combo, status="skipped", attempt=0, error=reason)
+    metrics = RunMetrics(
+        combo=combo,
+        status="skipped",
+        attempt=0,
+        optimization_mode=optimization_mode(args),
+        error=reason)
     append_result_files(state, metrics)
 
 
@@ -1294,6 +1367,16 @@ def main() -> int:
         "populations": list(args.populations),
         "base_worker_counts": list(args.worker_counts),
         "base_max_concurrencies": list(args.max_concurrencies),
+        "optimization_mode": optimization_mode(args),
+        "ppo_semantics": (
+            "artifact rollout/reproduction/speciation orchestration; not reward-gradient PPO learning"
+            if args.ppo_rollout_controller
+            else "local reproduction/speciation"
+        ),
+        "ppo_rollout_ticks": args.ppo_rollout_ticks if args.ppo_rollout_controller else None,
+        "ppo_rollout_batches": args.ppo_rollout_batches if args.ppo_rollout_controller else None,
+        "ppo_minibatch_size": args.ppo_minibatch_size if args.ppo_rollout_controller else None,
+        "ppo_epochs": args.ppo_epochs if args.ppo_rollout_controller else None,
         "optional_worker": args.include_optional_worker,
         "optional_concurrency": args.include_optional_concurrency,
         "io_address": args.io_address,
@@ -1312,7 +1395,7 @@ def main() -> int:
 
                 skip_reason = maybe_skip_for_degradation(args, state, combo)
                 if skip_reason is not None:
-                    skip_combo(state, combo, skip_reason)
+                    skip_combo(args, state, combo, skip_reason)
                     progress.update(1)
                     maybe_add_optional_concurrency(args, state, pending, progress)
                     maybe_add_optional_worker(args, state, pending, progress)

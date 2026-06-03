@@ -666,6 +666,10 @@ public sealed record BasicsTaskSettings
 
 public sealed record BasicsPpoOptimizerOptions
 {
+    public const string CurrentSemanticsLabel = "PPO rollout controller";
+    public const string CurrentSemanticsDisclosure =
+        "Current runtime semantics use PPO requests as artifact rollout and reproduction/speciation orchestration. Hyperparameters are validated, logged, and forwarded for provenance, but they do not yet drive reward-gradient policy updates.";
+
     public bool Enabled { get; init; }
     public string ObjectiveName { get; init; } = "multiplication";
     public string RewardSignal { get; init; } = "basics.fitness";

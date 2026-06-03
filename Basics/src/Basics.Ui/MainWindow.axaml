@@ -421,9 +421,9 @@
                                        FontWeight="SemiBold"
                                        Foreground="#182436" />
                             <CheckBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
-                                      Content="Use PPO core service as generation controller"
+                                      Content="Use PPO rollout service as generation controller"
                                       IsChecked="{Binding PpoOptimizerEnabled}"
-                                      ToolTip.Tip="When enabled, PPO controls the generation loop through IO Gateway. IO discovers service.endpoint.ppo_manager internally." />
+                                      ToolTip.Tip="When enabled, PPO controls the generation loop through IO Gateway as rollout orchestration; current runtime semantics do not apply reward-gradient policy updates." />
                             <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
                                        Text="{Binding PpoOptimizerDetail}"
                                        Foreground="#6C7A89"

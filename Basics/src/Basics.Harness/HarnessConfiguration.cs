@@ -243,14 +243,14 @@ internal sealed record HarnessPpoOptimizerConfig
     public bool Enabled { get; init; }
     public string ObjectiveName { get; init; } = "multiplication";
     public string RewardSignal { get; init; } = "basics.fitness";
-    public ulong RolloutTickCount { get; init; } = 16;
-    public ulong RolloutBatchCount { get; init; } = 1;
+    public ulong RolloutTickCount { get; init; } = 256;
+    public ulong RolloutBatchCount { get; init; } = 16;
     public float ClipEpsilon { get; init; } = 0.2f;
     public float DiscountGamma { get; init; } = 0.99f;
     public float GaeLambda { get; init; } = 0.95f;
     public float LearningRate { get; init; } = 0.0003f;
-    public uint OptimizationEpochCount { get; init; } = 2;
-    public uint MinibatchSize { get; init; } = 1;
+    public uint OptimizationEpochCount { get; init; } = 8;
+    public uint MinibatchSize { get; init; } = 16;
     public ulong Seed { get; init; } = 42;
 }
 

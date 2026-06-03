@@ -97,6 +97,18 @@ Advanced overrides are available through environment variables: `NBN_BASICS_UI_R
 
 The Basics UI local worker launcher starts WorkerNode roots on the current desktop and registers them with SettingsMonitor. When the Settings address field is blank, worker launch uses the host from the configured IO address with SettingsMonitor's default port `12010`. Set Settings address explicitly when the shared SettingsMonitor is on a different host or port. The worker advertise host must still resolve to the machine running Basics UI so HiveMind can place work back onto those WorkerNode roots.
 
+## PPO Rollout Controller
+
+The optional PPO path is currently a runtime rollout controller for generation candidates. Basics sends parent brain IDs, reproduction config, objective metadata, and PPO hyperparameters through IO Gateway to the sibling runtime's PPO manager. The runtime validates, logs, and forwards those hyperparameters with the run, then orchestrates artifact rollout around reproduction and speciation. It does not yet use the Basics reward signal, gamma/GAE, clip epsilon, learning rate, minibatch size, or epoch count for reward-gradient policy updates.
+
+For Multiplication, the task profile still leaves PPO disabled by default, but pre-fills a 256-candidate population and larger PPO rollout controls (`256` rollout ticks, `16` rollout batches, `16` minibatch, `8` epochs) so enabled runs start from the broader sweep shape that has been most useful for diagnosing candidate evaluation behavior. Treat those fields as run-shape/provenance controls until true PPO learning lands in `../NBNv2`.
+
+For controlled throughput sweeps, `tools/benchmark_multiplication_perf.py` can generate either local-reproduction configs or current PPO rollout-controller configs. The PPO mode is explicit in result metadata:
+
+```bash
+python3 tools/benchmark_multiplication_perf.py --ppo-rollout-controller --populations 256 --worker-counts 8,16 --max-concurrencies 16,32
+```
+
 ## Live Harness
 
 Generate a sample config:
