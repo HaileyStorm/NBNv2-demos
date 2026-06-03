@@ -2513,6 +2513,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             resume,
             wait,
             0);
+        if (output is null)
+        {
+            return new PrimeObservationResult(null, timing);
+        }
+
         var failureDetail = ClassifyObservationVectorFailure(output, 0, lastTick: 0);
         if (failureDetail is not null)
         {

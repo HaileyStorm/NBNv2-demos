@@ -549,8 +549,8 @@ public sealed class BasicsExecutionSessionTests
                 StringComparison.Ordinal);
             Assert.True(runtimeClient.SpawnRequestCount > 2, $"Expected vector-missing failures to retry, observed {runtimeClient.SpawnRequestCount} spawn request(s).");
             Assert.NotNull(final.LatestBatchTiming);
-            Assert.Equal(0d, final.LatestBatchTiming!.AverageObservationAttemptCount);
-            Assert.Equal(0d, final.LatestBatchTiming.AverageObservationSecondsPerAttempt);
+            Assert.True(final.LatestBatchTiming!.AverageObservationAttemptCount > 0d);
+            Assert.True(final.LatestBatchTiming.AverageObservationSecondsPerAttempt > 0d);
             Assert.True(final.LatestBatchTiming.AverageObservationWaitSeconds > 0d);
         }
         finally
@@ -641,6 +641,37 @@ public sealed class BasicsExecutionSessionTests
             Assert.Contains(
                 runtimeClient.VectorWaitTimeouts,
                 static timeout => timeout > TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_TreatsMissingStartupPrimeVector_AsNonFatalWarmupMiss()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            SuppressFirstInputOutputsPerBrain = true
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.Equal(0, final.EvaluationFailureCount);
+            Assert.True(final.BestAccuracy >= 1f);
+            Assert.NotNull(final.LatestBatchTiming);
+            Assert.True(final.LatestBatchTiming!.AverageObservationAttemptCount > 0d);
+            Assert.DoesNotContain("startup_vector_missing", final.EvaluationFailureSummary, StringComparison.Ordinal);
         }
         finally
         {
@@ -3380,6 +3411,7 @@ public sealed class BasicsExecutionSessionTests
         public float FinalReadyValue { get; init; } = 1f;
         public int? MaxOutputVectorsPerInput { get; init; }
         public bool SuppressOutputVectors { get; init; }
+        public bool SuppressFirstInputOutputsPerBrain { get; init; }
         public bool SuppressReadyOutputEvents { get; init; }
         public bool SuppressPreReadyReadyOutputEvents { get; init; }
         public bool RequirePlacementWaitForVisibility { get; init; }
@@ -3423,6 +3455,7 @@ public sealed class BasicsExecutionSessionTests
         private int _activeBrainInfoRequests;
         private int _maxObservedConcurrentBrainInfoRequests;
         private readonly Dictionary<Guid, (float Value, float Ready)> _lastVectorOutputByBrain = new();
+        private readonly HashSet<Guid> _brainsWithSuppressedFirstInputOutputs = new();
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
             => Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = clientName, ServerTimeMs = 1 });
@@ -3664,6 +3697,8 @@ public sealed class BasicsExecutionSessionTests
             var outputQueue = IsOutputActive(brainId) ? _outputs[brainId] : _delayedOutputs[brainId];
             var outputEventQueue = IsOutputActive(brainId) ? _outputEvents[brainId] : _delayedOutputEvents[brainId];
             var emittedVectorCount = 0;
+            var suppressThisInput = SuppressFirstInputOutputsPerBrain
+                                    && _brainsWithSuppressedFirstInputOutputs.Add(brainId);
 
             for (var offset = 1; offset <= readyDelayTicks; offset++)
             {
@@ -3675,7 +3710,8 @@ public sealed class BasicsExecutionSessionTests
                 {
                     vector = vector.Take(Math.Max(0, Math.Min(outputVectorWidth, vector.Length))).ToArray();
                 }
-                if (!SuppressOutputVectors
+                if (!suppressThisInput
+                    && !SuppressOutputVectors
                     && (MaxOutputVectorsPerInput is not int maxOutputVectorsPerInput
                         || emittedVectorCount < maxOutputVectorsPerInput)
                     && (!OnlyEmitOutputVectorOnChange
@@ -3689,12 +3725,13 @@ public sealed class BasicsExecutionSessionTests
                 }
 
                 _lastVectorOutputByBrain[brainId] = (value, ready);
-                if (value >= 0.5f)
+                if (!suppressThisInput && value >= 0.5f)
                 {
                     outputEventQueue.Enqueue(new BasicsRuntimeOutputEvent(brainId, 0, tick, value));
                 }
 
                 if (ready >= 0.5f
+                    && !suppressThisInput
                     && !SuppressReadyOutputEvents
                     && (offset == readyDelayTicks || !SuppressPreReadyReadyOutputEvents))
                 {
