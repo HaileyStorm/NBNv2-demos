@@ -67,7 +67,15 @@ class SweepResult:
 
     @property
     def valid(self) -> bool:
-        return self.status in {"ok", "target_not_met"} and self.completed_generations > 0
+        return (
+            self.status in {"ok", "target_not_met"}
+            and self.completed_generations > 0
+            and not self.infrastructure_failure
+        )
+
+    @property
+    def infrastructure_failure(self) -> bool:
+        return is_infrastructure_failure_detail(self.outcome_detail) or is_infrastructure_failure_detail(self.error)
 
     @property
     def seconds_per_generation(self) -> float | None:
@@ -184,6 +192,19 @@ def main() -> int:
             writer.write(json.dumps(result_to_json(result), sort_keys=True) + "\n")
 
         print_result(result)
+        if result.infrastructure_failure:
+            write_summary(args.output_root, results, best)
+            print()
+            print("Infrastructure failure")
+            print(
+                "  Aborting sweep: the harness could not spawn evaluation brains because "
+                "HiveMind reported no eligible workers. Start/verify WorkerNode capacity in "
+                "Workbench, then rerun the sweep."
+            )
+            print(f"  Detail: {result.outcome_detail or result.error}")
+            print(f"Summary: {args.output_root / 'summary.json'}")
+            print(f"Rows:    {results_path}")
+            return 3
         if result.valid and (best is None or rank_key(result) > rank_key(best)):
             best = result
         print_current_best(best)
@@ -405,6 +426,9 @@ def summarize_report(combo: PpoCombo, report_path: Path, exit_code: int, duratio
     outcome = str(trial.get("Outcome") or "unknown")
     status = "ok" if exit_code == 0 else "target_not_met" if exit_code == 2 else "failed"
     timed_out = outcome.lower() == "timedout" or "timed out" in str(trial.get("OutcomeDetail") or "").lower()
+    outcome_detail = str(trial.get("OutcomeDetail") or "")
+    if is_infrastructure_failure_detail(outcome_detail):
+        status = "infrastructure_failed"
     return SweepResult(
         combo=combo,
         status=status,
@@ -417,7 +441,7 @@ def summarize_report(combo: PpoCombo, report_path: Path, exit_code: int, duratio
         mean_fitness=float_or_zero(terminal.get("MeanFitness")),
         evaluation_failures=evaluation_failures,
         outcome=outcome,
-        outcome_detail=str(trial.get("OutcomeDetail") or ""),
+        outcome_detail=outcome_detail,
         timed_out=timed_out,
     )
 
@@ -521,6 +545,16 @@ def int_or_zero(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def is_infrastructure_failure_detail(value: str | None) -> bool:
+    if not value:
+        return False
+    normalized = value.lower()
+    return (
+        "spawn_worker_unavailable" in normalized
+        or "no eligible workers are available for placement" in normalized
+    )
 
 
 if __name__ == "__main__":
