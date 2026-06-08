@@ -109,6 +109,14 @@ For controlled throughput sweeps, `tools/benchmark_multiplication_perf.py` can g
 python3 tools/benchmark_multiplication_perf.py --ppo-rollout-controller --populations 256 --worker-counts 8,16 --max-concurrencies 16,32
 ```
 
+For live PPO rollout-controller setting sweeps, `tools/sweep_multiplication_ppo.py` runs one Multiplication harness trial per settings combo, streams per-generation progress, prints the current best settings after each combo, and writes a final recommendation:
+
+```bash
+python3 tools/sweep_multiplication_ppo.py --rollout-ticks 32 --rollout-batches 1,2,4 --epochs 5 --population 128 --max-concurrent-brains 16 --trial-timeout-seconds 600
+```
+
+The sweep script automatically raises `ReproductionRunCount` to the largest requested rollout batch count so batch settings are not silently capped by the generation scheduler.
+
 ## Live Harness
 
 Generate a sample config:
