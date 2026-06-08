@@ -330,6 +330,15 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         cancellationToken)
                     .ConfigureAwait(false);
                 population = evaluationResult.Population.ToList();
+                if (plan.PpoOptimizer?.Enabled == true)
+                {
+                    await SubmitPpoRewardFeedbackAsync(
+                            plan,
+                            generation,
+                            population,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
 
                 var generationMetrics = BuildGenerationMetrics(population, plan.StopCriteria, includeWinnerRuntimeState: true, currentGeneration: generation);
                 if (IsGenerationFullyFailed(population))
@@ -3473,7 +3482,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     membership.SpeciesDisplayName,
                     childComplexity,
                     LastEvaluation: null,
-                    CountsTowardOffspringMetrics: true);
+                    CountsTowardOffspringMetrics: true,
+                    PpoCandidateRunId: child.PpoRunId,
+                    PpoCandidateRunIndex: child.PpoRunIndex);
                 nextGeneration.Add(childMember);
                 if (lane == BasicsBreedingLane.Exploration)
                 {
@@ -4744,10 +4755,107 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 candidate.ChildDef.Clone(),
                 candidate.ReproductionReport?.Clone(),
                 candidate.MutationSummary?.Clone(),
-                candidate.SpeciationDecision?.Clone()));
+                candidate.SpeciationDecision?.Clone(),
+                run.RunId,
+                candidate.RunIndex));
         }
 
         return definitions;
+    }
+
+    private async Task SubmitPpoRewardFeedbackAsync(
+        BasicsEnvironmentPlan plan,
+        int generation,
+        IReadOnlyList<PopulationMember> population,
+        CancellationToken cancellationToken)
+    {
+        var options = plan.PpoOptimizer ?? new BasicsPpoOptimizerOptions();
+        var request = new ProtoPpo.PpoRecordRewardsRequest
+        {
+            ObjectiveName = string.IsNullOrWhiteSpace(options.ObjectiveName)
+                ? plan.SelectedTask.TaskId
+                : options.ObjectiveName.Trim(),
+            RewardSignal = string.IsNullOrWhiteSpace(options.RewardSignal)
+                ? "basics.fitness"
+                : options.RewardSignal.Trim(),
+            MetadataJson = JsonSerializer.Serialize(new
+            {
+                source = "basics",
+                task_id = plan.SelectedTask.TaskId,
+                generation
+            }),
+            Hyperparameters = new ProtoPpo.PpoHyperparameters
+            {
+                RewardSignal = string.IsNullOrWhiteSpace(options.RewardSignal)
+                    ? "basics.fitness"
+                    : options.RewardSignal.Trim(),
+                RolloutTickCount = options.RolloutTickCount,
+                RolloutBatchCount = options.RolloutBatchCount,
+                ClipEpsilon = options.ClipEpsilon,
+                DiscountGamma = options.DiscountGamma,
+                GaeLambda = options.GaeLambda,
+                LearningRate = options.LearningRate,
+                OptimizationEpochCount = options.OptimizationEpochCount,
+                MinibatchSize = options.MinibatchSize,
+                Seed = options.Seed
+            }
+        };
+
+        foreach (var member in population)
+        {
+            if (string.IsNullOrWhiteSpace(member.PpoCandidateRunId)
+                || member.PpoCandidateRunIndex is not uint runIndex
+                || member.LastEvaluation is not { Diagnostics.Count: 0 } evaluation)
+            {
+                continue;
+            }
+
+            request.Samples.Add(new ProtoPpo.PpoRewardSample
+            {
+                RunId = member.PpoCandidateRunId,
+                RunIndex = runIndex,
+                ChildDef = member.Definition.Clone(),
+                Reward = ResolvePpoRewardSignal(options.RewardSignal, evaluation),
+                Accuracy = evaluation.Accuracy,
+                Fitness = evaluation.Fitness,
+                Generation = (ulong)Math.Max(0, generation),
+                Terminal = plan.StopCriteria.IsSatisfied(evaluation.Accuracy, evaluation.Fitness),
+                MetadataJson = JsonSerializer.Serialize(new
+                {
+                    score_breakdown = evaluation.ScoreBreakdown,
+                    diagnostics = evaluation.Diagnostics
+                })
+            });
+        }
+
+        if (request.Samples.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await _runtimeClient.RecordPpoRewardsAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Reward feedback should improve future PPO choices, but a feedback-path failure
+            // should not invalidate an already evaluated generation.
+        }
+    }
+
+    private static float ResolvePpoRewardSignal(string? rewardSignal, BasicsTaskEvaluationResult evaluation)
+    {
+        var normalized = string.IsNullOrWhiteSpace(rewardSignal)
+            ? "basics.fitness"
+            : rewardSignal.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "basics.accuracy" => Math.Clamp(evaluation.Accuracy, 0f, 1f),
+            "basics.selection" or "basics.selection_signal" => ResolveCandidateSelectionSignal(evaluation.Fitness, evaluation.Accuracy, evaluation.ScoreBreakdown),
+            "basics.record_score" => ResolveCandidateRecordScore(evaluation),
+            _ => Math.Clamp(evaluation.Fitness, 0f, 1f)
+        };
     }
 
     private static (string SpeciesId, string SpeciesDisplayName) ResolvePpoCommittedMembership(
@@ -6157,7 +6265,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         ArtifactRef Definition,
         Repro.SimilarityReport? Report,
         Repro.MutationSummary? MutationSummary,
-        ProtoSpec.SpeciationDecision? SpeciationDecision = null);
+        ProtoSpec.SpeciationDecision? SpeciationDecision = null,
+        string? PpoRunId = null,
+        uint? PpoRunIndex = null);
 
     private readonly record struct CandidateSelection(
         PopulationMember Member,
@@ -6253,7 +6363,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         int? EvaluationGeneration = null,
         bool CountsTowardOffspringMetrics = false,
         Guid ActiveBrainId = default,
-        ArtifactRef? SnapshotArtifact = null)
+        ArtifactRef? SnapshotArtifact = null,
+        string? PpoCandidateRunId = null,
+        uint? PpoCandidateRunIndex = null)
     {
         public BasicsBootstrapOrigin? BootstrapOrigin { get; init; }
     }

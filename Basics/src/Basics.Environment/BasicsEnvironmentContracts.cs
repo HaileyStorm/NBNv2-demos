@@ -666,9 +666,9 @@ public sealed record BasicsTaskSettings
 
 public sealed record BasicsPpoOptimizerOptions
 {
-    public const string CurrentSemanticsLabel = "PPO rollout controller";
+    public const string CurrentSemanticsLabel = "PPO reward-policy controller";
     public const string CurrentSemanticsDisclosure =
-        "Current runtime semantics use PPO requests as artifact rollout and reproduction/speciation orchestration. Hyperparameters are validated, logged, and forwarded for provenance, but they do not yet drive reward-gradient policy updates.";
+        "Runtime PPO uses IO reward feedback from evaluated candidates to update a clipped policy over reproduction actions for future artifact rollouts. It remains an optional off-path controller; NBN brain execution itself is not backprop-trained.";
 
     public bool Enabled { get; init; }
     public string ObjectiveName { get; init; } = "multiplication";

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Run live Basics Multiplication PPO rollout-controller sweeps.
+"""Run live Basics Multiplication PPO reward-policy sweeps.
 
-The current runtime PPO path uses these fields as rollout/provenance controls,
-not reward-gradient policy-update hyperparameters. This script therefore ranks
-settings by observed live-run quality and stability rather than pretending that
-clip/gamma/learning-rate changes train a policy.
+The runtime PPO path uses these settings to shape candidate rollouts and reward
+feedback policy updates. This script ranks practical settings by observed
+live-run quality and stability.
 """
 
 from __future__ import annotations
@@ -92,10 +91,10 @@ def parse_int_list(value: str) -> list[int]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sweep live Basics Multiplication PPO rollout-controller settings."
+        description="Sweep live Basics Multiplication PPO reward-policy settings."
     )
     parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("32"))
-    parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1,2,3,4,8"))
+    parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1,2,4"))
     parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("5"))
     parser.add_argument("--minibatch-sizes", type=parse_int_list, default=parse_int_list("16"))
     parser.add_argument("--population", type=int, default=256)
@@ -147,10 +146,10 @@ def main() -> int:
     ]
     args.effective_reproduction_run_count = args.reproduction_run_count or max(args.rollout_batches)
 
-    print(f"Planned PPO rollout-controller sweep: {len(combos)} combo(s)")
+    print(f"Planned PPO reward-policy sweep: {len(combos)} combo(s)")
     print(
-        "Note: current PPO semantics rank rollout orchestration settings; "
-        "clip/gamma/GAE/lr are not reward-gradient training knobs yet."
+        "Note: first-pass results only produced useful completed generations at "
+        "batch=1; higher batch counts are included as deliberate load probes."
     )
     for combo in combos:
         if combo.rollout_batches > args.effective_reproduction_run_count:

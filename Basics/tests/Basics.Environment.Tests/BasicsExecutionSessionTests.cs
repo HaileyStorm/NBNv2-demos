@@ -3340,6 +3340,8 @@ public sealed class BasicsExecutionSessionTests
                    1,
                    true,
                    Guid.Empty,
+                   null,
+                   null,
                    null
                ],
                culture: null)
@@ -3441,6 +3443,7 @@ public sealed class BasicsExecutionSessionTests
         public List<Repro.ReproduceResult> ReproduceResults { get; } = new();
         public List<ProtoPpo.PpoStartRunRequest> PpoStartRequests { get; } = new();
         public List<ProtoPpo.PpoStopRunRequest> PpoStopRequests { get; } = new();
+        public List<ProtoPpo.PpoRecordRewardsRequest> PpoRewardRequests { get; } = new();
         public Queue<ProtoPpo.PpoRunDescriptor> PpoStatusRuns { get; } = new();
         public List<TimeSpan> AwaitPlacementTimeouts { get; } = new();
         public List<TimeSpan> VectorWaitTimeouts { get; } = new();
@@ -4192,6 +4195,22 @@ public sealed class BasicsExecutionSessionTests
                     State = ProtoPpo.PpoRunState.Cancelled,
                     StatusDetail = request.Reason
                 }
+            });
+        }
+
+        public Task<ProtoPpo.PpoRecordRewardsResponse?> RecordPpoRewardsAsync(
+            ProtoPpo.PpoRecordRewardsRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            PpoRewardRequests.Add(request.Clone());
+            return Task.FromResult<ProtoPpo.PpoRecordRewardsResponse?>(new ProtoPpo.PpoRecordRewardsResponse
+            {
+                FailureReason = PpoAvailable
+                    ? ProtoPpo.PpoFailureReason.PpoFailureNone
+                    : ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                FailureDetail = PpoAvailable ? string.Empty : "test PPO manager unavailable",
+                Accepted = PpoAvailable,
+                Update = new ProtoPpo.PpoPolicyUpdateReport()
             });
         }
 

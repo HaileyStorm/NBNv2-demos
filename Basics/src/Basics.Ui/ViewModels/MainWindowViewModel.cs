@@ -935,22 +935,22 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string OptimizationModeTitle
         => PpoOptimizerEnabled
-            ? "Generation Controller: PPO Rollout Service"
+            ? "Generation Controller: PPO Reward-Policy Service"
             : "Optimization Mode: Local Reproduction";
 
     public string PpoOptimizerDetail
         => PpoOptimizerEnabled
-            ? $"PPO rollout service owns generation control for {SelectedTask?.DisplayName ?? "the selected task"} through IO Gateway. {BasicsPpoOptimizerOptions.CurrentSemanticsDisclosure} IO discovers service.endpoint.ppo_manager internally; the PPO manager service must already be running and registered. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}."
+            ? $"PPO reward-policy service owns generation control for {SelectedTask?.DisplayName ?? "the selected task"} through IO Gateway. {BasicsPpoOptimizerOptions.CurrentSemanticsDisclosure} IO discovers service.endpoint.ppo_manager internally; the PPO manager service must already be running and registered. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}."
             : "Local reproduction/speciation owns generation control. PPO remains off and no PPO endpoint is configured by Basics.";
 
     public string SchedulingSectionTitle
         => PpoOptimizerEnabled
-            ? "PPO Rollout Parent Context"
+            ? "PPO Reward Parent Context"
             : "Local Reproduction + Speciation Scheduling";
 
     public string SchedulingSectionDetail
         => PpoOptimizerEnabled
-            ? "PPO selects generation candidates through IO Gateway using runtime rollout orchestration. Basics still applies the diversity preset, strength source, and IO-neuron protection when it supplies parent context to the PPO manager."
+            ? "PPO selects generation candidates through IO Gateway, then Basics sends evaluated reward feedback so the runtime can update future reproduction-action policy. Basics still applies the diversity preset, strength source, and IO-neuron protection when it supplies parent context to the PPO manager."
             : "Local reproduction/speciation selects parent pairs, allocates reproduction runs, and applies adaptive diversity pressure directly.";
 
     public string PpoServiceStatus

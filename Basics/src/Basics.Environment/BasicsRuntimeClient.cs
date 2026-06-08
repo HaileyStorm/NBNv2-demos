@@ -137,6 +137,10 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
         PpoStopRunRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<PpoRecordRewardsResponse?> RecordPpoRewardsAsync(
+        PpoRecordRewardsRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<SpeciationAssignResponse?> AssignSpeciationAsync(
         SpeciationAssignRequest request,
         CancellationToken cancellationToken = default);
@@ -1150,6 +1154,33 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             var response = await _system.Root.RequestAsync<PpoStopRunResult>(
                     _ioPid,
                     new PpoStopRun { Request = request },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return response?.Response;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<PpoRecordRewardsResponse?> RecordPpoRewardsAsync(
+        PpoRecordRewardsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(request);
+
+        try
+        {
+            var response = await _system.Root.RequestAsync<PpoRecordRewardsResult>(
+                    _ioPid,
+                    new PpoRecordRewards { Request = request },
                     _requestTimeout)
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);

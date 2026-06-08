@@ -743,6 +743,15 @@ public sealed class BasicsLiveTrialHarnessTests
                 FailureDetail = "test PPO manager unavailable"
             });
 
+        public Task<ProtoPpo.PpoRecordRewardsResponse?> RecordPpoRewardsAsync(
+            ProtoPpo.PpoRecordRewardsRequest request,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<ProtoPpo.PpoRecordRewardsResponse?>(new ProtoPpo.PpoRecordRewardsResponse
+            {
+                FailureReason = ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                FailureDetail = "test PPO manager unavailable"
+            });
+
         public Task<SpeciationAssignResponse?> AssignSpeciationAsync(SpeciationAssignRequest request, CancellationToken cancellationToken = default)
             => Task.FromResult<SpeciationAssignResponse?>(null);
 
