@@ -117,6 +117,12 @@ internal sealed record HarnessFileConfig
                 },
                 Reproduction = reproduction,
                 Scheduling = scheduling,
+                StopCriteria = new BasicsExecutionStopCriteria
+                {
+                    TargetAccuracy = Trials.TargetAccuracy,
+                    TargetFitness = Trials.TargetFitness,
+                    MaximumGenerations = Trials.MaximumGenerations
+                },
                 PpoOptimizer = new BasicsPpoOptimizerOptions
                 {
                     Enabled = normalizedEnvironment.PpoOptimizer.Enabled,
@@ -310,6 +316,7 @@ internal sealed record HarnessTrialConfig
 {
     public int MaxTrialCount { get; init; } = 4;
     public int TrialTimeoutSeconds { get; init; } = 180;
+    public int? MaximumGenerations { get; init; }
     public float TargetAccuracy { get; init; } = 1f;
     public float TargetFitness { get; init; } = 0.99f;
     public int RequiredSuccessfulTrials { get; init; } = 2;

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 import re
 import socket
 import subprocess
@@ -19,7 +20,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 GEN_RE = re.compile(
@@ -114,7 +115,24 @@ def parse_args() -> argparse.Namespace:
         help="Scheduled child slots per breeding call. Defaults to max(--rollout-batches) so batch sweeps are not silently capped.",
     )
     parser.add_argument("--trial-timeout-seconds", type=int, default=900)
+    parser.add_argument(
+        "--max-generations",
+        type=int,
+        default=30,
+        help="Maximum generations per trial. Use 0 to disable the generation cap.",
+    )
     parser.add_argument("--request-timeout-seconds", type=int, default=120)
+    parser.add_argument(
+        "--progress-interval-seconds",
+        type=int,
+        default=10,
+        help="Minimum seconds between repeated generation progress lines for the same generation.",
+    )
+    parser.add_argument(
+        "--verbose-harness-output",
+        action="store_true",
+        help="Mirror all harness stdout to the console. The full stream is always written to harness.stdout.log.",
+    )
     parser.add_argument("--io-address", default="127.0.0.1:12050")
     parser.add_argument("--io-gateway-name", default="io-gateway")
     parser.add_argument("--bind-host", default="0.0.0.0")
@@ -155,6 +173,13 @@ def main() -> int:
     args.effective_reproduction_run_count = args.reproduction_run_count or max(args.rollout_batches)
 
     print(f"Planned PPO reward-policy sweep: {len(combos)} combo(s)")
+    generation_budget = args.max_generations if args.max_generations > 0 else None
+    brain_budget = None if generation_budget is None else generation_budget * args.population
+    print(
+        f"Per combo: one trial, timeout={args.trial_timeout_seconds}s, "
+        f"max_generations={generation_budget if generation_budget is not None else 'none'}, "
+        f"approx_eval_brains={brain_budget if brain_budget is not None else 'uncapped'}"
+    )
     print(
         "Note: first-pass results only produced useful completed generations at "
         "batch=1; higher batch counts are included as deliberate load probes."
@@ -182,11 +207,12 @@ def main() -> int:
     results_path = args.output_root / "results.jsonl"
     best: SweepResult | None = None
     results: list[SweepResult] = []
+    sweep_started = time.monotonic()
 
     for index, combo in enumerate(combos, start=1):
         print()
         print(f"=== [{index}/{len(combos)}] Running {combo.label} ===")
-        result = run_combo(args, combo, index)
+        result = run_combo(args, combo, index, len(combos))
         results.append(result)
         with results_path.open("a", encoding="utf-8") as writer:
             writer.write(json.dumps(result_to_json(result), sort_keys=True) + "\n")
@@ -208,6 +234,7 @@ def main() -> int:
         if result.valid and (best is None or rank_key(result) > rank_key(best)):
             best = result
         print_current_best(best)
+        print_sweep_progress(index, len(combos), sweep_started)
 
     write_summary(args.output_root, results, best)
     print()
@@ -247,7 +274,7 @@ def build_harness(args: argparse.Namespace) -> None:
         raise SystemExit(completed.returncode)
 
 
-def run_combo(args: argparse.Namespace, combo: PpoCombo, combo_index: int) -> SweepResult:
+def run_combo(args: argparse.Namespace, combo: PpoCombo, combo_index: int, combo_count: int) -> SweepResult:
     combo_dir = args.output_root / combo.label
     combo_dir.mkdir(parents=True, exist_ok=True)
     config_path = combo_dir / "harness_config.json"
@@ -278,9 +305,17 @@ def run_combo(args: argparse.Namespace, combo: PpoCombo, combo_index: int) -> Sw
     latest_generation = 0
     latest_accuracy = 0.0
     latest_fitness = 0.0
+    last_progress_generation = 0
+    last_progress_at = 0.0
+    print(
+        f"[combo] {combo_index}/{combo_count} {combo.label}: "
+        f"ticks={combo.rollout_ticks} batches={combo.rollout_batches} "
+        f"epochs={combo.epochs} minibatch={combo.minibatch_size}"
+    )
     with stdout_path.open("w", encoding="utf-8") as log:
         log.write(f"# {' '.join(cmd)}\n")
         log.flush()
+        env = dict(os.environ) if args.verbose_harness_output else quiet_harness_environment(os.environ)
         process = subprocess.Popen(
             cmd,
             cwd=args.repo_root,
@@ -288,25 +323,38 @@ def run_combo(args: argparse.Namespace, combo: PpoCombo, combo_index: int) -> Sw
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=env,
         )
         assert process.stdout is not None
         for line in process.stdout:
             log.write(line)
             log.flush()
             stripped = line.rstrip()
-            print(stripped)
             report_match = REPORT_RE.match(stripped)
             if report_match:
                 report_path = Path(report_match.group("path")).expanduser()
+                print(stripped)
+                continue
             gen_match = GEN_RE.search(stripped)
             if gen_match:
                 latest_generation = int(gen_match.group("generation"))
                 latest_accuracy = parse_float(gen_match.group("accuracy"))
                 latest_fitness = parse_float(gen_match.group("fitness"))
-                print(
-                    f"[progress] {combo.label} gen={latest_generation} "
-                    f"best_acc={latest_accuracy:.4f} best_fit={latest_fitness:.4f}"
+                now = time.monotonic()
+                should_print_progress = (
+                    latest_generation != last_progress_generation
+                    or now - last_progress_at >= max(1, args.progress_interval_seconds)
                 )
+                if should_print_progress:
+                    print(
+                        f"[progress] {combo.label} gen={latest_generation} "
+                        f"best_acc={latest_accuracy:.4f} best_fit={latest_fitness:.4f}"
+                    )
+                    last_progress_generation = latest_generation
+                    last_progress_at = now
+                continue
+            if args.verbose_harness_output or should_echo_harness_line(stripped):
+                print(stripped)
         exit_code = process.wait()
 
     duration = time.monotonic() - started
@@ -399,6 +447,7 @@ def write_config(
         "Trials": {
             "MaxTrialCount": 1,
             "TrialTimeoutSeconds": args.trial_timeout_seconds,
+            "MaximumGenerations": args.max_generations if args.max_generations > 0 else None,
             "TargetAccuracy": 1.0,
             "TargetFitness": 0.999,
             "RequiredSuccessfulTrials": 1,
@@ -425,8 +474,13 @@ def summarize_report(combo: PpoCombo, report_path: Path, exit_code: int, duratio
     )
     outcome = str(trial.get("Outcome") or "unknown")
     status = "ok" if exit_code == 0 else "target_not_met" if exit_code == 2 else "failed"
-    timed_out = outcome.lower() == "timedout" or "timed out" in str(trial.get("OutcomeDetail") or "").lower()
     outcome_detail = str(trial.get("OutcomeDetail") or "")
+    outcome_detail_normalized = outcome_detail.lower()
+    timed_out = (
+        outcome.lower() == "timedout"
+        or "timed out" in outcome_detail_normalized
+        or "trial_timeout" in outcome_detail_normalized
+    )
     if is_infrastructure_failure_detail(outcome_detail):
         status = "infrastructure_failed"
     return SweepResult(
@@ -486,6 +540,18 @@ def print_current_best(best: SweepResult | None) -> None:
     )
 
 
+def print_sweep_progress(completed: int, total: int, started: float) -> None:
+    elapsed = time.monotonic() - started
+    remaining = total - completed
+    eta = "n/a"
+    if completed > 0 and remaining > 0:
+        eta = format_duration((elapsed / completed) * remaining)
+    print(
+        f"[sweep] completed={completed}/{total} elapsed={format_duration(elapsed)} "
+        f"eta={eta}"
+    )
+
+
 def print_recommendation(best: SweepResult) -> None:
     print(
         f"  rollout ticks:   {best.combo.rollout_ticks}\n"
@@ -524,6 +590,45 @@ def ensure_io_reachable(address: str) -> None:
         except OSError:
             time.sleep(0.2)
     raise SystemExit(f"IO Gateway is not reachable at {address}; start the runtime stack first.")
+
+
+def quiet_harness_environment(source: Mapping[str, str]) -> dict[str, str]:
+    env = dict(source)
+    env["Logging__LogLevel__Microsoft"] = "Warning"
+    env["Logging__LogLevel__Microsoft.AspNetCore"] = "Warning"
+    env["Logging__LogLevel__Microsoft.AspNetCore.Hosting.Diagnostics"] = "Warning"
+    env["Logging__LogLevel__Microsoft.AspNetCore.Routing.EndpointMiddleware"] = "Warning"
+    env["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Warning"
+    return env
+
+
+def should_echo_harness_line(line: str) -> bool:
+    if not line:
+        return False
+    lowered = line.lower()
+    return (
+        line.startswith("[trial ")
+        or line.startswith("Report:")
+        or line.startswith("Stable target ")
+        or lowered.startswith("warn:")
+        or lowered.startswith("fail:")
+        or lowered.startswith("critical:")
+        or "exception" in lowered
+        or "failed" in lowered
+        or "timed out" in lowered
+        or "trial_timeout" in lowered
+    )
+
+
+def format_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{sec:02d}s"
+    if minutes:
+        return f"{minutes}m{sec:02d}s"
+    return f"{sec}s"
 
 
 def parse_float(value: str) -> float:
