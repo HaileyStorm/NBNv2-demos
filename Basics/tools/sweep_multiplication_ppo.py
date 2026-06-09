@@ -34,6 +34,7 @@ REPORT_RE = re.compile(r"^Report:\s+(?P<path>.+)$")
 
 @dataclass(frozen=True)
 class PpoCombo:
+    population: int
     rollout_ticks: int
     rollout_batches: int
     epochs: int
@@ -42,6 +43,7 @@ class PpoCombo:
     @property
     def label(self) -> str:
         return (
+            f"pop{self.population:03d}_"
             f"ticks{self.rollout_ticks:03d}_"
             f"batches{self.rollout_batches:02d}_"
             f"epochs{self.epochs:02d}_"
@@ -106,7 +108,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1,2,4"))
     parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("5"))
     parser.add_argument("--minibatch-sizes", type=parse_int_list, default=parse_int_list("16"))
-    parser.add_argument("--population", type=int, default=256)
+    parser.add_argument("--population", type=parse_int_list, default=parse_int_list("256"))
     parser.add_argument("--max-concurrent-brains", type=int, default=32)
     parser.add_argument(
         "--reproduction-run-count",
@@ -162,8 +164,9 @@ def main() -> int:
         args.output_root = args.output_root.resolve()
 
     combos = [
-        PpoCombo(ticks, batches, epochs, minibatch)
-        for ticks, batches, epochs, minibatch in itertools.product(
+        PpoCombo(population, ticks, batches, epochs, minibatch)
+        for population, ticks, batches, epochs, minibatch in itertools.product(
+            args.population,
             args.rollout_ticks,
             args.rollout_batches,
             args.epochs,
@@ -174,11 +177,16 @@ def main() -> int:
 
     print(f"Planned PPO reward-policy sweep: {len(combos)} combo(s)")
     generation_budget = args.max_generations if args.max_generations > 0 else None
-    brain_budget = None if generation_budget is None else generation_budget * args.population
+    population_text = ",".join(str(population) for population in args.population)
+    brain_budget_text = (
+        "uncapped"
+        if generation_budget is None
+        else ",".join(str(generation_budget * population) for population in args.population)
+    )
     print(
         f"Per combo: one trial, timeout={args.trial_timeout_seconds}s, "
         f"max_generations={generation_budget if generation_budget is not None else 'none'}, "
-        f"approx_eval_brains={brain_budget if brain_budget is not None else 'uncapped'}"
+        f"population={population_text}, approx_eval_brains={brain_budget_text}"
     )
     print(
         "Note: first-pass results only produced useful completed generations at "
@@ -191,7 +199,7 @@ def main() -> int:
                 f"reproduction run count is {args.effective_reproduction_run_count}."
             )
         print(
-            f"  {combo.label}: ticks={combo.rollout_ticks} "
+            f"  {combo.label}: population={combo.population} ticks={combo.rollout_ticks} "
             f"batches={combo.rollout_batches} epochs={combo.epochs} "
             f"minibatch={combo.minibatch_size}"
         )
@@ -309,7 +317,7 @@ def run_combo(args: argparse.Namespace, combo: PpoCombo, combo_index: int, combo
     last_progress_at = 0.0
     print(
         f"[combo] {combo_index}/{combo_count} {combo.label}: "
-        f"ticks={combo.rollout_ticks} batches={combo.rollout_batches} "
+        f"population={combo.population} ticks={combo.rollout_ticks} batches={combo.rollout_batches} "
         f"epochs={combo.epochs} minibatch={combo.minibatch_size}"
     )
     with stdout_path.open("w", encoding="utf-8") as log:
@@ -423,10 +431,10 @@ def write_config(
                 "SeedShape": {},
             },
             "Sizing": {
-                "InitialPopulationCount": args.population,
-                "MinimumPopulationCount": args.population,
-                "MaximumPopulationCount": args.population,
-            "ReproductionRunCount": args.effective_reproduction_run_count,
+                "InitialPopulationCount": combo.population,
+                "MinimumPopulationCount": combo.population,
+                "MaximumPopulationCount": combo.population,
+                "ReproductionRunCount": args.effective_reproduction_run_count,
                 "MaxConcurrentBrains": args.max_concurrent_brains,
             },
             "PpoOptimizer": {
@@ -535,6 +543,7 @@ def print_current_best(best: SweepResult | None) -> None:
     print(
         f"[current best] ticks={best.combo.rollout_ticks} batches={best.combo.rollout_batches} "
         f"epochs={best.combo.epochs} minibatch={best.combo.minibatch_size} "
+        f"population={best.combo.population} "
         f"fitness={best.best_fitness:.4f} acc={best.best_accuracy:.4f} "
         f"gens={best.completed_generations}"
     )
@@ -558,6 +567,7 @@ def print_recommendation(best: SweepResult) -> None:
         f"  rollout batches: {best.combo.rollout_batches}\n"
         f"  epochs:          {best.combo.epochs}\n"
         f"  minibatch size:  {best.combo.minibatch_size}\n"
+        f"  population:      {best.combo.population}\n"
         f"  observed fitness {best.best_fitness:.4f}, accuracy {best.best_accuracy:.4f}, "
         f"{best.completed_generations} generation(s)"
     )
