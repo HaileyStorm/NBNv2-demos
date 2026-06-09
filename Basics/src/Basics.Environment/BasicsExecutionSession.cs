@@ -1499,8 +1499,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
                 batchEvaluations = completedEvaluations.ToArray();
             }
-            var cleanedBatchMembers = retainEvaluatedBrainsForPpo
-                ? batchEvaluations.Select(static result => result.Member).ToList()
+            IReadOnlyList<PopulationMember> cleanedBatchMembers = retainEvaluatedBrainsForPpo
+                ? batchEvaluations.Select(static result => result.Member).ToArray()
                 : await TeardownPopulationBrainsAsync(
                         batchEvaluations.Select(static result => result.Member).ToArray(),
                         CancellationToken.None)
@@ -1512,6 +1512,19 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             batchTimings.Add(batchTiming);
             evaluated.AddRange(reusedBatchMembers);
             evaluated.AddRange(batchResults.Select(static result => result.Member));
+            if (retainEvaluatedBrainsForPpo)
+            {
+                var cappedEvaluated = await RetainLivePpoParentCandidatesAsync(
+                        evaluated,
+                        plan.Scheduling.ParentSelection,
+                        (int)Math.Min(
+                            int.MaxValue,
+                            plan.SizingOverrides.ReproductionRunCount ?? plan.Capacity.RecommendedReproductionRunCount),
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+                evaluated.Clear();
+                evaluated.AddRange(cappedEvaluated);
+            }
 
             onSnapshot?.Invoke(CreateSnapshot(
                 plan.StopCriteria,
@@ -2020,6 +2033,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return false;
         }
 
+        if (IsCapacityWideSpawnFailure(diagnostic))
+        {
+            return false;
+        }
+
         if (diagnostic.Contains("spawn_request_canceled", StringComparison.Ordinal)
             || diagnostic.Contains("spawn_brain_info_timeout", StringComparison.Ordinal))
         {
@@ -2060,7 +2078,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return false;
         }
 
-        return diagnostic.Contains("spawn_unavailable", StringComparison.Ordinal)
+        return IsCapacityWideSpawnFailure(diagnostic)
                || diagnostic.Contains("spawn_request_failed", StringComparison.Ordinal)
                || diagnostic.Contains("spawn_empty_response", StringComparison.Ordinal)
                || diagnostic.Contains("spawn_invalid_request", StringComparison.Ordinal);
@@ -2073,6 +2091,59 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
     private static int ResolveEvaluationConcurrency(int recommendedMaxConcurrentBrains)
         => Math.Max(1, recommendedMaxConcurrentBrains);
+
+    private static bool IsCapacityWideSpawnFailure(string diagnostic)
+        => diagnostic.Contains("spawn_unavailable", StringComparison.Ordinal)
+           || diagnostic.Contains("spawn_worker_unavailable", StringComparison.Ordinal)
+           || diagnostic.Contains("No eligible workers are available for placement", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<IReadOnlyList<PopulationMember>> RetainLivePpoParentCandidatesAsync(
+        IReadOnlyList<PopulationMember> batch,
+        BasicsParentSelectionPolicy parentSelection,
+        int reproductionRunCount,
+        CancellationToken cancellationToken)
+    {
+        if (batch.Count == 0)
+        {
+            return Array.Empty<PopulationMember>();
+        }
+
+        var liveCandidateLimit = Math.Clamp(
+            Math.Max(parentSelection.MaxParentsPerSpecies * 2, reproductionRunCount * 2),
+            2,
+            batch.Count);
+        var retainedActiveBrainIds = batch
+            .OrderByDescending(static member => ResolveParentSelectionSignal(member.LastEvaluation))
+            .ThenByDescending(static member => ResolveCandidateSelectionAccuracyOrDefault(member.LastEvaluation))
+            .ThenByDescending(static member => member.LastEvaluation?.Accuracy ?? 0f)
+            .Where(static member => member.ActiveBrainId != Guid.Empty)
+            .Take(liveCandidateLimit)
+            .Select(static member => member.ActiveBrainId)
+            .ToHashSet();
+
+        var cleaned = new List<PopulationMember>(batch.Count);
+        foreach (var member in batch)
+        {
+            if (member.ActiveBrainId == Guid.Empty || retainedActiveBrainIds.Contains(member.ActiveBrainId))
+            {
+                cleaned.Add(member);
+                continue;
+            }
+
+            if (member.ActiveBrainId != Guid.Empty)
+            {
+                await TeardownBrainAsync(member.ActiveBrainId, cancellationToken).ConfigureAwait(false);
+            }
+
+            cleaned.Add(member with
+            {
+                ActiveBrainId = Guid.Empty,
+                SnapshotArtifact = null
+            });
+        }
+
+        return cleaned;
+    }
 
     private sealed class SpawnRequestPacer
     {

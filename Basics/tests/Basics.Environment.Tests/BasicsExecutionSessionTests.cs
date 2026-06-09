@@ -2079,6 +2079,68 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_AbortsBatch_ForSpawnWorkerUnavailable()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            PersistentSpawnFailureCount = 1,
+            PersistentSpawnFailureCode = "spawn_worker_unavailable",
+            PersistentSpawnFailureMessage = "No eligible workers are available for placement."
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var snapshots = new List<BasicsExecutionSnapshot>();
+            var plan = CreatePlan(
+                    BasicsOutputObservationMode.VectorPotential,
+                    new BasicsExecutionStopCriteria
+                    {
+                        MaximumGenerations = 1,
+                        TargetAccuracy = 1.1f,
+                        TargetFitness = 1.1f
+                    },
+                    new AndTaskPlugin()) with
+            {
+                Capacity = new BasicsCapacityRecommendation(
+                    Source: BasicsCapacitySource.RuntimePlacementInventory,
+                    EligibleWorkerCount: 1,
+                    RecommendedInitialPopulationCount: 2,
+                    RecommendedReproductionRunCount: 1,
+                    RecommendedMaxConcurrentBrains: 2,
+                    CapacityScore: 1f,
+                    EffectiveRamFreeBytes: 8UL * 1024UL * 1024UL * 1024UL,
+                    Summary: "test")
+            };
+
+            var final = await session.RunAsync(
+                plan,
+                new AndTaskPlugin(),
+                snapshots.Add,
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Equal(2, runtimeClient.SpawnRequestCount);
+            Assert.Contains("spawn_worker_unavailable", final.DetailText, StringComparison.Ordinal);
+            Assert.Contains("No eligible workers", final.DetailText, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Failed
+                            && snapshot.DetailText.Contains("aborted after unrecoverable spawn failure", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                snapshots,
+                snapshot => snapshot.State == BasicsExecutionState.Running
+                            && snapshot.StatusText.Contains("Evaluating generation 1...", StringComparison.Ordinal)
+                            && snapshot.DetailText.Contains("attempt 2/3", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ExecutionSession_PreservesExtendedSpawnInternalErrorDetail_InSummaries()
     {
         const string detailedFailure =

@@ -101,7 +101,7 @@ The Basics UI local worker launcher starts WorkerNode roots on the current deskt
 
 The optional PPO path is a runtime reward-policy controller for generation candidates. Basics sends parent brain IDs, reproduction config, objective metadata, and PPO hyperparameters through IO Gateway to the sibling runtime's PPO manager. The runtime applies its current controller policy to reproduction mutation knobs, orchestrates artifact rollout around reproduction and speciation, then Basics sends evaluated candidate rewards back through IO so the PPO manager can update future reproduction-action policy.
 
-For Multiplication, the task profile still leaves PPO disabled by default, but pre-fills conservative PPO controls from the first pass that produced useful completed generations under load: `32` rollout ticks, `1` rollout batch, `16` minibatch, and `5` epochs. Higher rollout batch counts can increase pressure on Speciation/IO and should be swept deliberately.
+For Multiplication, the task profile still leaves PPO disabled by default, but pre-fills conservative PPO controls from the latest completed sweeps: `16` rollout ticks, `2` rollout batches, `2` minibatch size, and `2` epochs. `8` rollout ticks completed more consistently under liveness pressure, while `16` produced the best observed fitness before the affected runtime run stalled.
 
 For controlled throughput sweeps, `tools/benchmark_multiplication_perf.py` can generate either local-reproduction configs or PPO controller configs. The PPO mode is explicit in result metadata:
 
@@ -112,10 +112,10 @@ python3 tools/benchmark_multiplication_perf.py --ppo-rollout-controller --popula
 For live PPO reward-policy setting sweeps, `tools/sweep_multiplication_ppo.py` runs one Multiplication harness trial per settings combo, streams per-generation progress, prints the current best settings after each combo, and writes a final recommendation:
 
 ```bash
-python3 tools/sweep_multiplication_ppo.py --rollout-ticks 32 --rollout-batches 1,2,4 --epochs 5 --population 128 --max-concurrent-brains 16 --trial-timeout-seconds 600
+python3 tools/sweep_multiplication_ppo.py --rollout-ticks 8,16 --rollout-batches 1,2 --epochs 2,5 --minibatch-sizes 1,2,4 --population 32 --max-concurrent-brains 32 --max-generations 10 --trial-timeout-seconds 600
 ```
 
-The sweep script automatically raises `ReproductionRunCount` to the largest requested rollout batch count so batch settings are not silently capped by the generation scheduler.
+The sweep script automatically raises `ReproductionRunCount` to the largest requested rollout batch count so batch settings are not silently capped by the generation scheduler. A trial timeout or a no-output-vector liveness collapse aborts the sweep early so the remaining result grid is not filled with misleading zero-fitness trials from a poisoned runtime state.
 
 ## Live Harness
 

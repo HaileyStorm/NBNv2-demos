@@ -101,10 +101,10 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.Equal(0.50f, profile.TaskSettings.Multiplication.BehaviorStageGateFull);
         Assert.NotNull(profile.PpoOptimizer);
         Assert.False(profile.PpoOptimizer!.Enabled);
-        Assert.Equal((ulong)32, profile.PpoOptimizer.RolloutTickCount);
-        Assert.Equal((ulong)1, profile.PpoOptimizer.RolloutBatchCount);
-        Assert.Equal((uint)5, profile.PpoOptimizer.OptimizationEpochCount);
-        Assert.Equal((uint)16, profile.PpoOptimizer.MinibatchSize);
+        Assert.Equal((ulong)16, profile.PpoOptimizer.RolloutTickCount);
+        Assert.Equal((ulong)2, profile.PpoOptimizer.RolloutBatchCount);
+        Assert.Equal((uint)2, profile.PpoOptimizer.OptimizationEpochCount);
+        Assert.Equal((uint)2, profile.PpoOptimizer.MinibatchSize);
         Assert.True(profile.AdaptiveDiversity.Enabled);
         Assert.Equal(8, profile.AdaptiveDiversity.StallGenerationWindow);
         Assert.Equal(4, profile.OutputSamplingPolicy.MaxReadyWindowTicks);

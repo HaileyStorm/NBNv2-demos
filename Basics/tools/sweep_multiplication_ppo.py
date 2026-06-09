@@ -78,7 +78,11 @@ class SweepResult:
 
     @property
     def infrastructure_failure(self) -> bool:
-        return is_infrastructure_failure_detail(self.outcome_detail) or is_infrastructure_failure_detail(self.error)
+        return (
+            self.timed_out
+            or is_infrastructure_failure_detail(self.outcome_detail)
+            or is_infrastructure_failure_detail(self.error)
+        )
 
     @property
     def seconds_per_generation(self) -> float | None:
@@ -104,11 +108,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Sweep live Basics Multiplication PPO reward-policy settings."
     )
-    parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("32"))
-    parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1,2,4"))
-    parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("5"))
-    parser.add_argument("--minibatch-sizes", type=parse_int_list, default=parse_int_list("16"))
-    parser.add_argument("--population", type=parse_int_list, default=parse_int_list("256"))
+    parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("8,16"))
+    parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1,2"))
+    parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("2,5"))
+    parser.add_argument("--minibatch-sizes", type=parse_int_list, default=parse_int_list("1,2,4"))
+    parser.add_argument("--population", type=parse_int_list, default=parse_int_list("32"))
     parser.add_argument("--max-concurrent-brains", type=int, default=32)
     parser.add_argument(
         "--reproduction-run-count",
@@ -116,14 +120,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Scheduled child slots per breeding call. Defaults to max(--rollout-batches) so batch sweeps are not silently capped.",
     )
-    parser.add_argument("--trial-timeout-seconds", type=int, default=900)
+    parser.add_argument("--trial-timeout-seconds", type=int, default=600)
     parser.add_argument(
         "--max-generations",
         type=int,
-        default=30,
+        default=10,
         help="Maximum generations per trial. Use 0 to disable the generation cap.",
     )
-    parser.add_argument("--request-timeout-seconds", type=int, default=120)
+    parser.add_argument("--request-timeout-seconds", type=int, default=15)
     parser.add_argument(
         "--progress-interval-seconds",
         type=int,
@@ -189,8 +193,8 @@ def main() -> int:
         f"population={population_text}, approx_eval_brains={brain_budget_text}"
     )
     print(
-        "Note: first-pass results only produced useful completed generations at "
-        "batch=1; higher batch counts are included as deliberate load probes."
+        "Note: latest completed sweeps favored rollout_ticks=16, rollout_batches=2, "
+        "epochs=2, minibatch_size=2; rollout_ticks=8 was more consistently stable."
     )
     for combo in combos:
         if combo.rollout_batches > args.effective_reproduction_run_count:
@@ -231,9 +235,9 @@ def main() -> int:
             print()
             print("Infrastructure failure")
             print(
-                "  Aborting sweep: the harness could not spawn evaluation brains because "
-                "HiveMind reported no eligible workers. Start/verify WorkerNode capacity in "
-                "Workbench, then rerun the sweep."
+                "  Aborting sweep: this trial hit a runtime liveness/capacity failure. "
+                "Stop or restart affected runtime services, verify WorkerNode placement "
+                "inventory in Workbench, then rerun the sweep."
             )
             print(f"  Detail: {result.outcome_detail or result.error}")
             print(f"Summary: {args.output_root / 'summary.json'}")
@@ -669,6 +673,11 @@ def is_infrastructure_failure_detail(value: str | None) -> bool:
     return (
         "spawn_worker_unavailable" in normalized
         or "no eligible workers are available for placement" in normalized
+        or (
+            "output_timeout_or_width_mismatch:vector_missing" in normalized
+            and "vectors_seen=0" in normalized
+            and "last_tick=0" in normalized
+        )
     )
 
 
