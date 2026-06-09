@@ -706,18 +706,19 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         try
         {
             ResetTerminationBuffer(brainId);
-            return await _system.Root.RequestAsync<KillBrainViaIOAck>(
-                    _ioPid,
-                    new KillBrainViaIO
-                    {
-                        Request = new KillBrain
+            return await ExecuteIoRequestWithReconnectAsync(
+                    () => _system.Root.RequestAsync<KillBrainViaIOAck>(
+                        _ioPid,
+                        new KillBrainViaIO
                         {
-                            BrainId = brainId.ToProtoUuid(),
-                            Reason = reason ?? string.Empty
-                        }
-                    },
-                    _requestTimeout)
-                .WaitAsync(cancellationToken)
+                            Request = new KillBrain
+                            {
+                                BrainId = brainId.ToProtoUuid(),
+                                Reason = reason ?? string.Empty
+                            }
+                        },
+                        _requestTimeout),
+                    cancellationToken)
                 .ConfigureAwait(false);
         }
         catch

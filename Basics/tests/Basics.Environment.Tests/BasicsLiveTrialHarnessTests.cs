@@ -406,6 +406,39 @@ public sealed class BasicsLiveTrialHarnessTests
     }
 
     [Fact]
+    public async Task LiveTrialHarness_CleansUpRetainedBestBrainAfterTerminalSnapshot()
+    {
+        var retainedBrainId = Guid.NewGuid();
+        var runtimeClient = new FakeHarnessRuntimeClient();
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(runtimeClient),
+            executionRunnerFactory: (_, _) => new ScriptedExecutionRunner(new[]
+            {
+                CreateSnapshot(
+                    BasicsExecutionState.Stopped,
+                    statusText: "Execution reached the configured generation limit.",
+                    detailText: "Generation 3 reached the configured maximum.",
+                    generation: 3,
+                    speciesCount: 2,
+                    bestAccuracy: 0.75f,
+                    bestFitness: 0.80f,
+                    activeBestBrainId: retainedBrainId)
+            }));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1),
+            new AndTaskPlugin());
+
+        var trial = Assert.Single(report.Trials);
+        Assert.Equal(BasicsLiveTrialOutcome.Stopped, trial.Outcome);
+        Assert.NotNull(trial.TerminalSnapshot?.BestCandidate);
+        var killed = Assert.Single(runtimeClient.KilledBrains);
+        Assert.Equal(retainedBrainId, killed.BrainId);
+        Assert.Equal("basics_live_trial_complete", killed.Reason);
+        Assert.Contains(retainedBrainId, runtimeClient.TerminationWaits);
+    }
+
+    [Fact]
     public async Task LiveTrialHarness_CapsRetainedSnapshots_ButPreservesObservedCountAndLatestSnapshot()
     {
         var snapshots = Enumerable.Range(1, 5_000)
@@ -523,7 +556,8 @@ public sealed class BasicsLiveTrialHarnessTests
         string evaluationFailureSummary = "",
         float bestAccuracy = 1f,
         float bestFitness = 1f,
-        IReadOnlyDictionary<string, float>? scoreBreakdown = null)
+        IReadOnlyDictionary<string, float>? scoreBreakdown = null,
+        Guid? activeBestBrainId = null)
         => new(
             State: state,
             StatusText: statusText,
@@ -548,7 +582,7 @@ public sealed class BasicsLiveTrialHarnessTests
             BestCandidate: new BasicsExecutionBestCandidateSummary(
                 DefinitionArtifact: new string('a', 64).ToArtifactRef(256, "application/x-nbn", "http://fake-store/winner"),
                 SnapshotArtifact: null,
-                ActiveBrainId: null,
+                ActiveBrainId: activeBestBrainId,
                 SpeciesId: "species.default",
                 Accuracy: bestAccuracy,
                 Fitness: bestFitness,
@@ -573,6 +607,8 @@ public sealed class BasicsLiveTrialHarnessTests
         public string? ConnectedClientName { get; private set; }
         public ConnectAck? ConnectAckToReturn { get; init; } = new ConnectAck { ServerName = "nbn.io", ServerTimeMs = 1 };
         public Func<string, CancellationToken, Task<ConnectAck?>>? ConnectBehavior { get; init; }
+        public List<(Guid BrainId, string Reason)> KilledBrains { get; } = new();
+        public List<Guid> TerminationWaits { get; } = new();
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
@@ -674,13 +710,23 @@ public sealed class BasicsLiveTrialHarnessTests
             });
 
         public Task<KillBrainViaIOAck?> KillBrainAsync(Guid brainId, string reason, CancellationToken cancellationToken = default)
-            => Task.FromResult<KillBrainViaIOAck?>(null);
+        {
+            KilledBrains.Add((brainId, reason));
+            return Task.FromResult<KillBrainViaIOAck?>(new KillBrainViaIOAck { Accepted = true });
+        }
 
         public Task<BrainTerminated?> WaitForBrainTerminatedAsync(
             Guid brainId,
             TimeSpan timeout,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<BrainTerminated?>(null);
+        {
+            TerminationWaits.Add(brainId);
+            return Task.FromResult<BrainTerminated?>(new BrainTerminated
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Reason = "basics_live_trial_complete"
+            });
+        }
 
         public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(OutputVectorSource outputVectorSource, Guid? brainId = null, CancellationToken cancellationToken = default)
             => Task.FromResult<Nbn.Proto.Io.SetOutputVectorSourceAck?>(null);

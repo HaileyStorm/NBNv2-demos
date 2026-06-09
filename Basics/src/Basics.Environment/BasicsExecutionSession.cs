@@ -1514,12 +1514,18 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             evaluated.AddRange(batchResults.Select(static result => result.Member));
             if (retainEvaluatedBrainsForPpo)
             {
+                var remainingBrainCount = Math.Max(0, population.Count - ((chunkIndex + 1) * maxConcurrent));
+                var nextBatchBrainCount = Math.Min(maxConcurrent, remainingBrainCount);
+                var maxLiveParentCandidates = nextBatchBrainCount > 0
+                    ? Math.Max(0, maxConcurrent - nextBatchBrainCount)
+                    : maxConcurrent;
                 var cappedEvaluated = await RetainLivePpoParentCandidatesAsync(
                         evaluated,
                         plan.Scheduling.ParentSelection,
                         (int)Math.Min(
                             int.MaxValue,
                             plan.SizingOverrides.ReproductionRunCount ?? plan.Capacity.RecommendedReproductionRunCount),
+                        maxLiveParentCandidates,
                         CancellationToken.None)
                     .ConfigureAwait(false);
                 evaluated.Clear();
@@ -2101,6 +2107,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         IReadOnlyList<PopulationMember> batch,
         BasicsParentSelectionPolicy parentSelection,
         int reproductionRunCount,
+        int maxLiveCandidateCount,
         CancellationToken cancellationToken)
     {
         if (batch.Count == 0)
@@ -2108,10 +2115,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return Array.Empty<PopulationMember>();
         }
 
+        var requestedLiveCandidateLimit = Math.Max(parentSelection.MaxParentsPerSpecies * 2, reproductionRunCount * 2);
         var liveCandidateLimit = Math.Clamp(
-            Math.Max(parentSelection.MaxParentsPerSpecies * 2, reproductionRunCount * 2),
-            2,
-            batch.Count);
+            requestedLiveCandidateLimit,
+            0,
+            Math.Min(Math.Max(0, maxLiveCandidateCount), batch.Count));
         var retainedActiveBrainIds = batch
             .OrderByDescending(static member => ResolveParentSelectionSignal(member.LastEvaluation))
             .ThenByDescending(static member => ResolveCandidateSelectionAccuracyOrDefault(member.LastEvaluation))
@@ -2948,30 +2956,43 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             ? EventedObservationTimeout
             : VectorObservationTimeout;
 
-    private async Task WaitForBrainTerminationAsync(Guid brainId, CancellationToken cancellationToken)
+    private async Task<bool> WaitForBrainTerminationAsync(Guid brainId, CancellationToken cancellationToken)
     {
-        var terminated = await _runtimeClient.WaitForBrainTerminatedAsync(
-                brainId,
-                BrainTeardownTimeout,
-                cancellationToken)
-            .ConfigureAwait(false);
-        if (terminated?.BrainId?.TryToGuid(out var terminatedBrainId) == true && terminatedBrainId == brainId)
+        try
         {
-            return;
-        }
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(BrainTeardownTimeout);
-        while (!timeoutCts.IsCancellationRequested)
-        {
-            var info = await _runtimeClient.RequestBrainInfoAsync(brainId, timeoutCts.Token).ConfigureAwait(false);
-            if (info is null || info.InputWidth == 0 || info.OutputWidth == 0)
+            var terminated = await _runtimeClient.WaitForBrainTerminatedAsync(
+                    brainId,
+                    BrainTeardownTimeout,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (terminated?.BrainId?.TryToGuid(out var terminatedBrainId) == true && terminatedBrainId == brainId)
             {
-                return;
+                return true;
             }
 
-            await Task.Delay(BrainTeardownPollInterval, timeoutCts.Token).ConfigureAwait(false);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(BrainTeardownTimeout);
+            while (!timeoutCts.IsCancellationRequested)
+            {
+                var info = await _runtimeClient.RequestBrainInfoAsync(brainId, timeoutCts.Token).ConfigureAwait(false);
+                if (info is null || info.InputWidth == 0 || info.OutputWidth == 0)
+                {
+                    return true;
+                }
+
+                await Task.Delay(BrainTeardownPollInterval, timeoutCts.Token).ConfigureAwait(false);
+            }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
     }
 
     private async Task<List<PopulationMember>> RetainWinningCandidateAsync(
@@ -3245,10 +3266,22 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return;
         }
 
+        var confirmedRemoved = false;
         try
         {
-            await _runtimeClient.KillBrainAsync(brainId, "basics_evaluation_complete", cancellationToken).ConfigureAwait(false);
-            await WaitForBrainTerminationAsync(brainId, cancellationToken).ConfigureAwait(false);
+            for (var attempt = 1; attempt <= 2 && !confirmedRemoved; attempt++)
+            {
+                var killAck = await _runtimeClient.KillBrainAsync(
+                        brainId,
+                        "basics_evaluation_complete",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                confirmedRemoved = await WaitForBrainTerminationAsync(brainId, cancellationToken).ConfigureAwait(false);
+                if (!confirmedRemoved && killAck?.Accepted == true && attempt < 2)
+                {
+                    await Task.Delay(BrainTeardownPollInterval, cancellationToken).ConfigureAwait(false);
+                }
+            }
         }
         catch
         {
@@ -3256,7 +3289,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
         finally
         {
-            _trackedBrains.TryRemove(brainId, out _);
+            if (confirmedRemoved)
+            {
+                _trackedBrains.TryRemove(brainId, out _);
+            }
         }
     }
 

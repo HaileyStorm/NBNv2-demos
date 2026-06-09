@@ -115,7 +115,7 @@ For live PPO reward-policy setting sweeps, `tools/sweep_multiplication_ppo.py` r
 python3 tools/sweep_multiplication_ppo.py --rollout-ticks 8,16 --rollout-batches 1,2 --epochs 2,5 --minibatch-sizes 1,2,4 --population 32 --max-concurrent-brains 32 --max-generations 10 --trial-timeout-seconds 600
 ```
 
-The sweep script automatically raises `ReproductionRunCount` to the largest requested rollout batch count so batch settings are not silently capped by the generation scheduler. A trial timeout or a no-output-vector liveness collapse aborts the sweep early so the remaining result grid is not filled with misleading zero-fitness trials from a poisoned runtime state.
+The sweep script automatically raises `ReproductionRunCount` to the largest requested rollout batch count so batch settings are not silently capped by the generation scheduler. A trial timeout or a no-output-vector liveness collapse aborts the sweep early so the remaining result grid is not filled with misleading zero-fitness trials from a poisoned runtime state. Live harness trials also clean up retained final best-candidate brains after report capture so repeated sweeps do not accumulate export-only brains in the runtime.
 
 ## Live Harness
 

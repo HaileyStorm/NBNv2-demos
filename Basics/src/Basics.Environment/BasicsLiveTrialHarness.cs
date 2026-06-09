@@ -277,6 +277,7 @@ public sealed class BasicsLiveTrialHarness
     private const int EventedReadyWindowTuningStep = 4;
     private const int EventedReadyWindowAutoTuneCap = 16;
     private const int MaxRetainedTrialSnapshotRecords = 4096;
+    private static readonly TimeSpan RetainedBestBrainCleanupTimeout = TimeSpan.FromSeconds(10);
 
     private readonly Func<BasicsRuntimeClientOptions, CancellationToken, Task<IBasicsRuntimeClient>> _runtimeClientFactory;
     private readonly Func<IBasicsRuntimeClient, BasicsTemplatePublishingOptions, IBasicsExecutionRunner> _executionRunnerFactory;
@@ -411,6 +412,7 @@ public sealed class BasicsLiveTrialHarness
                                 .ConfigureAwait(false);
 
                             terminalSnapshot = CreateSnapshotRecord(finalSnapshot);
+                            await CleanupRetainedBestBrainAsync(runtimeClient, finalSnapshot).ConfigureAwait(false);
                             if (IsDecisiveTerminalSnapshot(terminalSnapshot))
                             {
                                 outcome = TranslateOutcome(finalSnapshot.State);
@@ -608,6 +610,35 @@ public sealed class BasicsLiveTrialHarness
     private static bool IsDecisiveTerminalSnapshot(BasicsLiveTrialSnapshotRecord snapshot)
         => snapshot.State is BasicsExecutionState.Succeeded
             or BasicsExecutionState.Failed;
+
+    private static async Task CleanupRetainedBestBrainAsync(
+        IBasicsRuntimeClient runtimeClient,
+        BasicsExecutionSnapshot snapshot)
+    {
+        if (snapshot.BestCandidate?.ActiveBrainId is not Guid brainId || brainId == Guid.Empty)
+        {
+            return;
+        }
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(RetainedBestBrainCleanupTimeout);
+            await runtimeClient.KillBrainAsync(
+                    brainId,
+                    "basics_live_trial_complete",
+                    timeout.Token)
+                .ConfigureAwait(false);
+            await runtimeClient.WaitForBrainTerminatedAsync(
+                    brainId,
+                    RetainedBestBrainCleanupTimeout,
+                    timeout.Token)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // Harness cleanup must not change the recorded trial outcome.
+        }
+    }
 
     private static BasicsLiveTrialPlanSummary CreatePlanSummary(BasicsEnvironmentPlan plan)
         => new(
