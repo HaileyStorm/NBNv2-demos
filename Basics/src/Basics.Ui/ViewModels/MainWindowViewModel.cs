@@ -197,14 +197,14 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _ppoOptimizerEnabled;
     private string _ppoObjectiveName = "multiplication";
     private string _ppoRewardSignal = "basics.fitness";
-    private string _ppoRolloutTickCountText = "16";
-    private string _ppoRolloutBatchCountText = "1";
+    private string _ppoRolloutTickCountText = "12";
+    private string _ppoRolloutBatchCountText = "2";
     private string _ppoClipEpsilonText = "0.2";
     private string _ppoDiscountGammaText = "0.99";
     private string _ppoGaeLambdaText = "0.95";
     private string _ppoLearningRateText = "0.0003";
-    private string _ppoOptimizationEpochCountText = "2";
-    private string _ppoMinibatchSizeText = "1";
+    private string _ppoOptimizationEpochCountText = "3";
+    private string _ppoMinibatchSizeText = "4";
     private string _ppoSeedText = "42";
     private string _ppoServiceStatus = "PPO service status not checked.";
     private string _ppoServiceDetail = "Enable PPO and connect to IO to check the manager through IO Gateway.";
@@ -935,22 +935,22 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string OptimizationModeTitle
         => PpoOptimizerEnabled
-            ? "Generation Controller: PPO Reward-Policy Service"
+            ? "Generation Controller: Runtime PPO Service"
             : "Optimization Mode: Local Reproduction";
 
     public string PpoOptimizerDetail
         => PpoOptimizerEnabled
-            ? $"PPO reward-policy service owns generation control for {SelectedTask?.DisplayName ?? "the selected task"} through IO Gateway. {BasicsPpoOptimizerOptions.CurrentSemanticsDisclosure} IO discovers service.endpoint.ppo_manager internally; the PPO manager service must already be running and registered. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}."
+            ? $"Runtime PPO owns generation control for {SelectedTask?.DisplayName ?? "the selected task"}. Basics sends parent context and reward feedback through IO Gateway, then the PPO manager chooses reproduction actions for future artifact rollouts. IO discovers service.endpoint.ppo_manager via Settings Manager; Basics does not configure an endpoint. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}; epochs {PpoOptimizationEpochCountText}; minibatch {PpoMinibatchSizeText}."
             : "Local reproduction/speciation owns generation control. PPO remains off and no PPO endpoint is configured by Basics.";
 
     public string SchedulingSectionTitle
         => PpoOptimizerEnabled
-            ? "PPO Reward Parent Context"
+            ? "PPO Parent Context + Runtime Policy"
             : "Local Reproduction + Speciation Scheduling";
 
     public string SchedulingSectionDetail
         => PpoOptimizerEnabled
-            ? "PPO selects generation candidates through IO Gateway, then Basics sends evaluated reward feedback so the runtime can update future reproduction-action policy. Basics still applies the diversity preset, strength source, and IO-neuron protection when it supplies parent context to the PPO manager."
+            ? "Local scheduling controls are hidden because PPO owns candidate selection. Basics still supplies diversity, strength source, speciation membership, and IO-neuron protection as parent context for the runtime policy."
             : "Local reproduction/speciation selects parent pairs, allocates reproduction runs, and applies adaptive diversity pressure directly.";
 
     public string PpoServiceStatus

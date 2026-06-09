@@ -164,7 +164,7 @@ public sealed class MainWindowViewModelBehaviorChartTests
         var options = BuildEnvironmentOptions(viewModel);
 
         Assert.False(options.PpoOptimizer.Enabled);
-        Assert.Equal((ulong)16, options.PpoOptimizer.RolloutTickCount);
+        Assert.Equal((ulong)12, options.PpoOptimizer.RolloutTickCount);
         Assert.Equal(0.2f, options.PpoOptimizer.ClipEpsilon);
     }
 
@@ -188,12 +188,14 @@ public sealed class MainWindowViewModelBehaviorChartTests
         Assert.True(viewModel.ShowPpoServiceStatus);
         Assert.False(viewModel.ShowLocalReproductionSchedulingControls);
         Assert.True(viewModel.ShowPpoSchedulingNotice);
-        Assert.Equal("Generation Controller: PPO Reward-Policy Service", viewModel.OptimizationModeTitle);
-        Assert.Equal("PPO Reward Parent Context", viewModel.SchedulingSectionTitle);
+        Assert.Equal("Generation Controller: Runtime PPO Service", viewModel.OptimizationModeTitle);
+        Assert.Equal("PPO Parent Context + Runtime Policy", viewModel.SchedulingSectionTitle);
         Assert.Contains("generation control", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("reward feedback", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("reproduction actions", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("multiplication", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Settings Manager", viewModel.PpoOptimizerDetail, StringComparison.Ordinal);
+        Assert.Contains("owns candidate selection", viewModel.SchedulingSectionDetail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Connect to IO", viewModel.PpoServiceDetail, StringComparison.Ordinal);
 
         viewModel.SelectedTask = viewModel.Tasks.First(task => task.TaskId == "and");

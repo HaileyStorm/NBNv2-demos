@@ -108,9 +108,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Sweep live Basics Multiplication PPO reward-policy settings."
     )
-    parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("8,16"))
+    parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("8,12,16"))
     parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1,2"))
-    parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("2,5"))
+    parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("2,3,5"))
     parser.add_argument("--minibatch-sizes", type=parse_int_list, default=parse_int_list("1,2,4"))
     parser.add_argument("--population", type=parse_int_list, default=parse_int_list("32"))
     parser.add_argument("--max-concurrent-brains", type=int, default=32)
@@ -124,7 +124,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-generations",
         type=int,
-        default=10,
+        default=15,
         help="Maximum generations per trial. Use 0 to disable the generation cap.",
     )
     parser.add_argument("--request-timeout-seconds", type=int, default=15)
@@ -133,6 +133,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=10,
         help="Minimum seconds between repeated generation progress lines for the same generation.",
+    )
+    parser.add_argument(
+        "--trial-retries",
+        type=int,
+        default=1,
+        help="Retry zero-generation IO connection failures this many times before recording the row.",
+    )
+    parser.add_argument(
+        "--retry-delay-seconds",
+        type=float,
+        default=5.0,
+        help="Delay before retrying a zero-generation IO connection failure.",
     )
     parser.add_argument(
         "--verbose-harness-output",
@@ -154,6 +166,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+
     args = parse_args()
     args.repo_root = args.repo_root.resolve()
     if args.output_root is None:
@@ -193,8 +208,8 @@ def main() -> int:
         f"population={population_text}, approx_eval_brains={brain_budget_text}"
     )
     print(
-        "Note: latest completed sweeps favored rollout_ticks=16, rollout_batches=2, "
-        "epochs=2, minibatch_size=2; rollout_ticks=8 was more consistently stable."
+        "Note: latest completed 15-generation sweeps favored rollout_ticks=12, "
+        "rollout_batches=2, epochs=3, minibatch_size=4 for Multiplication."
     )
     for combo in combos:
         if combo.rollout_batches > args.effective_reproduction_run_count:
@@ -287,10 +302,34 @@ def build_harness(args: argparse.Namespace) -> None:
 
 
 def run_combo(args: argparse.Namespace, combo: PpoCombo, combo_index: int, combo_count: int) -> SweepResult:
+    attempts = max(1, args.trial_retries + 1)
+    result: SweepResult | None = None
+    for attempt in range(1, attempts + 1):
+        result = run_combo_attempt(args, combo, combo_index, combo_count, attempt)
+        if not is_retryable_connection_failure(result) or attempt >= attempts:
+            return result
+        print(
+            f"[retry] {combo.label} attempt {attempt}/{attempts} hit "
+            f"{result.outcome_detail or result.error}; retrying in {args.retry_delay_seconds:g}s"
+        )
+        time.sleep(max(0.0, args.retry_delay_seconds))
+    assert result is not None
+    return result
+
+
+def run_combo_attempt(
+    args: argparse.Namespace,
+    combo: PpoCombo,
+    combo_index: int,
+    combo_count: int,
+    attempt: int,
+) -> SweepResult:
     combo_dir = args.output_root / combo.label
     combo_dir.mkdir(parents=True, exist_ok=True)
-    config_path = combo_dir / "harness_config.json"
-    write_config(args, combo, combo_index, config_path, combo_dir)
+    attempt_dir = combo_dir if attempt == 1 else combo_dir / f"attempt-{attempt:02d}"
+    attempt_dir.mkdir(parents=True, exist_ok=True)
+    config_path = attempt_dir / "harness_config.json"
+    write_config(args, combo, combo_index, attempt, config_path, attempt_dir)
 
     cmd = [
         args.dotnet,
@@ -312,15 +351,16 @@ def run_combo(args: argparse.Namespace, combo: PpoCombo, combo_index: int, combo
         ]
 
     started = time.monotonic()
-    stdout_path = combo_dir / "harness.stdout.log"
+    stdout_path = attempt_dir / "harness.stdout.log"
     report_path: Path | None = None
     latest_generation = 0
     latest_accuracy = 0.0
     latest_fitness = 0.0
     last_progress_generation = 0
     last_progress_at = 0.0
+    attempt_text = "" if attempt == 1 else f" attempt={attempt}"
     print(
-        f"[combo] {combo_index}/{combo_count} {combo.label}: "
+        f"[combo] {combo_index}/{combo_count} {combo.label}{attempt_text}: "
         f"population={combo.population} ticks={combo.rollout_ticks} batches={combo.rollout_batches} "
         f"epochs={combo.epochs} minibatch={combo.minibatch_size}"
     )
@@ -371,7 +411,7 @@ def run_combo(args: argparse.Namespace, combo: PpoCombo, combo_index: int, combo
 
     duration = time.monotonic() - started
     if report_path is None:
-        report_path = newest_report_path(combo_dir / "harness_reports")
+        report_path = newest_report_path(attempt_dir / "harness_reports")
     if report_path is None or not report_path.exists():
         status = "failed" if exit_code != 2 else "target_not_met"
         return SweepResult(
@@ -392,10 +432,11 @@ def write_config(
     args: argparse.Namespace,
     combo: PpoCombo,
     combo_index: int,
+    attempt: int,
     config_path: Path,
     combo_dir: Path,
 ) -> None:
-    client_port = args.client_port_base + combo_index
+    client_port = args.client_port_base + (combo_index * 10) + (attempt - 1)
     config = {
         "RunLabel": f"ppo-sweep-multiplication-{combo.label}",
         "OutputDirectory": str(combo_dir / "harness_reports"),
@@ -414,7 +455,7 @@ def write_config(
             "BackingStoreRoot": str(combo_dir / "templates"),
         },
         "Environment": {
-            "ClientName": f"nbn.basics.ppo-sweep.{combo.label}",
+            "ClientName": f"nbn.basics.ppo-sweep.{combo.label}.attempt{attempt:02d}",
             "TaskId": "multiplication",
             "OutputObservationMode": "evented",
             "MaxReadyWindowTicks": 4,
@@ -574,6 +615,17 @@ def print_recommendation(best: SweepResult) -> None:
         f"  population:      {best.combo.population}\n"
         f"  observed fitness {best.best_fitness:.4f}, accuracy {best.best_accuracy:.4f}, "
         f"{best.completed_generations} generation(s)"
+    )
+
+
+def is_retryable_connection_failure(result: SweepResult) -> bool:
+    detail = f"{result.outcome_detail} {result.error}".lower()
+    return result.completed_generations == 0 and (
+        "connect_failed" in detail
+        or "address already in use" in detail
+        or "connection refused" in detail
+        or "runtime_client_failed" in detail
+        or "runtimeclientfailed" in detail
     )
 
 

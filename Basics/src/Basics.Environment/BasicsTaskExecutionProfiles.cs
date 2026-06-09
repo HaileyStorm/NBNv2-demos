@@ -189,14 +189,14 @@ public static class BasicsTaskExecutionProfiles
             Enabled = false,
             ObjectiveName = "multiplication",
             RewardSignal = "basics.fitness",
-            RolloutTickCount = 16,
+            RolloutTickCount = 12,
             RolloutBatchCount = 2,
             ClipEpsilon = 0.20f,
             DiscountGamma = 0.99f,
             GaeLambda = 0.95f,
             LearningRate = 0.0003f,
-            OptimizationEpochCount = 2,
-            MinibatchSize = 2,
+            OptimizationEpochCount = 3,
+            MinibatchSize = 4,
             Seed = 42
         }
     };
