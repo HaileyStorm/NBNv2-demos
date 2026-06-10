@@ -189,7 +189,7 @@ public static class BasicsTaskExecutionProfiles
             Enabled = false,
             ObjectiveName = "multiplication",
             RewardSignal = "basics.record_score",
-            RolloutTickCount = 24,
+            RolloutTickCount = 16,
             RolloutBatchCount = 1,
             ClipEpsilon = 0.20f,
             DiscountGamma = 0.99f,

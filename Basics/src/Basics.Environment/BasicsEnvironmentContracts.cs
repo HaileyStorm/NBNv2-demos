@@ -674,14 +674,14 @@ public sealed record BasicsPpoOptimizerOptions
     public bool DirectRuntimeControlEnabled { get; init; }
     public string ObjectiveName { get; init; } = "multiplication";
     public string RewardSignal { get; init; } = "basics.record_score";
-    public ulong RolloutTickCount { get; init; } = 12;
-    public ulong RolloutBatchCount { get; init; } = 2;
+    public ulong RolloutTickCount { get; init; } = 16;
+    public ulong RolloutBatchCount { get; init; } = 1;
     public float ClipEpsilon { get; init; } = 0.2f;
     public float DiscountGamma { get; init; } = 0.99f;
     public float GaeLambda { get; init; } = 0.95f;
     public float LearningRate { get; init; } = 0.0003f;
     public uint OptimizationEpochCount { get; init; } = 3;
-    public uint MinibatchSize { get; init; } = 4;
+    public uint MinibatchSize { get; init; } = 2;
     public ulong Seed { get; init; } = 42;
     public float DirectPlasticityRateMin { get; init; } = 0.0005f;
     public float DirectPlasticityRateMax { get; init; } = 0.02f;

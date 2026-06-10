@@ -91,7 +91,7 @@ class SweepResult:
     @property
     def infrastructure_failure(self) -> bool:
         return (
-            self.timed_out
+            (self.timed_out and self.completed_generations == 0)
             or is_infrastructure_failure_detail(self.outcome_detail)
             or is_infrastructure_failure_detail(self.error)
         )
@@ -339,9 +339,9 @@ def run_grid_search(args: argparse.Namespace, combos: list[PpoCombo]) -> int:
         f"approx_eval_brains={brain_budget_text}"
     )
     print(
-        "Note: latest completed 8-generation artifact-PPO sweep favored "
-        "rollout_ticks=24, rollout_batches=1, epochs=3, minibatch_size=2, population=64 "
-        "for Multiplication. Direct/combined modes still need fresh sweep evidence."
+        "Note: latest completed 50-generation PPO sweep favored combined mode with "
+        "rollout_ticks=16, rollout_batches=1, epochs=3, minibatch_size=2, population=64 "
+        "for Multiplication."
     )
     for combo in combos:
         if combo.mode != "direct" and combo.rollout_batches > args.effective_reproduction_run_count:

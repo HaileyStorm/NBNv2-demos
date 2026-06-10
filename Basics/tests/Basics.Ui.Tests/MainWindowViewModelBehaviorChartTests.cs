@@ -171,7 +171,7 @@ public sealed class MainWindowViewModelBehaviorChartTests
         Assert.True(options.PpoOptimizer.DirectRuntimeControlEnabled);
         Assert.Equal("multiplication", options.PpoOptimizer.ObjectiveName);
         Assert.Equal("basics.direct_sample_reward", options.PpoOptimizer.RewardSignal);
-        Assert.Equal((ulong)12, options.PpoOptimizer.RolloutTickCount);
+        Assert.Equal((ulong)16, options.PpoOptimizer.RolloutTickCount);
         Assert.Equal(0.2f, options.PpoOptimizer.ClipEpsilon);
         Assert.False(viewModel.ShowPpoOptimizerConfiguration);
         Assert.False(viewModel.ShowPpoServiceStatus);
@@ -191,7 +191,7 @@ public sealed class MainWindowViewModelBehaviorChartTests
 
         Assert.False(options.PpoOptimizer.Enabled);
         Assert.False(options.PpoOptimizer.DirectRuntimeControlEnabled);
-        Assert.Equal((ulong)12, options.PpoOptimizer.RolloutTickCount);
+        Assert.Equal((ulong)16, options.PpoOptimizer.RolloutTickCount);
         Assert.Equal(0.2f, options.PpoOptimizer.ClipEpsilon);
     }
 

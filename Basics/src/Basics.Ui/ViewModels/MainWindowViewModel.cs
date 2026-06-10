@@ -198,7 +198,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _directRuntimeControlEnabled;
     private string _ppoObjectiveName = "multiplication";
     private string _ppoRewardSignal = "basics.record_score";
-    private string _ppoRolloutTickCountText = "24";
+    private string _ppoRolloutTickCountText = "16";
     private string _ppoRolloutBatchCountText = "1";
     private string _ppoClipEpsilonText = "0.2";
     private string _ppoDiscountGammaText = "0.99";

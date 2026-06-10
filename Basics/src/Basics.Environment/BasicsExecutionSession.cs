@@ -1725,6 +1725,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var setupSlotHeld = false;
         var subscribedVectorOutputs = false;
         var subscribedSingleOutputs = false;
+        var brainPausedForReturn = false;
         var totalStopwatch = Stopwatch.StartNew();
         var queueWait = TimeSpan.Zero;
         var spawnRequest = TimeSpan.Zero;
@@ -1937,6 +1938,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             brainPausedAtSampleBoundary,
                             cancellationToken)
                         .ConfigureAwait(false);
+                    brainPausedForReturn = false;
                     brainPausedAtSampleBoundary = false;
                     observationTiming = observationTiming.Add(sampleObservation.Timing);
                     if (sampleObservation.Observation is null)
@@ -1966,6 +1968,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                                 cancellationToken)
                             .ConfigureAwait(false);
                         brainPausedAtSampleBoundary = true;
+                        brainPausedForReturn = true;
                         observationTiming = observationTiming.Add(new ObservationTiming(
                             directControlPause,
                             TimeSpan.Zero,
@@ -2005,6 +2008,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 EvaluationGeneration = generation,
                 ActiveBrainId = brainId
             };
+            if (IsArtifactPpoEnabled(ppoOptimizer) && !brainPausedForReturn)
+            {
+                await TryPauseBrainForRetentionAsync(brainId).ConfigureAwait(false);
+                brainPausedForReturn = true;
+            }
+
             return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, placementWait, setup, observation, totalStopwatch.Elapsed, observationTiming);
         }
         catch (OperationCanceledException)
@@ -2052,6 +2061,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             {
                 try
                 {
+                    if (IsArtifactPpoEnabled(ppoOptimizer) && !brainPausedForReturn)
+                    {
+                        await TryPauseBrainForRetentionAsync(brainId).ConfigureAwait(false);
+                        brainPausedForReturn = true;
+                    }
+
                     if (subscribedSingleOutputs)
                     {
                         await _runtimeClient.UnsubscribeOutputsAsync(brainId, CancellationToken.None).ConfigureAwait(false);
@@ -2067,6 +2082,28 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     // Best-effort unsubscribe only.
                 }
             }
+        }
+    }
+
+    private async Task TryPauseBrainForRetentionAsync(Guid brainId)
+    {
+        if (brainId == Guid.Empty)
+        {
+            return;
+        }
+
+        try
+        {
+            var pauseAck = await _runtimeClient.PauseBrainAsync(
+                    brainId,
+                    "basics_ppo_parent_retention_boundary",
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+            ValidateIoCommandAck(pauseAck, brainId, "pause_brain");
+        }
+        catch
+        {
+            // Best-effort quiescing only. Teardown/export paths still handle failed retained brains.
         }
     }
 
@@ -3309,7 +3346,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 {
                     BrainDef = bestCandidate.DefinitionArtifact.Clone(),
                     InputWidth = taskContract.InputWidth,
-                    OutputWidth = taskContract.OutputWidth
+                    OutputWidth = taskContract.OutputWidth,
+                    StartPaused = true
                 },
                 cancellationToken)
             .ConfigureAwait(false);

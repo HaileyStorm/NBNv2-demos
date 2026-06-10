@@ -102,7 +102,7 @@ public sealed class BasicsTaskExecutionProfilesTests
         Assert.NotNull(profile.PpoOptimizer);
         Assert.False(profile.PpoOptimizer!.Enabled);
         Assert.False(profile.PpoOptimizer.DirectRuntimeControlEnabled);
-        Assert.Equal((ulong)24, profile.PpoOptimizer.RolloutTickCount);
+        Assert.Equal((ulong)16, profile.PpoOptimizer.RolloutTickCount);
         Assert.Equal((ulong)1, profile.PpoOptimizer.RolloutBatchCount);
         Assert.Equal((uint)3, profile.PpoOptimizer.OptimizationEpochCount);
         Assert.Equal((uint)2, profile.PpoOptimizer.MinibatchSize);

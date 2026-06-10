@@ -3303,6 +3303,47 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_ArtifactPpo_PausesRetainedParentBrains()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            PpoAvailable = true
+        };
+        await using var session = CreateSession(runtimeClient);
+
+        var final = await session.RunAsync(
+            CreatePlan(
+                BasicsOutputObservationMode.EventedOutput,
+                new BasicsExecutionStopCriteria
+                {
+                    MaximumGenerations = 1,
+                    TargetAccuracy = 1.1f,
+                    TargetFitness = 1.1f
+                }) with
+            {
+                PpoOptimizer = new BasicsPpoOptimizerOptions
+                {
+                    Enabled = true,
+                    ObjectiveName = "and",
+                    RewardSignal = "basics.record_score",
+                    RolloutTickCount = 16,
+                    RolloutBatchCount = 1,
+                    OptimizationEpochCount = 3,
+                    MinibatchSize = 2
+                }
+            },
+            new AndTaskPlugin(),
+            _ => { },
+            CancellationToken.None);
+
+        Assert.Equal(BasicsExecutionState.Stopped, final.State);
+        var retainedBrainId = final.BestCandidate?.ActiveBrainId;
+        Assert.NotNull(retainedBrainId);
+        Assert.True(runtimeClient.IsBrainPaused(retainedBrainId.Value));
+    }
+
+    [Fact]
     public void ExecutionSession_SpeciationMetadata_SanitizesNonFiniteSimilarityScores()
     {
         var helper = typeof(BasicsExecutionSession).GetMethod(
@@ -3635,6 +3676,9 @@ public sealed class BasicsExecutionSessionTests
 
         public Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
             => Task.FromResult<ConnectAck?>(new ConnectAck { ServerName = clientName, ServerTimeMs = 1 });
+
+        public bool IsBrainPaused(Guid brainId)
+            => _pausedBrains.ContainsKey(brainId);
 
         public Task<PlacementWorkerInventoryResult?> GetPlacementWorkerInventoryAsync(CancellationToken cancellationToken = default)
             => Task.FromResult<PlacementWorkerInventoryResult?>(null);
