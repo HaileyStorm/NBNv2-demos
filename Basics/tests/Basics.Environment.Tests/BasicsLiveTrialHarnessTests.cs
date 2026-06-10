@@ -467,6 +467,51 @@ public sealed class BasicsLiveTrialHarnessTests
         Assert.Equal(5_000, trial.TerminalSnapshot!.Generation);
     }
 
+    [Fact]
+    public async Task LiveTrialHarness_ProgressStopRequest_RecordsStoppedTrialWithLastSnapshot()
+    {
+        var harness = new BasicsLiveTrialHarness(
+            runtimeClientFactory: (_, _) => Task.FromResult<IBasicsRuntimeClient>(new FakeHarnessRuntimeClient()),
+            executionRunnerFactory: (_, _) => new ScriptedExecutionRunner(new[]
+            {
+                CreateSnapshot(
+                    BasicsExecutionState.Running,
+                    statusText: "Generation 3 evaluated.",
+                    detailText: "Optuna prune candidate.",
+                    generation: 3,
+                    speciesCount: 2,
+                    bestAccuracy: 0.25f,
+                    bestFitness: 0.33f),
+                CreateSnapshot(
+                    BasicsExecutionState.Succeeded,
+                    statusText: "Should not be reached.",
+                    detailText: "Unexpected continuation.",
+                    generation: 4,
+                    speciesCount: 2,
+                    bestAccuracy: 1f,
+                    bestFitness: 1f)
+            }));
+
+        var report = await harness.RunAsync(
+            CreateOptions(maxTrialCount: 1, requiredSuccessfulTrials: 1),
+            new AndTaskPlugin(),
+            progress =>
+            {
+                if (progress.Phase == BasicsLiveTrialPhase.Running)
+                {
+                    throw new BasicsLiveTrialStopRequestedException("optuna_pruned:generation=3");
+                }
+            });
+
+        Assert.False(report.StabilityTargetMet);
+        var trial = Assert.Single(report.Trials);
+        Assert.Equal(BasicsLiveTrialOutcome.Stopped, trial.Outcome);
+        Assert.Equal("optuna_pruned:generation=3", trial.OutcomeDetail);
+        Assert.Equal(3, trial.TerminalSnapshot!.Generation);
+        Assert.Equal(0.33f, trial.TerminalSnapshot.BestFitness);
+        Assert.Single(trial.Snapshots);
+    }
+
     private static BasicsLiveTrialHarnessOptions CreateOptions(
         int maxTrialCount,
         int requiredSuccessfulTrials,

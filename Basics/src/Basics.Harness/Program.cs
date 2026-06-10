@@ -54,10 +54,11 @@ internal static class Program
         var config = await LoadConfigAsync(command.ConfigPath).ConfigureAwait(false);
         var resolved = config.Resolve();
         var harness = new BasicsLiveTrialHarness();
+        var progress = CreateProgressReporter(config.Control?.StopRequestPath);
         var report = await harness.RunAsync(
                 resolved.Options,
                 resolved.Plugin,
-                PrintProgress,
+                progress,
                 CancellationToken.None)
             .ConfigureAwait(false);
 
@@ -284,6 +285,42 @@ internal static class Program
             default:
                 Console.WriteLine($"[trial {progress.TrialNumber}] {progress.Phase}: {progress.Message}");
                 break;
+        }
+    }
+
+    private static Action<BasicsLiveTrialProgress> CreateProgressReporter(string? stopRequestPath)
+    {
+        if (string.IsNullOrWhiteSpace(stopRequestPath))
+        {
+            return PrintProgress;
+        }
+
+        var fullStopRequestPath = Path.GetFullPath(stopRequestPath);
+        return progress =>
+        {
+            PrintProgress(progress);
+            if (progress.Phase != BasicsLiveTrialPhase.Running
+                || progress.Snapshot is null
+                || !File.Exists(fullStopRequestPath))
+            {
+                return;
+            }
+
+            var reason = ReadStopRequestReason(fullStopRequestPath);
+            throw new BasicsLiveTrialStopRequestedException(reason);
+        };
+    }
+
+    private static string ReadStopRequestReason(string stopRequestPath)
+    {
+        try
+        {
+            var reason = File.ReadAllText(stopRequestPath).Trim();
+            return string.IsNullOrWhiteSpace(reason) ? "optuna_pruned" : reason;
+        }
+        catch
+        {
+            return "optuna_pruned";
         }
     }
 

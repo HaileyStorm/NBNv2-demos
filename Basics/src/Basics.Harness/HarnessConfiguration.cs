@@ -16,6 +16,7 @@ internal sealed record HarnessFileConfig
     public HarnessTemplatePublishingConfig TemplatePublishing { get; init; } = new();
     public HarnessEnvironmentConfig Environment { get; init; } = new();
     public HarnessTrialConfig Trials { get; init; } = new();
+    public HarnessControlConfig Control { get; init; } = new();
 
     public static HarnessFileConfig CreateDefault() => new();
 
@@ -333,6 +334,11 @@ internal sealed record HarnessTrialConfig
     public bool AutoTuneEnabled { get; init; } = true;
     public bool PreferVectorPotentialOnFailures { get; init; } = true;
     public bool ReduceSizingOnFailures { get; init; } = true;
+}
+
+internal sealed record HarnessControlConfig
+{
+    public string? StopRequestPath { get; init; }
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true)]

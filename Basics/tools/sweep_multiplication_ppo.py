@@ -21,7 +21,7 @@ import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 GEN_RE = re.compile(
@@ -101,6 +101,13 @@ class SweepResult:
         if self.completed_generations <= 0:
             return None
         return self.duration_seconds / self.completed_generations
+
+
+@dataclass(frozen=True)
+class ProgressMetric:
+    generation: int
+    best_accuracy: float
+    best_fitness: float
 
 
 def parse_int_list(value: str) -> list[int]:
@@ -193,7 +200,13 @@ def parse_args() -> argparse.Namespace:
         "--optuna-pruner",
         choices=("none", "median"),
         default="median",
-        help="Optuna pruner to configure for the study. Current trial execution reports final values only.",
+        help="Optuna pruner to configure for the study. Optuna mode reports one intermediate value per generation.",
+    )
+    parser.add_argument(
+        "--optuna-prune-min-generation",
+        type=int,
+        default=5,
+        help="Do not allow Optuna to prune a trial before this completed generation.",
     )
     parser.add_argument(
         "--seed-summary",
@@ -296,6 +309,8 @@ def main() -> int:
     args.effective_reproduction_run_count = args.reproduction_run_count or max(args.rollout_batches)
     if args.optuna_trials <= 0:
         raise SystemExit("--optuna-trials must be > 0")
+    if args.optuna_prune_min_generation < 1:
+        raise SystemExit("--optuna-prune-min-generation must be >= 1")
     if args.seed_top_k <= 0:
         raise SystemExit("--seed-top-k must be > 0")
 
@@ -433,7 +448,7 @@ def run_optuna_search(args: argparse.Namespace) -> int:
     print(
         f"Optuna: study={study_name} storage={args.optuna_storage or 'memory'} "
         f"seed={sampler_seed if sampler_seed is not None else 'none'} pruner={args.optuna_pruner} "
-        f"timeout={args.optuna_timeout_seconds if args.optuna_timeout_seconds is not None else 'none'}s"
+        f"timeout={format_optuna_timeout(args.optuna_timeout_seconds)}"
     )
     if seed_combos:
         print(f"Seeded {sum(1 for combo in seed_combos if combo_is_in_search_space(args, combo))} prior combo(s).")
@@ -466,15 +481,41 @@ def run_optuna_search(args: argparse.Namespace) -> int:
         trial = study.ask()
         combo = suggest_combo(args, trial, trial_index)
         trial.set_user_attr("combo", asdict(combo))
+        reported_generations: set[int] = set()
+
+        def optuna_progress(progress: ProgressMetric) -> str | None:
+            if progress.generation <= 0 or progress.generation in reported_generations:
+                return None
+            reported_generations.add(progress.generation)
+            objective = objective_from_progress(progress)
+            trial.report(objective, step=progress.generation)
+            if progress.generation < args.optuna_prune_min_generation:
+                return None
+            if trial.should_prune():
+                return (
+                    f"optuna_pruned:generation={progress.generation}:"
+                    f"objective={objective:.6f}:fitness={progress.best_fitness:.6f}:"
+                    f"accuracy={progress.best_accuracy:.6f}"
+                )
+            return None
+
         print()
         print(f"=== [trial {trial_index}/{args.optuna_trials}] Running {combo.label} ===")
-        result = run_combo(args, combo, trial_index, args.optuna_trials)
+        result = run_combo(args, combo, trial_index, args.optuna_trials, optuna_progress)
         results.append(result)
         with results_path.open("a", encoding="utf-8") as writer:
             writer.write(json.dumps(result_to_json(result), sort_keys=True) + "\n")
 
         trial.set_user_attr("result", result_to_json(result))
         print_result(result)
+        if result.status == "pruned":
+            consecutive_infrastructure_failures = 0
+            study.tell(trial, state=optuna.trial.TrialState.PRUNED)
+            write_summary(args.output_root, results, best, optuna_summary(args, study))
+            print(f"[optuna] pruned {combo.label}: {result.outcome_detail or result.error}")
+            print_current_best(best)
+            print_sweep_progress(len(results), args.optuna_trials, sweep_started)
+            continue
         if result.infrastructure_failure:
             consecutive_infrastructure_failures += 1
             study.tell(trial, state=optuna.trial.TrialState.PRUNED)
@@ -589,6 +630,10 @@ def objective_value(result: SweepResult) -> float:
         + speed_bonus
         - stability_penalty
     )
+
+
+def objective_from_progress(progress: ProgressMetric) -> float:
+    return progress.best_fitness + (0.10 * progress.best_accuracy)
 
 
 def objective_for_invalid_result() -> float:
@@ -709,8 +754,13 @@ def optuna_summary(args: argparse.Namespace, study: Any) -> dict[str, Any]:
         "timeout_seconds": args.optuna_timeout_seconds,
         "sampler_seed": args.optuna_sampler_seed if args.optuna_sampler_seed is not None else args.shuffle_seed,
         "pruner": args.optuna_pruner,
+        "prune_min_generation": args.optuna_prune_min_generation,
         "best_value": best_value,
     }
+
+
+def format_optuna_timeout(timeout_seconds: int | None) -> str:
+    return "none" if timeout_seconds is None else f"{timeout_seconds}s"
 
 
 def harness_project(args: argparse.Namespace) -> Path:
@@ -772,11 +822,17 @@ def build_harness(args: argparse.Namespace) -> None:
         raise SystemExit(completed.returncode)
 
 
-def run_combo(args: argparse.Namespace, combo: PpoCombo, combo_index: int, combo_count: int) -> SweepResult:
+def run_combo(
+    args: argparse.Namespace,
+    combo: PpoCombo,
+    combo_index: int,
+    combo_count: int,
+    progress_callback: Callable[[ProgressMetric], str | None] | None = None,
+) -> SweepResult:
     attempts = max(1, args.trial_retries + 1)
     result: SweepResult | None = None
     for attempt in range(1, attempts + 1):
-        result = run_combo_attempt(args, combo, combo_index, combo_count, attempt)
+        result = run_combo_attempt(args, combo, combo_index, combo_count, attempt, progress_callback)
         if not is_retryable_trial_failure(result) or attempt >= attempts:
             return result
         print(
@@ -794,13 +850,17 @@ def run_combo_attempt(
     combo_index: int,
     combo_count: int,
     attempt: int,
+    progress_callback: Callable[[ProgressMetric], str | None] | None = None,
 ) -> SweepResult:
     combo_dir = args.output_root / combo.label
     combo_dir.mkdir(parents=True, exist_ok=True)
     attempt_dir = combo_dir if attempt == 1 else combo_dir / f"attempt-{attempt:02d}"
     attempt_dir.mkdir(parents=True, exist_ok=True)
     config_path = attempt_dir / "harness_config.json"
-    write_config(args, combo, combo_index, attempt, config_path, attempt_dir)
+    stop_request_path = attempt_dir / "optuna-prune-request.txt"
+    if stop_request_path.exists():
+        stop_request_path.unlink()
+    write_config(args, combo, combo_index, attempt, config_path, attempt_dir, stop_request_path)
 
     cmd = [
         args.dotnet,
@@ -829,6 +889,8 @@ def run_combo_attempt(
     latest_fitness = 0.0
     last_progress_generation = 0
     last_progress_at = 0.0
+    prune_requested = False
+    prune_reason = ""
     attempt_text = "" if attempt == 1 else f" attempt={attempt}"
     print(
         f"[combo] {combo_index}/{combo_count} {combo.label}{attempt_text}: "
@@ -882,6 +944,16 @@ def run_combo_attempt(
                 latest_generation = int(gen_match.group("generation"))
                 latest_accuracy = parse_float(gen_match.group("accuracy"))
                 latest_fitness = parse_float(gen_match.group("fitness"))
+                if progress_callback is not None and not prune_requested:
+                    prune_request = progress_callback(ProgressMetric(
+                        latest_generation,
+                        latest_accuracy,
+                        latest_fitness))
+                    if prune_request:
+                        prune_requested = True
+                        prune_reason = prune_request
+                        stop_request_path.write_text(prune_reason + "\n", encoding="utf-8")
+                        print(f"[optuna] prune requested for {combo.label}: {prune_reason}")
                 now = time.monotonic()
                 should_print_progress = (
                     latest_generation != last_progress_generation
@@ -903,8 +975,25 @@ def run_combo_attempt(
 
     duration = time.monotonic() - started
     if report_path is None:
-        report_path = newest_report_path(attempt_dir / "harness_reports")
+        report_path = newest_report_path(attempt_dir / "harness_reports", started)
     if report_path is None or not report_path.exists():
+        if prune_requested:
+            return SweepResult(
+                combo=combo,
+                status="pruned",
+                exit_code=exit_code,
+                duration_seconds=duration,
+                completed_generations=latest_generation,
+                best_accuracy=latest_accuracy,
+                best_fitness=latest_fitness,
+                best_accuracy_generation=latest_generation,
+                best_fitness_generation=latest_generation,
+                accuracy_slope_to_best=latest_accuracy / latest_generation if latest_generation > 0 else 0.0,
+                fitness_slope_to_best=latest_fitness / latest_generation if latest_generation > 0 else 0.0,
+                outcome="Pruned",
+                outcome_detail=prune_reason or "optuna_pruned",
+                error=f"pruned before harness report was written; see {stdout_path}",
+            )
         status = "failed" if exit_code != 2 else "target_not_met"
         return SweepResult(
             combo=combo,
@@ -927,6 +1016,7 @@ def write_config(
     attempt: int,
     config_path: Path,
     combo_dir: Path,
+    stop_request_path: Path,
 ) -> None:
     client_port = args.client_port_base + (combo_index * 10) + (attempt - 1)
     config = {
@@ -1005,6 +1095,9 @@ def write_config(
             "PreferVectorPotentialOnFailures": False,
             "ReduceSizingOnFailures": False,
         },
+        "Control": {
+            "StopRequestPath": str(stop_request_path),
+        },
     }
     config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
@@ -1034,6 +1127,8 @@ def summarize_report(combo: PpoCombo, report_path: Path, exit_code: int, duratio
     )
     if is_infrastructure_failure_detail(outcome_detail):
         status = "infrastructure_failed"
+    elif outcome_detail.startswith("optuna_pruned"):
+        status = "pruned"
     return SweepResult(
         combo=combo,
         status=status,
@@ -1055,10 +1150,13 @@ def summarize_report(combo: PpoCombo, report_path: Path, exit_code: int, duratio
     )
 
 
-def newest_report_path(report_dir: Path) -> Path | None:
+def newest_report_path(report_dir: Path, started_monotonic: float | None = None) -> Path | None:
     if not report_dir.exists():
         return None
     reports = sorted(report_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    if started_monotonic is not None:
+        started_wall = time.time() - max(0.0, time.monotonic() - started_monotonic) - 1.0
+        reports = [path for path in reports if path.stat().st_mtime >= started_wall]
     return reports[0] if reports else None
 
 

@@ -277,6 +277,14 @@ public sealed record BasicsLiveTrialProgress(
     BasicsLiveTrialSnapshotRecord? Snapshot = null,
     BasicsLiveTuningDecision? TuningDecision = null);
 
+public sealed class BasicsLiveTrialStopRequestedException : OperationCanceledException
+{
+    public BasicsLiveTrialStopRequestedException(string message)
+        : base(message)
+    {
+    }
+}
+
 public sealed class BasicsLiveTrialHarness
 {
     private const int EventedReadyWindowTuningStep = 4;
@@ -447,6 +455,12 @@ public sealed class BasicsLiveTrialHarness
                                 outcome = BasicsLiveTrialOutcome.TimedOut;
                                 outcomeDetail = "trial_timeout";
                             }
+                        }
+                        catch (BasicsLiveTrialStopRequestedException ex)
+                        {
+                            terminalSnapshot = lastSnapshot;
+                            outcome = BasicsLiveTrialOutcome.Stopped;
+                            outcomeDetail = ex.Message;
                         }
                     }
 
