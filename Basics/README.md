@@ -99,9 +99,9 @@ The Basics UI local worker launcher starts WorkerNode roots on the current deskt
 
 ## PPO Reward-Policy Controller
 
-The optional PPO path is a runtime reward-policy controller for generation candidates. Basics sends parent brain IDs, reproduction config, objective metadata, and PPO hyperparameters through IO Gateway to the sibling runtime's PPO manager. The runtime applies its current controller policy to reproduction mutation knobs, orchestrates artifact rollout around reproduction and speciation, then Basics sends evaluated candidate rewards back through IO so the PPO manager can update future reproduction-action policy.
+The optional PPO path is a runtime reward-policy controller for generation candidates. Basics sends parent brain IDs, reproduction config, objective metadata, and PPO hyperparameters through IO Gateway to the sibling runtime's PPO manager. The runtime samples per-candidate reproduction actions, orchestrates artifact rollout around reproduction and speciation, then Basics sends evaluated candidate rewards back through IO so the PPO manager can update future reproduction-action policy.
 
-For Multiplication, the task profile still leaves PPO disabled by default, but pre-fills PPO controls from the merged 15-generation sweeps: `12` rollout ticks, `2` rollout batches, `3` epochs, and `4` minibatch size. That row produced the best observed fitness in the current grid; `8` ticks remained a close, faster fallback, while `16` ticks did not improve the best result.
+For Multiplication, the task profile still leaves PPO disabled by default, but pre-fills PPO controls with the current conservative defaults: `12` rollout ticks, `2` rollout batches, `3` epochs, `4` minibatch size, and `basics.record_score` reward feedback. That reward favors ready balanced/tolerance accuracy over raw fitness. The PPO sweep script uses the same richer Multiplication mutation band as the UI profile, including function mutation and the larger axon/parameter/strength deltas.
 
 For controlled throughput sweeps, `tools/benchmark_multiplication_perf.py` can generate either local-reproduction configs or PPO controller configs. The PPO mode is explicit in result metadata:
 

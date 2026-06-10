@@ -188,7 +188,7 @@ public static class BasicsTaskExecutionProfiles
         {
             Enabled = false,
             ObjectiveName = "multiplication",
-            RewardSignal = "basics.fitness",
+            RewardSignal = "basics.record_score",
             RolloutTickCount = 12,
             RolloutBatchCount = 2,
             ClipEpsilon = 0.20f,

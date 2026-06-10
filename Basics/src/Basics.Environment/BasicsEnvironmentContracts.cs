@@ -668,11 +668,11 @@ public sealed record BasicsPpoOptimizerOptions
 {
     public const string CurrentSemanticsLabel = "PPO reward-policy controller";
     public const string CurrentSemanticsDisclosure =
-        "Runtime PPO uses IO reward feedback from evaluated candidates to update a clipped policy over reproduction actions for future artifact rollouts. It remains an optional off-path controller; NBN brain execution itself is not backprop-trained.";
+        "Runtime PPO uses IO reward feedback from evaluated candidates to update a clipped policy over reproduction actions for future artifact rollouts. It is a controlling generation mode, but still an optional off-path controller; NBN brain execution itself is not backprop-trained.";
 
     public bool Enabled { get; init; }
     public string ObjectiveName { get; init; } = "multiplication";
-    public string RewardSignal { get; init; } = "basics.fitness";
+    public string RewardSignal { get; init; } = "basics.record_score";
     public ulong RolloutTickCount { get; init; } = 12;
     public ulong RolloutBatchCount { get; init; } = 2;
     public float ClipEpsilon { get; init; } = 0.2f;

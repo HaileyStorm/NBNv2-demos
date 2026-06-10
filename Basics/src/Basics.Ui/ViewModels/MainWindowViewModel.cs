@@ -196,7 +196,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _multiplicationBehaviorRampFullText = "0.50";
     private bool _ppoOptimizerEnabled;
     private string _ppoObjectiveName = "multiplication";
-    private string _ppoRewardSignal = "basics.fitness";
+    private string _ppoRewardSignal = "basics.record_score";
     private string _ppoRolloutTickCountText = "12";
     private string _ppoRolloutBatchCountText = "2";
     private string _ppoClipEpsilonText = "0.2";
@@ -935,12 +935,12 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string OptimizationModeTitle
         => PpoOptimizerEnabled
-            ? "Generation Controller: Runtime PPO Service"
+            ? "Generation Controller: Runtime PPO Reproduction Policy"
             : "Optimization Mode: Local Reproduction";
 
     public string PpoOptimizerDetail
         => PpoOptimizerEnabled
-            ? $"Runtime PPO owns generation control for {SelectedTask?.DisplayName ?? "the selected task"}. Basics sends parent context and reward feedback through IO Gateway, then the PPO manager chooses reproduction actions for future artifact rollouts. IO discovers service.endpoint.ppo_manager via Settings Manager; Basics does not configure an endpoint. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}; epochs {PpoOptimizationEpochCountText}; minibatch {PpoMinibatchSizeText}."
+            ? $"Runtime PPO is the generation controller for {SelectedTask?.DisplayName ?? "the selected task"}. Basics sends parent context and reward feedback through IO Gateway; the PPO manager samples reproduction actions for future artifact rollouts and discovers service.endpoint.ppo_manager through Settings Manager. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}; epochs {PpoOptimizationEpochCountText}; minibatch {PpoMinibatchSizeText}."
             : "Local reproduction/speciation owns generation control. PPO remains off and no PPO endpoint is configured by Basics.";
 
     public string SchedulingSectionTitle

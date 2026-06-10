@@ -4644,7 +4644,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             Hyperparameters = new ProtoPpo.PpoHyperparameters
             {
                 RewardSignal = string.IsNullOrWhiteSpace(options.RewardSignal)
-                    ? "basics.fitness"
+                    ? "basics.record_score"
                     : options.RewardSignal.Trim(),
                 RolloutTickCount = options.RolloutTickCount,
                 RolloutBatchCount = Math.Max(1UL, Math.Min(options.RolloutBatchCount, runCount)),
@@ -4883,7 +4883,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 ? plan.SelectedTask.TaskId
                 : options.ObjectiveName.Trim(),
             RewardSignal = string.IsNullOrWhiteSpace(options.RewardSignal)
-                ? "basics.fitness"
+                ? "basics.record_score"
                 : options.RewardSignal.Trim(),
             MetadataJson = JsonSerializer.Serialize(new
             {
@@ -4894,7 +4894,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             Hyperparameters = new ProtoPpo.PpoHyperparameters
             {
                 RewardSignal = string.IsNullOrWhiteSpace(options.RewardSignal)
-                    ? "basics.fitness"
+                    ? "basics.record_score"
                     : options.RewardSignal.Trim(),
                 RolloutTickCount = options.RolloutTickCount,
                 RolloutBatchCount = options.RolloutBatchCount,
@@ -4954,8 +4954,13 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static float ResolvePpoRewardSignal(string? rewardSignal, BasicsTaskEvaluationResult evaluation)
     {
         var normalized = string.IsNullOrWhiteSpace(rewardSignal)
-            ? "basics.fitness"
+            ? "basics.record_score"
             : rewardSignal.Trim().ToLowerInvariant();
+        if (TryResolveScoreBreakdownReward(normalized, evaluation, out var scoreReward))
+        {
+            return scoreReward;
+        }
+
         return normalized switch
         {
             "basics.accuracy" => Math.Clamp(evaluation.Accuracy, 0f, 1f),
@@ -4963,6 +4968,39 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             "basics.record_score" => ResolveCandidateRecordScore(evaluation),
             _ => Math.Clamp(evaluation.Fitness, 0f, 1f)
         };
+    }
+
+    private static bool TryResolveScoreBreakdownReward(
+        string normalizedRewardSignal,
+        BasicsTaskEvaluationResult evaluation,
+        out float reward)
+    {
+        const string ScorePrefix = "score:";
+        const string BasicsScorePrefix = "basics.score.";
+        string? key = null;
+        if (normalizedRewardSignal.StartsWith(ScorePrefix, StringComparison.Ordinal))
+        {
+            key = normalizedRewardSignal[ScorePrefix.Length..];
+        }
+        else if (normalizedRewardSignal.StartsWith(BasicsScorePrefix, StringComparison.Ordinal))
+        {
+            key = normalizedRewardSignal[BasicsScorePrefix.Length..];
+        }
+        else if (normalizedRewardSignal is "basics.balanced_accuracy" or "basics.balanced_tolerance_accuracy")
+        {
+            key = "balanced_tolerance_accuracy";
+        }
+
+        if (string.IsNullOrWhiteSpace(key)
+            || !evaluation.ScoreBreakdown.TryGetValue(key, out var value)
+            || !float.IsFinite(value))
+        {
+            reward = 0f;
+            return false;
+        }
+
+        reward = Math.Clamp(value, 0f, 1f);
+        return true;
     }
 
     private static (string SpeciesId, string SpeciesDisplayName) ResolvePpoCommittedMembership(

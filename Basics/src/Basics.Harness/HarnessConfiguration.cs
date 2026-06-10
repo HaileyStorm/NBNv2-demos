@@ -248,7 +248,7 @@ internal sealed record HarnessPpoOptimizerConfig
 {
     public bool Enabled { get; init; }
     public string ObjectiveName { get; init; } = "multiplication";
-    public string RewardSignal { get; init; } = "basics.fitness";
+    public string RewardSignal { get; init; } = "basics.record_score";
     public ulong RolloutTickCount { get; init; } = 12;
     public ulong RolloutBatchCount { get; init; } = 2;
     public float ClipEpsilon { get; init; } = 0.2f;

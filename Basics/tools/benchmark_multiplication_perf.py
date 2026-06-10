@@ -773,7 +773,7 @@ def write_harness_config(args: argparse.Namespace, combo: Combo, combo_dir: Path
             "PpoOptimizer": {
                 "Enabled": args.ppo_rollout_controller,
                 "ObjectiveName": "multiplication",
-                "RewardSignal": "basics.fitness",
+                "RewardSignal": "basics.record_score",
                 "RolloutTickCount": args.ppo_rollout_ticks,
                 "RolloutBatchCount": args.ppo_rollout_batches,
                 "ClipEpsilon": 0.20,
