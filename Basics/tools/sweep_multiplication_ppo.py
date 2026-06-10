@@ -12,12 +12,13 @@ import argparse
 import itertools
 import json
 import os
+import random
 import re
 import socket
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -40,11 +41,13 @@ class PpoCombo:
     rollout_batches: int
     epochs: int
     minibatch_size: int
+    repeat_index: int = 1
 
     @property
     def label(self) -> str:
+        repeat_suffix = "" if self.repeat_index <= 1 else f"_rep{self.repeat_index:02d}"
         if self.mode == "direct":
-            return f"modedirect_pop{self.population:03d}"
+            return f"modedirect_pop{self.population:03d}{repeat_suffix}"
         return (
             f"mode{self.mode}_"
             f"pop{self.population:03d}_"
@@ -52,6 +55,7 @@ class PpoCombo:
             f"batches{self.rollout_batches:02d}_"
             f"epochs{self.epochs:02d}_"
             f"mb{self.minibatch_size:02d}"
+            f"{repeat_suffix}"
         )
 
 
@@ -139,6 +143,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("2,3,5"))
     parser.add_argument("--minibatch-sizes", type=parse_int_list, default=parse_int_list("1,2,4"))
     parser.add_argument("--population", type=parse_int_list, default=parse_int_list("32"))
+    parser.add_argument(
+        "--repeat-count",
+        type=int,
+        default=1,
+        help="Run each generated combo this many times. Repeats are separate rows with _repNN labels.",
+    )
+    parser.add_argument(
+        "--shuffle-seed",
+        type=int,
+        default=None,
+        help="Shuffle combo order with this deterministic seed to reduce order/runtime-state confounding.",
+    )
     parser.add_argument("--max-concurrent-brains", type=int, default=32)
     parser.add_argument(
         "--reproduction-run-count",
@@ -205,6 +221,8 @@ def main() -> int:
         sys.stdout.reconfigure(line_buffering=True)
 
     args = parse_args()
+    if args.repeat_count <= 0:
+        raise SystemExit("--repeat-count must be > 0")
     args.repo_root = args.repo_root.resolve()
     if args.output_root is None:
         args.output_root = (
@@ -231,7 +249,10 @@ def main() -> int:
     print(
         f"Per combo: one trial, timeout={args.trial_timeout_seconds}s, "
         f"max_generations={generation_budget if generation_budget is not None else 'none'}, "
-        f"population={population_text}, modes={','.join(args.ppo_modes)}, approx_eval_brains={brain_budget_text}"
+        f"population={population_text}, modes={','.join(args.ppo_modes)}, "
+        f"repeat_count={args.repeat_count}, "
+        f"shuffle_seed={args.shuffle_seed if args.shuffle_seed is not None else 'none'}, "
+        f"approx_eval_brains={brain_budget_text}"
     )
     print(
         "Note: latest completed 8-generation artifact-PPO sweep favored "
@@ -325,10 +346,10 @@ def harness_dll(args: argparse.Namespace) -> Path:
 
 
 def build_combos(args: argparse.Namespace) -> list[PpoCombo]:
-    combos: list[PpoCombo] = []
+    base_combos: list[PpoCombo] = []
     for mode in args.ppo_modes:
         if mode == "direct":
-            combos.extend(
+            base_combos.extend(
                 PpoCombo(
                     mode,
                     population,
@@ -339,7 +360,7 @@ def build_combos(args: argparse.Namespace) -> list[PpoCombo]:
                 for population in args.population)
             continue
 
-        combos.extend(
+        base_combos.extend(
             PpoCombo(mode, population, ticks, batches, epochs, minibatch)
             for population, ticks, batches, epochs, minibatch in itertools.product(
                 args.population,
@@ -348,6 +369,13 @@ def build_combos(args: argparse.Namespace) -> list[PpoCombo]:
                 args.epochs,
                 args.minibatch_sizes,
             ))
+    combos = [
+        combo if repeat_index == 1 else replace(combo, repeat_index=repeat_index)
+        for repeat_index in range(1, args.repeat_count + 1)
+        for combo in base_combos
+    ]
+    if args.shuffle_seed is not None:
+        random.Random(args.shuffle_seed).shuffle(combos)
     return combos
 
 
