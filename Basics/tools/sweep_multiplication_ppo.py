@@ -34,6 +34,7 @@ REPORT_RE = re.compile(r"^Report:\s+(?P<path>.+)$")
 
 @dataclass(frozen=True)
 class PpoCombo:
+    mode: str
     population: int
     rollout_ticks: int
     rollout_batches: int
@@ -42,7 +43,10 @@ class PpoCombo:
 
     @property
     def label(self) -> str:
+        if self.mode == "direct":
+            return f"modedirect_pop{self.population:03d}"
         return (
+            f"mode{self.mode}_"
             f"pop{self.population:03d}_"
             f"ticks{self.rollout_ticks:03d}_"
             f"batches{self.rollout_batches:02d}_"
@@ -61,6 +65,10 @@ class SweepResult:
     completed_generations: int = 0
     best_accuracy: float = 0.0
     best_fitness: float = 0.0
+    best_accuracy_generation: int = 0
+    best_fitness_generation: int = 0
+    accuracy_slope_to_best: float = 0.0
+    fitness_slope_to_best: float = 0.0
     mean_fitness: float = 0.0
     evaluation_failures: int = 0
     outcome: str = "unknown"
@@ -104,12 +112,30 @@ def parse_int_list(value: str) -> list[int]:
     return items
 
 
+def parse_mode_list(value: str) -> list[str]:
+    allowed = {"artifact", "direct", "combined"}
+    modes: list[str] = []
+    for raw in value.split(","):
+        mode = raw.strip().lower()
+        if not mode:
+            continue
+        if mode not in allowed:
+            raise argparse.ArgumentTypeError(
+                f"unsupported PPO mode '{mode}'. Expected one of: {', '.join(sorted(allowed))}"
+            )
+        modes.append(mode)
+    if not modes:
+        raise argparse.ArgumentTypeError("mode list must contain at least one mode")
+    return modes
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Sweep live Basics Multiplication PPO reward-policy settings."
     )
-    parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("8,12,16"))
-    parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1,2"))
+    parser.add_argument("--ppo-modes", type=parse_mode_list, default=parse_mode_list("artifact"))
+    parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("8,16,24"))
+    parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1,2,4"))
     parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("2,3,5"))
     parser.add_argument("--minibatch-sizes", type=parse_int_list, default=parse_int_list("1,2,4"))
     parser.add_argument("--population", type=parse_int_list, default=parse_int_list("32"))
@@ -138,13 +164,22 @@ def parse_args() -> argparse.Namespace:
         "--trial-retries",
         type=int,
         default=1,
-        help="Retry zero-generation IO connection failures this many times before recording the row.",
+        help="Retry retryable connection or infrastructure failures this many times before recording the row.",
     )
     parser.add_argument(
         "--retry-delay-seconds",
         type=float,
         default=5.0,
-        help="Delay before retrying a zero-generation IO connection failure.",
+        help="Delay before retrying a retryable connection or infrastructure failure.",
+    )
+    parser.add_argument(
+        "--max-consecutive-infrastructure-failures",
+        type=int,
+        default=2,
+        help=(
+            "Abort only after this many infrastructure/capacity failures in a row. "
+            "Use 1 for the old fail-fast behavior."
+        ),
     )
     parser.add_argument(
         "--verbose-harness-output",
@@ -182,16 +217,7 @@ def main() -> int:
     else:
         args.output_root = args.output_root.resolve()
 
-    combos = [
-        PpoCombo(population, ticks, batches, epochs, minibatch)
-        for population, ticks, batches, epochs, minibatch in itertools.product(
-            args.population,
-            args.rollout_ticks,
-            args.rollout_batches,
-            args.epochs,
-            args.minibatch_sizes,
-        )
-    ]
+    combos = build_combos(args)
     args.effective_reproduction_run_count = args.reproduction_run_count or max(args.rollout_batches)
 
     print(f"Planned PPO reward-policy sweep: {len(combos)} combo(s)")
@@ -205,23 +231,20 @@ def main() -> int:
     print(
         f"Per combo: one trial, timeout={args.trial_timeout_seconds}s, "
         f"max_generations={generation_budget if generation_budget is not None else 'none'}, "
-        f"population={population_text}, approx_eval_brains={brain_budget_text}"
+        f"population={population_text}, modes={','.join(args.ppo_modes)}, approx_eval_brains={brain_budget_text}"
     )
     print(
-        "Note: latest completed 15-generation sweeps favored rollout_ticks=12, "
-        "rollout_batches=2, epochs=3, minibatch_size=4 for Multiplication."
+        "Note: latest completed 8-generation artifact-PPO sweep favored "
+        "rollout_ticks=24, rollout_batches=1, epochs=3, minibatch_size=2, population=64 "
+        "for Multiplication. Direct/combined modes still need fresh sweep evidence."
     )
     for combo in combos:
-        if combo.rollout_batches > args.effective_reproduction_run_count:
+        if combo.mode != "direct" and combo.rollout_batches > args.effective_reproduction_run_count:
             raise SystemExit(
                 f"{combo.label} asks for {combo.rollout_batches} rollout batches, but "
                 f"reproduction run count is {args.effective_reproduction_run_count}."
             )
-        print(
-            f"  {combo.label}: population={combo.population} ticks={combo.rollout_ticks} "
-            f"batches={combo.rollout_batches} epochs={combo.epochs} "
-            f"minibatch={combo.minibatch_size}"
-        )
+        print(f"  {format_combo(combo)}")
 
     if args.dry_run:
         return 0
@@ -235,6 +258,7 @@ def main() -> int:
     best: SweepResult | None = None
     results: list[SweepResult] = []
     sweep_started = time.monotonic()
+    consecutive_infrastructure_failures = 0
 
     for index, combo in enumerate(combos, start=1):
         print()
@@ -246,18 +270,25 @@ def main() -> int:
 
         print_result(result)
         if result.infrastructure_failure:
+            consecutive_infrastructure_failures += 1
             write_summary(args.output_root, results, best)
-            print()
-            print("Infrastructure failure")
-            print(
-                "  Aborting sweep: this trial hit a runtime liveness/capacity failure. "
-                "Stop or restart affected runtime services, verify WorkerNode placement "
-                "inventory in Workbench, then rerun the sweep."
-            )
-            print(f"  Detail: {result.outcome_detail or result.error}")
-            print(f"Summary: {args.output_root / 'summary.json'}")
-            print(f"Rows:    {results_path}")
-            return 3
+            print_infrastructure_failure(
+                result,
+                consecutive_infrastructure_failures,
+                args.max_consecutive_infrastructure_failures)
+            if consecutive_infrastructure_failures >= args.max_consecutive_infrastructure_failures:
+                print(
+                    "  Aborting sweep: repeated runtime liveness/capacity failures indicate the "
+                    "runtime should be restarted or WorkerNode placement inventory should be checked."
+                )
+                print(f"Summary: {args.output_root / 'summary.json'}")
+                print(f"Rows:    {results_path}")
+                return 3
+            print("  Preserving prior results and continuing with the next combo.")
+            print_current_best(best)
+            print_sweep_progress(index, len(combos), sweep_started)
+            continue
+        consecutive_infrastructure_failures = 0
         if result.valid and (best is None or rank_key(result) > rank_key(best)):
             best = result
         print_current_best(best)
@@ -293,6 +324,33 @@ def harness_dll(args: argparse.Namespace) -> Path:
     )
 
 
+def build_combos(args: argparse.Namespace) -> list[PpoCombo]:
+    combos: list[PpoCombo] = []
+    for mode in args.ppo_modes:
+        if mode == "direct":
+            combos.extend(
+                PpoCombo(
+                    mode,
+                    population,
+                    args.rollout_ticks[0],
+                    args.rollout_batches[0],
+                    args.epochs[0],
+                    args.minibatch_sizes[0])
+                for population in args.population)
+            continue
+
+        combos.extend(
+            PpoCombo(mode, population, ticks, batches, epochs, minibatch)
+            for population, ticks, batches, epochs, minibatch in itertools.product(
+                args.population,
+                args.rollout_ticks,
+                args.rollout_batches,
+                args.epochs,
+                args.minibatch_sizes,
+            ))
+    return combos
+
+
 def build_harness(args: argparse.Namespace) -> None:
     cmd = [args.dotnet, "build", str(harness_project(args)), "-c", args.configuration]
     print(f"Building harness: {' '.join(cmd)}")
@@ -306,7 +364,7 @@ def run_combo(args: argparse.Namespace, combo: PpoCombo, combo_index: int, combo
     result: SweepResult | None = None
     for attempt in range(1, attempts + 1):
         result = run_combo_attempt(args, combo, combo_index, combo_count, attempt)
-        if not is_retryable_connection_failure(result) or attempt >= attempts:
+        if not is_retryable_trial_failure(result) or attempt >= attempts:
             return result
         print(
             f"[retry] {combo.label} attempt {attempt}/{attempts} hit "
@@ -361,8 +419,7 @@ def run_combo_attempt(
     attempt_text = "" if attempt == 1 else f" attempt={attempt}"
     print(
         f"[combo] {combo_index}/{combo_count} {combo.label}{attempt_text}: "
-        f"population={combo.population} ticks={combo.rollout_ticks} batches={combo.rollout_batches} "
-        f"epochs={combo.epochs} minibatch={combo.minibatch_size}"
+        f"{format_combo(combo)}"
     )
     with stdout_path.open("w", encoding="utf-8") as log:
         log.write(f"# {' '.join(cmd)}\n")
@@ -483,7 +540,8 @@ def write_config(
                 "MaxConcurrentBrains": args.max_concurrent_brains,
             },
             "PpoOptimizer": {
-                "Enabled": True,
+                "Enabled": combo.mode in {"artifact", "combined"},
+                "DirectRuntimeControlEnabled": combo.mode in {"direct", "combined"},
                 "ObjectiveName": "multiplication",
                 "RewardSignal": "basics.record_score",
                 "RolloutTickCount": combo.rollout_ticks,
@@ -495,6 +553,10 @@ def write_config(
                 "OptimizationEpochCount": combo.epochs,
                 "MinibatchSize": combo.minibatch_size,
                 "Seed": 42,
+                "DirectPlasticityRateMin": 0.0005,
+                "DirectPlasticityRateMax": 0.02,
+                "DirectHomeostasisBaseProbabilityMin": 0.001,
+                "DirectHomeostasisBaseProbabilityMax": 0.05,
             },
         },
         "Trials": {
@@ -518,8 +580,9 @@ def summarize_report(combo: PpoCombo, report_path: Path, exit_code: int, duratio
     trial = trials[-1] if trials else {}
     snapshots = trial.get("Snapshots") or []
     terminal = trial.get("TerminalSnapshot") or (snapshots[-1] if snapshots else {})
-    best_accuracy = max([float_or_zero(s.get("BestAccuracy")) for s in snapshots] + [float_or_zero(terminal.get("BestAccuracy"))])
-    best_fitness = max([float_or_zero(s.get("BestFitness")) for s in snapshots] + [float_or_zero(terminal.get("BestFitness"))])
+    metric_points = extract_metric_points(snapshots, terminal)
+    best_accuracy, best_accuracy_generation, accuracy_slope = summarize_metric(metric_points, "BestAccuracy")
+    best_fitness, best_fitness_generation, fitness_slope = summarize_metric(metric_points, "BestFitness")
     completed_generations = max([int_or_zero(s.get("Generation")) for s in snapshots] + [int_or_zero(terminal.get("Generation"))])
     evaluation_failures = max(
         [int_or_zero(s.get("EvaluationFailureCount")) for s in snapshots]
@@ -545,6 +608,10 @@ def summarize_report(combo: PpoCombo, report_path: Path, exit_code: int, duratio
         completed_generations=completed_generations,
         best_accuracy=best_accuracy,
         best_fitness=best_fitness,
+        best_accuracy_generation=best_accuracy_generation,
+        best_fitness_generation=best_fitness_generation,
+        accuracy_slope_to_best=accuracy_slope,
+        fitness_slope_to_best=fitness_slope,
         mean_fitness=float_or_zero(terminal.get("MeanFitness")),
         evaluation_failures=evaluation_failures,
         outcome=outcome,
@@ -560,12 +627,19 @@ def newest_report_path(report_dir: Path) -> Path | None:
     return reports[0] if reports else None
 
 
-def rank_key(result: SweepResult) -> tuple[float, float, int, float]:
+def rank_key(result: SweepResult) -> tuple[float, float, float, float, int, float]:
     stability_penalty = 0 if result.evaluation_failures == 0 and not result.timed_out else -1
     speed = 0.0
     if result.seconds_per_generation is not None and result.seconds_per_generation > 0:
         speed = 1.0 / result.seconds_per_generation
-    return (result.best_fitness, result.best_accuracy, stability_penalty, speed)
+    return (
+        result.best_fitness,
+        result.best_accuracy,
+        result.fitness_slope_to_best,
+        result.accuracy_slope_to_best,
+        stability_penalty,
+        speed,
+    )
 
 
 def print_result(result: SweepResult) -> None:
@@ -575,7 +649,8 @@ def print_result(result: SweepResult) -> None:
         f"[result] {result.combo.label} status={result.status} outcome={result.outcome} "
         f"gens={result.completed_generations} acc={result.best_accuracy:.4f} "
         f"fitness={result.best_fitness:.4f} eval_failures={result.evaluation_failures} "
-        f"sec/gen={sec_gen_text}"
+        f"slope_acc={result.accuracy_slope_to_best:.4f}/gen "
+        f"slope_fit={result.fitness_slope_to_best:.4f}/gen sec/gen={sec_gen_text}"
     )
     if result.error:
         print(f"[result] error={result.error}")
@@ -585,12 +660,23 @@ def print_current_best(best: SweepResult | None) -> None:
     if best is None:
         print("[current best] none yet")
         return
+    if best.combo.mode == "direct":
+        print(
+            f"[current best] mode=direct population={best.combo.population} "
+            f"fitness={best.best_fitness:.4f} acc={best.best_accuracy:.4f} "
+            f"gens={best.completed_generations} "
+            f"slope_fit={best.fitness_slope_to_best:.4f}/gen "
+            f"slope_acc={best.accuracy_slope_to_best:.4f}/gen"
+        )
+        return
     print(
-        f"[current best] ticks={best.combo.rollout_ticks} batches={best.combo.rollout_batches} "
+        f"[current best] mode={best.combo.mode} ticks={best.combo.rollout_ticks} batches={best.combo.rollout_batches} "
         f"epochs={best.combo.epochs} minibatch={best.combo.minibatch_size} "
         f"population={best.combo.population} "
         f"fitness={best.best_fitness:.4f} acc={best.best_accuracy:.4f} "
-        f"gens={best.completed_generations}"
+        f"gens={best.completed_generations} "
+        f"slope_fit={best.fitness_slope_to_best:.4f}/gen "
+        f"slope_acc={best.accuracy_slope_to_best:.4f}/gen"
     )
 
 
@@ -607,15 +693,50 @@ def print_sweep_progress(completed: int, total: int, started: float) -> None:
 
 
 def print_recommendation(best: SweepResult) -> None:
+    if best.combo.mode == "direct":
+        print(
+            f"  mode:            {best.combo.mode}\n"
+            f"  population:      {best.combo.population}\n"
+            "  artifact params: ignored in direct-only mode\n"
+            f"  observed fitness {best.best_fitness:.4f}, accuracy {best.best_accuracy:.4f}, "
+            f"{best.completed_generations} generation(s)\n"
+            f"  best fitness gen {best.best_fitness_generation}, slope {best.fitness_slope_to_best:.4f}/gen\n"
+            f"  best accuracy gen {best.best_accuracy_generation}, slope {best.accuracy_slope_to_best:.4f}/gen"
+        )
+        return
+
     print(
+        f"  mode:            {best.combo.mode}\n"
         f"  rollout ticks:   {best.combo.rollout_ticks}\n"
         f"  rollout batches: {best.combo.rollout_batches}\n"
         f"  epochs:          {best.combo.epochs}\n"
         f"  minibatch size:  {best.combo.minibatch_size}\n"
         f"  population:      {best.combo.population}\n"
         f"  observed fitness {best.best_fitness:.4f}, accuracy {best.best_accuracy:.4f}, "
-        f"{best.completed_generations} generation(s)"
+        f"{best.completed_generations} generation(s)\n"
+        f"  best fitness gen {best.best_fitness_generation}, slope {best.fitness_slope_to_best:.4f}/gen\n"
+        f"  best accuracy gen {best.best_accuracy_generation}, slope {best.accuracy_slope_to_best:.4f}/gen"
     )
+
+
+def format_combo(combo: PpoCombo) -> str:
+    if combo.mode == "direct":
+        return (
+            f"{combo.label}: mode=direct population={combo.population} "
+            "direct_runtime_control=true artifact_params=ignored"
+        )
+
+    return (
+        f"{combo.label}: mode={combo.mode} population={combo.population} ticks={combo.rollout_ticks} "
+        f"batches={combo.rollout_batches} epochs={combo.epochs} minibatch={combo.minibatch_size}"
+    )
+
+
+def is_retryable_trial_failure(result: SweepResult) -> bool:
+    return is_retryable_connection_failure(result) or (
+        result.infrastructure_failure
+        and not result.timed_out
+        and result.completed_generations == 0)
 
 
 def is_retryable_connection_failure(result: SweepResult) -> bool:
@@ -627,6 +748,42 @@ def is_retryable_connection_failure(result: SweepResult) -> bool:
         or "runtime_client_failed" in detail
         or "runtimeclientfailed" in detail
     )
+
+
+def extract_metric_points(snapshots: list[Any], terminal: Mapping[str, Any]) -> list[tuple[int, Mapping[str, Any]]]:
+    points: list[tuple[int, Mapping[str, Any]]] = [(0, {})]
+    for snapshot in snapshots:
+        if isinstance(snapshot, Mapping):
+            points.append((int_or_zero(snapshot.get("Generation")), snapshot))
+    if terminal:
+        points.append((int_or_zero(terminal.get("Generation")), terminal))
+    return points
+
+
+def summarize_metric(points: list[tuple[int, Mapping[str, Any]]], field_name: str) -> tuple[float, int, float]:
+    best_value = max([float_or_zero(snapshot.get(field_name)) for _, snapshot in points] + [0.0])
+    best_generation = 0
+    for generation, snapshot in points:
+        value = float_or_zero(snapshot.get(field_name))
+        if abs(value - best_value) <= 0.000_001:
+            best_generation = generation
+            break
+    slope = best_value / best_generation if best_generation > 0 else 0.0
+    return best_value, best_generation, slope
+
+
+def print_infrastructure_failure(
+    result: SweepResult,
+    consecutive_failures: int,
+    max_consecutive_failures: int,
+) -> None:
+    print()
+    print("Infrastructure failure")
+    print(
+        f"  Row failed with runtime liveness/capacity detail "
+        f"({consecutive_failures}/{max_consecutive_failures} consecutive)."
+    )
+    print(f"  Detail: {result.outcome_detail or result.error}")
 
 
 def write_summary(output_root: Path, results: list[SweepResult], best: SweepResult | None) -> None:

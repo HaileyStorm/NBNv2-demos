@@ -188,7 +188,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         try
         {
-            if (plan.PpoOptimizer?.Enabled == true)
+            if (IsArtifactPpoEnabled(plan.PpoOptimizer))
             {
                 PublishStartupStatus(
                     "Checking PPO core service...",
@@ -331,7 +331,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         cancellationToken)
                     .ConfigureAwait(false);
                 population = evaluationResult.Population.ToList();
-                if (plan.PpoOptimizer?.Enabled == true)
+                if (IsArtifactPpoEnabled(plan.PpoOptimizer))
                 {
                     await SubmitPpoRewardFeedbackAsync(
                             plan,
@@ -531,7 +531,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         behaviorPressureHistory);
                 }
 
-                var breedingPopulation = plan.PpoOptimizer?.Enabled == true
+                var breedingPopulation = IsArtifactPpoEnabled(plan.PpoOptimizer)
                     ? population
                     : await TeardownPopulationBrainsAsync(population, CancellationToken.None).ConfigureAwait(false);
                 var breedingProgressStopwatch = Stopwatch.StartNew();
@@ -892,6 +892,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
     private async Task ConfigureBrainEvaluationRuntimeStateAsync(
         Guid brainId,
+        BasicsPpoOptimizerOptions? ppoOptimizer,
         CancellationToken cancellationToken)
     {
         if (brainId == Guid.Empty)
@@ -902,10 +903,34 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var costAck = await _runtimeClient.SetCostEnergyEnabledAsync(brainId, enabled: false, cancellationToken).ConfigureAwait(false);
         ValidateIoCommandAck(costAck, brainId, "set_cost_energy");
 
-        var plasticityAck = await _runtimeClient.SetPlasticityEnabledAsync(brainId, enabled: false, cancellationToken).ConfigureAwait(false);
+        var directControlEnabled = IsDirectRuntimeControlEnabled(ppoOptimizer);
+        var plasticityRate = directControlEnabled
+            ? Math.Clamp(ppoOptimizer!.DirectPlasticityRateMin, 0f, 1f)
+            : 0f;
+        var homeostasisProbability = directControlEnabled
+            ? Math.Clamp(ppoOptimizer!.DirectHomeostasisBaseProbabilityMin, 0f, 1f)
+            : 0f;
+
+        var plasticityAck = await _runtimeClient.SetPlasticityEnabledAsync(
+                brainId,
+                enabled: directControlEnabled,
+                plasticityRate,
+                probabilisticUpdates: directControlEnabled,
+                plasticityDelta: directControlEnabled ? plasticityRate : 0f,
+                plasticityRebaseThresholdPct: directControlEnabled ? 0.05f : 0f,
+                cancellationToken)
+            .ConfigureAwait(false);
         ValidateIoCommandAck(plasticityAck, brainId, "set_plasticity");
 
-        var homeostasisAck = await _runtimeClient.SetHomeostasisEnabledAsync(brainId, enabled: false, cancellationToken).ConfigureAwait(false);
+        var homeostasisAck = await _runtimeClient.SetHomeostasisEnabledAsync(
+                brainId,
+                enabled: directControlEnabled,
+                homeostasisProbability,
+                energyCouplingEnabled: false,
+                energyTargetScale: 1f,
+                energyProbabilityScale: 1f,
+                cancellationToken)
+            .ConfigureAwait(false);
         ValidateIoCommandAck(homeostasisAck, brainId, "set_homeostasis");
     }
 
@@ -1341,7 +1366,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var maxConcurrent = ResolveEvaluationConcurrency(plan.Capacity.RecommendedMaxConcurrentBrains);
         var chunkCount = (int)Math.Ceiling(population.Count / (double)maxConcurrent);
         var setupConcurrency = ResolveSetupConcurrency(plan.Capacity.EligibleWorkerCount, maxConcurrent);
-        var retainEvaluatedBrainsForPpo = plan.PpoOptimizer?.Enabled == true;
+        var retainEvaluatedBrainsForPpo = IsArtifactPpoEnabled(plan.PpoOptimizer);
         using var setupGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
         using var spawnRequestGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
         using var placementWaitGate = new SemaphoreSlim(setupConcurrency, setupConcurrency);
@@ -1444,6 +1469,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         placementWaitGate,
                         outputObservationMode,
                         outputSamplingPolicy,
+                        plan.PpoOptimizer,
                         setupGate,
                         spawnPacer,
                         batchBrainOrdinal: memberIndex + 1,
@@ -1578,6 +1604,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         SemaphoreSlim placementWaitGate,
         BasicsOutputObservationMode outputObservationMode,
         BasicsOutputSamplingPolicy outputSamplingPolicy,
+        BasicsPpoOptimizerOptions? ppoOptimizer,
         SemaphoreSlim setupGate,
         SpawnRequestPacer spawnPacer,
         int batchBrainOrdinal,
@@ -1614,6 +1641,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                         placementWaitGate,
                         outputObservationMode,
                         outputSamplingPolicy,
+                        ppoOptimizer,
                         setupGate,
                         spawnPacer,
                         attempt,
@@ -1681,6 +1709,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         SemaphoreSlim placementWaitGate,
         BasicsOutputObservationMode outputObservationMode,
         BasicsOutputSamplingPolicy outputSamplingPolicy,
+        BasicsPpoOptimizerOptions? ppoOptimizer,
         SemaphoreSlim setupGate,
         SpawnRequestPacer spawnPacer,
         int attempt,
@@ -1839,7 +1868,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 return CreateMemberEvaluationResult(resultMember, queueWait, spawnRequest, placementWait, setup, observation, totalStopwatch.Elapsed);
             }
 
-            await ConfigureBrainEvaluationRuntimeStateAsync(brainId, cancellationToken).ConfigureAwait(false);
+            await ConfigureBrainEvaluationRuntimeStateAsync(brainId, ppoOptimizer, cancellationToken).ConfigureAwait(false);
             await ConfigureBrainOutputObservationModeAsync(brainId, outputObservationMode, brainInfo, cancellationToken).ConfigureAwait(false);
             await SynchronizeBrainEvaluationRuntimeConfigAsync(brainId, cancellationToken).ConfigureAwait(false);
 
@@ -1873,6 +1902,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     taskPlugin.Contract.InputWidth,
                     cancellationToken)
                 .ConfigureAwait(false);
+            var brainPausedAtSampleBoundary = false;
             observationTiming = observationTiming.Add(activationResult.Timing);
             if (!string.IsNullOrWhiteSpace(activationResult.FailureDetail))
             {
@@ -1891,6 +1921,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             ulong lastTick = 0;
             var sampleRepeatCount = Math.Max(1, outputSamplingPolicy.SampleRepeatCount);
             var completedObservationAttempts = 0;
+            var directControlOrdinal = 0;
 
             foreach (var sample in samples)
             {
@@ -1903,8 +1934,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                             lastTick,
                             outputObservationMode,
                             outputSamplingPolicy,
+                            brainPausedAtSampleBoundary,
                             cancellationToken)
                         .ConfigureAwait(false);
+                    brainPausedAtSampleBoundary = false;
                     observationTiming = observationTiming.Add(sampleObservation.Timing);
                     if (sampleObservation.Observation is null)
                     {
@@ -1925,6 +1958,32 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     completedObservationAttempts++;
                     onSampleProgress?.Invoke(batchBrainOrdinal, completedObservationAttempts);
                     lastTick = sampleObservation.Observation.Value.TickId;
+                    if (IsDirectRuntimeControlEnabled(ppoOptimizer))
+                    {
+                        var directControlPause = await PauseBrainAtSampleBoundaryAsync(
+                                brainId,
+                                "basics_direct_reward_control_boundary",
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                        brainPausedAtSampleBoundary = true;
+                        observationTiming = observationTiming.Add(new ObservationTiming(
+                            directControlPause,
+                            TimeSpan.Zero,
+                            TimeSpan.Zero,
+                            TimeSpan.Zero,
+                            TimeSpan.Zero,
+                            0));
+                        await TryApplyDirectRuntimeRewardControlAsync(
+                                brainId,
+                                ppoOptimizer!,
+                                generation,
+                                member.BootstrapOrigin?.BootstrapTemplateIndex ?? batchBrainOrdinal,
+                                sample,
+                                sampleObservation.Observation.Value,
+                                directControlOrdinal++,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                 }
 
                 observations.Add(AggregateRepeatedObservations(repeatedObservations));
@@ -2111,6 +2170,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         => diagnostic.Contains("spawn_unavailable", StringComparison.Ordinal)
            || diagnostic.Contains("spawn_worker_unavailable", StringComparison.Ordinal)
            || diagnostic.Contains("No eligible workers are available for placement", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsArtifactPpoEnabled(BasicsPpoOptimizerOptions? options)
+        => options?.Enabled == true;
+
+    private static bool IsDirectRuntimeControlEnabled(BasicsPpoOptimizerOptions? options)
+        => options?.DirectRuntimeControlEnabled == true;
 
     private async Task<IReadOnlyList<PopulationMember>> RetainLivePpoParentCandidatesAsync(
         IReadOnlyList<PopulationMember> batch,
@@ -2509,16 +2574,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         ulong lastTick,
         BasicsOutputObservationMode outputObservationMode,
         BasicsOutputSamplingPolicy outputSamplingPolicy,
+        bool brainPausedAtBoundary,
         CancellationToken cancellationToken)
     {
-        var pauseStopwatch = Stopwatch.StartNew();
-        var pauseAck = await _runtimeClient.PauseBrainAsync(
-                brainId,
-                reason: "basics_sample_boundary",
-                cancellationToken)
-            .ConfigureAwait(false);
-        ValidateIoCommandAck(pauseAck, brainId, "pause_brain");
-        var pause = pauseStopwatch.Elapsed;
+        var pause = brainPausedAtBoundary
+            ? TimeSpan.Zero
+            : await PauseBrainAtSampleBoundaryAsync(
+                    brainId,
+                    "basics_sample_boundary",
+                    cancellationToken)
+                .ConfigureAwait(false);
 
         var resetStopwatch = Stopwatch.StartNew();
         await ResetBrainRuntimeStateForSampleAsync(brainId, cancellationToken).ConfigureAwait(false);
@@ -2565,6 +2630,163 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             1);
         return result with { Timing = timing };
     }
+
+    private async Task<TimeSpan> PauseBrainAtSampleBoundaryAsync(
+        Guid brainId,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        var pauseStopwatch = Stopwatch.StartNew();
+        var pauseAck = await _runtimeClient.PauseBrainAsync(
+                brainId,
+                reason,
+                cancellationToken)
+            .ConfigureAwait(false);
+        ValidateIoCommandAck(pauseAck, brainId, "pause_brain");
+        return pauseStopwatch.Elapsed;
+    }
+
+    private async Task TryApplyDirectRuntimeRewardControlAsync(
+        Guid brainId,
+        BasicsPpoOptimizerOptions options,
+        int generation,
+        int memberOrdinal,
+        BasicsTaskSample sample,
+        BasicsTaskObservation observation,
+        int actionOrdinal,
+        CancellationToken cancellationToken)
+    {
+        if (brainId == Guid.Empty || !IsDirectRuntimeControlEnabled(options))
+        {
+            return;
+        }
+
+        var surface = ResolveDirectRuntimeControlSurface(actionOrdinal);
+        var reward = ResolveDirectRuntimeControlReward(sample, observation);
+        var controlValue = ResolveDirectRuntimeControlValue(options, surface, reward);
+        var observationTick = observation.TickId;
+        var actionTick = observationTick + 1;
+        var actionId = $"g{generation}.m{memberOrdinal}.s{actionOrdinal}.{FormatDirectRuntimeControlSurface(surface)}";
+        var response = await ApplyDirectRuntimeRewardControlOnceAsync(
+                brainId,
+                options,
+                actionId,
+                observationTick,
+                actionTick,
+                surface,
+                reward,
+                controlValue,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (response is null || response.Accepted)
+        {
+            return;
+        }
+
+        if (response.AppliedTickFloor > observationTick
+            && response.AppliedTickFloor != actionTick
+            && IsDirectRuntimeControlTickFenceFailure(response.FailureReasonCode))
+        {
+            await ApplyDirectRuntimeRewardControlOnceAsync(
+                    brainId,
+                    options,
+                    actionId,
+                    observationTick,
+                    response.AppliedTickFloor,
+                    surface,
+                    reward,
+                    controlValue,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async Task<DirectRuntimeRewardControlResponse?> ApplyDirectRuntimeRewardControlOnceAsync(
+        Guid brainId,
+        BasicsPpoOptimizerOptions options,
+        string actionId,
+        ulong observationTick,
+        ulong actionTick,
+        DirectRuntimeRewardControlSurface surface,
+        float reward,
+        float controlValue,
+        CancellationToken cancellationToken)
+        => await _runtimeClient.ApplyDirectRuntimeRewardControlAsync(
+                new DirectRuntimeRewardControlRequest
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    ControllerId = "basics.direct-runtime-control",
+                    ActionId = actionId,
+                    ObjectiveName = NormalizeDirectRuntimeControlToken(options.ObjectiveName, "basics"),
+                    RewardSignal = NormalizeDirectRuntimeControlToken(options.RewardSignal, "basics.direct_sample_reward"),
+                    ObservationTickId = observationTick,
+                    ActionTickId = actionTick,
+                    Surface = surface,
+                    Reward = reward,
+                    ControlValue = controlValue
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    private static DirectRuntimeRewardControlSurface ResolveDirectRuntimeControlSurface(int actionOrdinal)
+        => actionOrdinal % 2 == 0
+            ? DirectRuntimeRewardControlSurface.PlasticityRate
+            : DirectRuntimeRewardControlSurface.HomeostasisBaseProbability;
+
+    private static float ResolveDirectRuntimeControlReward(BasicsTaskSample sample, BasicsTaskObservation observation)
+    {
+        var absoluteError = Math.Abs(sample.ExpectedOutput - observation.OutputValue);
+        var proximity = 1f - Math.Clamp(absoluteError, 0f, 1f);
+        return ClampUnitFinite(proximity * ClampUnitFinite(observation.ReadyConfidence));
+    }
+
+    private static float ResolveDirectRuntimeControlValue(
+        BasicsPpoOptimizerOptions options,
+        DirectRuntimeRewardControlSurface surface,
+        float reward)
+    {
+        var pressure = 1f - ClampUnitFinite(reward);
+        return surface switch
+        {
+            DirectRuntimeRewardControlSurface.PlasticityRate => LerpClamped(
+                options.DirectPlasticityRateMin,
+                options.DirectPlasticityRateMax,
+                pressure),
+            DirectRuntimeRewardControlSurface.HomeostasisBaseProbability => LerpClamped(
+                options.DirectHomeostasisBaseProbabilityMin,
+                options.DirectHomeostasisBaseProbabilityMax,
+                pressure),
+            _ => 0f
+        };
+    }
+
+    private static float LerpClamped(float minimum, float maximum, float ratio)
+    {
+        if (!float.IsFinite(minimum) || !float.IsFinite(maximum))
+        {
+            return 0f;
+        }
+
+        var low = Math.Clamp(Math.Min(minimum, maximum), 0f, 1f);
+        var high = Math.Clamp(Math.Max(minimum, maximum), 0f, 1f);
+        return low + ((high - low) * ClampUnitFinite(ratio));
+    }
+
+    private static string NormalizeDirectRuntimeControlToken(string? value, string fallback)
+        => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    private static bool IsDirectRuntimeControlTickFenceFailure(string? reason)
+        => string.Equals(reason, "action_tick_stale", StringComparison.Ordinal)
+           || string.Equals(reason, "action_tick_not_next", StringComparison.Ordinal);
+
+    private static string FormatDirectRuntimeControlSurface(DirectRuntimeRewardControlSurface surface)
+        => surface switch
+        {
+            DirectRuntimeRewardControlSurface.PlasticityRate => "plasticity_rate",
+            DirectRuntimeRewardControlSurface.HomeostasisBaseProbability => "homeostasis_base_probability",
+            _ => surface.ToString()
+        };
 
     private async Task<PrimeObservationResult> PrimeOutputObservationAsync(
         Guid brainId,
@@ -3514,7 +3736,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
             IReadOnlyList<ReproductionChildDefinition> childDefinitions;
             uint observedRunCount;
-            var usePpoOptimizer = plan.PpoOptimizer?.Enabled == true
+            var usePpoOptimizer = IsArtifactPpoEnabled(plan.PpoOptimizer)
                 && parentA.ActiveBrainId != Guid.Empty
                 && parentB.ActiveBrainId != Guid.Empty
                 && parentA.ActiveBrainId != parentB.ActiveBrainId;

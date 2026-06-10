@@ -245,6 +245,41 @@ public sealed class BasicsContractTests
     }
 
     [Fact]
+    public void PpoOptimizerOptions_DirectOnlyIgnoresArtifactHyperparameters()
+    {
+        var directOnly = new BasicsPpoOptimizerOptions
+        {
+            Enabled = false,
+            DirectRuntimeControlEnabled = true,
+            RolloutTickCount = 0,
+            ClipEpsilon = 2f
+        };
+
+        var validation = directOnly.Validate();
+
+        Assert.True(validation.IsValid, string.Join("; ", validation.Errors));
+    }
+
+    [Fact]
+    public void PpoOptimizerOptions_DirectOnlyValidatesDirectRanges()
+    {
+        var directOnly = new BasicsPpoOptimizerOptions
+        {
+            DirectRuntimeControlEnabled = true,
+            DirectPlasticityRateMin = 0.5f,
+            DirectPlasticityRateMax = 0.25f,
+            DirectHomeostasisBaseProbabilityMin = 0.2f,
+            DirectHomeostasisBaseProbabilityMax = 1.2f
+        };
+
+        var validation = directOnly.Validate();
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, error => error.Contains("plasticity rate maximum", StringComparison.Ordinal));
+        Assert.Contains(validation.Errors, error => error.Contains("homeostasis probability maximum", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void EnvironmentOptions_ValidatePpoOptimizer_WhenEnabled()
     {
         var options = new BasicsEnvironmentOptions

@@ -140,6 +140,7 @@ public sealed class MainWindowViewModelBehaviorChartTests
         var options = BuildEnvironmentOptions(viewModel);
 
         Assert.True(options.PpoOptimizer.Enabled);
+        Assert.False(options.PpoOptimizer.DirectRuntimeControlEnabled);
         Assert.Equal("multiplication", options.PpoOptimizer.ObjectiveName);
         Assert.Equal("basics.fitness", options.PpoOptimizer.RewardSignal);
         Assert.Equal((ulong)256, options.PpoOptimizer.RolloutTickCount);
@@ -154,6 +155,31 @@ public sealed class MainWindowViewModelBehaviorChartTests
     }
 
     [Fact]
+    public void DirectRuntimeControlSettings_AreSerializedWithoutPpoManagerMode()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.PpoOptimizerEnabled = false;
+        viewModel.DirectRuntimeControlEnabled = true;
+        viewModel.PpoObjectiveName = "multiplication";
+        viewModel.PpoRewardSignal = "basics.direct_sample_reward";
+        viewModel.PpoRolloutTickCountText = "not-a-number";
+        viewModel.PpoClipEpsilonText = "not-a-number";
+
+        var options = BuildEnvironmentOptions(viewModel);
+
+        Assert.False(options.PpoOptimizer.Enabled);
+        Assert.True(options.PpoOptimizer.DirectRuntimeControlEnabled);
+        Assert.Equal("multiplication", options.PpoOptimizer.ObjectiveName);
+        Assert.Equal("basics.direct_sample_reward", options.PpoOptimizer.RewardSignal);
+        Assert.Equal((ulong)12, options.PpoOptimizer.RolloutTickCount);
+        Assert.Equal(0.2f, options.PpoOptimizer.ClipEpsilon);
+        Assert.False(viewModel.ShowPpoOptimizerConfiguration);
+        Assert.False(viewModel.ShowPpoServiceStatus);
+        Assert.True(viewModel.ShowLocalReproductionSchedulingControls);
+        Assert.Contains("Direct brain reward-control", viewModel.PpoOptimizerDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DisabledPpoOptimizer_IgnoresHiddenHyperparameterText()
     {
         var viewModel = CreateViewModel();
@@ -164,6 +190,7 @@ public sealed class MainWindowViewModelBehaviorChartTests
         var options = BuildEnvironmentOptions(viewModel);
 
         Assert.False(options.PpoOptimizer.Enabled);
+        Assert.False(options.PpoOptimizer.DirectRuntimeControlEnabled);
         Assert.Equal((ulong)12, options.PpoOptimizer.RolloutTickCount);
         Assert.Equal(0.2f, options.PpoOptimizer.ClipEpsilon);
     }

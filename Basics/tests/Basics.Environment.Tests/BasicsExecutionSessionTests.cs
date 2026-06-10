@@ -3251,6 +3251,58 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public async Task ExecutionSession_DirectRuntimeControl_DoesNotRequirePpoManager()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            PpoAvailable = false
+        };
+        await using var session = CreateSession(
+            runtimeClient,
+            ppoAvailabilityProbeTimeout: TimeSpan.Zero,
+            ppoAvailabilityProbePollDelay: TimeSpan.FromMilliseconds(1));
+
+        var final = await session.RunAsync(
+            CreatePlan(
+                BasicsOutputObservationMode.EventedOutput,
+                new BasicsExecutionStopCriteria
+                {
+                    MaximumGenerations = 1,
+                    TargetAccuracy = 1.1f,
+                    TargetFitness = 1.1f
+                }) with
+            {
+                PpoOptimizer = new BasicsPpoOptimizerOptions
+                {
+                    Enabled = false,
+                    DirectRuntimeControlEnabled = true,
+                    ObjectiveName = "and",
+                    RewardSignal = "basics.direct_sample_reward"
+                }
+            },
+            new AndTaskPlugin(),
+            _ => { },
+            CancellationToken.None);
+
+        Assert.NotEqual(BasicsExecutionState.Failed, final.State);
+        Assert.Empty(runtimeClient.PpoStartRequests);
+        Assert.NotEmpty(runtimeClient.DirectRuntimeRewardControlRequests);
+        Assert.NotEmpty(runtimeClient.DirectRuntimeRewardControlWasPaused);
+        Assert.All(runtimeClient.DirectRuntimeRewardControlWasPaused, paused => Assert.True(paused));
+        Assert.All(runtimeClient.DirectRuntimeRewardControlRequests, request =>
+        {
+            Assert.Equal("basics.direct-runtime-control", request.ControllerId);
+            Assert.Equal("and", request.ObjectiveName);
+            Assert.Equal("basics.direct_sample_reward", request.RewardSignal);
+            Assert.True(float.IsFinite(request.Reward));
+            Assert.InRange(request.ControlValue, 0f, 1f);
+        });
+        Assert.Contains(runtimeClient.SetPlasticityEnabledRequests, request => request.Enabled);
+        Assert.Contains(runtimeClient.SetHomeostasisEnabledRequests, request => request.Enabled);
+    }
+
+    [Fact]
     public void ExecutionSession_SpeciationMetadata_SanitizesNonFiniteSimilarityScores()
     {
         var helper = typeof(BasicsExecutionSession).GetMethod(
@@ -3553,8 +3605,8 @@ public sealed class BasicsExecutionSessionTests
         public List<Repro.AssessCompatibilityByArtifactsRequest> AssessCompatibilityRequests { get; } = new();
         public List<(Guid BrainId, OutputVectorSource OutputVectorSource)> SetOutputVectorSourceRequests { get; } = new();
         public List<(Guid BrainId, bool Enabled)> SetCostEnergyEnabledRequests { get; } = new();
-        public List<(Guid BrainId, bool Enabled)> SetPlasticityEnabledRequests { get; } = new();
-        public List<(Guid BrainId, bool Enabled)> SetHomeostasisEnabledRequests { get; } = new();
+        public List<(Guid BrainId, bool Enabled, float PlasticityRate, bool ProbabilisticUpdates, float PlasticityDelta, float PlasticityRebaseThresholdPct)> SetPlasticityEnabledRequests { get; } = new();
+        public List<(Guid BrainId, bool Enabled, float HomeostasisBaseProbability, bool EnergyCouplingEnabled, float EnergyTargetScale, float EnergyProbabilityScale)> SetHomeostasisEnabledRequests { get; } = new();
         public List<Guid> SynchronizeBrainRuntimeConfigRequests { get; } = new();
         public List<(Guid BrainId, bool ResetBuffer, bool ResetAccumulator)> ResetBrainRuntimeStateRequests { get; } = new();
         public List<Repro.ReproduceByArtifactsRequest> ReproduceRequests { get; } = new();
@@ -3562,6 +3614,8 @@ public sealed class BasicsExecutionSessionTests
         public List<ProtoPpo.PpoStartRunRequest> PpoStartRequests { get; } = new();
         public List<ProtoPpo.PpoStopRunRequest> PpoStopRequests { get; } = new();
         public List<ProtoPpo.PpoRecordRewardsRequest> PpoRewardRequests { get; } = new();
+        public List<DirectRuntimeRewardControlRequest> DirectRuntimeRewardControlRequests { get; } = new();
+        public List<bool> DirectRuntimeRewardControlWasPaused { get; } = new();
         public Queue<ProtoPpo.PpoRunDescriptor> PpoStatusRuns { get; } = new();
         public List<TimeSpan> AwaitPlacementTimeouts { get; } = new();
         public List<TimeSpan> VectorWaitTimeouts { get; } = new();
@@ -3575,6 +3629,7 @@ public sealed class BasicsExecutionSessionTests
         private int _maxObservedConcurrentPlacementWaits;
         private int _activeBrainInfoRequests;
         private int _maxObservedConcurrentBrainInfoRequests;
+        private readonly ConcurrentDictionary<Guid, byte> _pausedBrains = new();
         private readonly Dictionary<Guid, (float Value, float Ready)> _lastVectorOutputByBrain = new();
         private readonly HashSet<Guid> _brainsWithSuppressedFirstInputOutputs = new();
 
@@ -3663,6 +3718,11 @@ public sealed class BasicsExecutionSessionTests
                 }
 
                 var brainId = Guid.NewGuid();
+                if (request.StartPaused)
+                {
+                    _pausedBrains.TryAdd(brainId, 0);
+                }
+
                 if (RequirePlacementWaitForVisibility)
                 {
                     _pendingBrainDefinitions[brainId] = request.BrainDef.Clone();
@@ -3964,6 +4024,7 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             OperationLog.Enqueue("pause_brain");
+            _pausedBrains.TryAdd(brainId, 0);
             _outputAvailableAtUtc[brainId] = DateTimeOffset.MaxValue;
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
@@ -3979,6 +4040,7 @@ public sealed class BasicsExecutionSessionTests
             CancellationToken cancellationToken = default)
         {
             OperationLog.Enqueue("resume_brain");
+            _pausedBrains.TryRemove(brainId, out _);
             var activationDelay = _resumeDelayApplied.Add(brainId)
                 ? ResumeOutputActivationDelay
                 : TimeSpan.Zero;
@@ -3997,6 +4059,7 @@ public sealed class BasicsExecutionSessionTests
             _brainDefinitions.Remove(brainId);
             _pendingBrainDefinitions.Remove(brainId);
             _brainSnapshots.Remove(brainId);
+            _pausedBrains.TryRemove(brainId, out _);
             _outputs.Remove(brainId);
             _delayedOutputs.Remove(brainId);
             _outputEvents.Remove(brainId);
@@ -4052,9 +4115,19 @@ public sealed class BasicsExecutionSessionTests
         public Task<IoCommandAck?> SetPlasticityEnabledAsync(
             Guid brainId,
             bool enabled,
+            float plasticityRate = 0f,
+            bool probabilisticUpdates = false,
+            float plasticityDelta = 0f,
+            float plasticityRebaseThresholdPct = 0f,
             CancellationToken cancellationToken = default)
         {
-            SetPlasticityEnabledRequests.Add((brainId, enabled));
+            SetPlasticityEnabledRequests.Add((
+                brainId,
+                enabled,
+                plasticityRate,
+                probabilisticUpdates,
+                plasticityDelta,
+                plasticityRebaseThresholdPct));
             OperationLog.Enqueue("set_plasticity");
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
@@ -4068,9 +4141,19 @@ public sealed class BasicsExecutionSessionTests
         public Task<IoCommandAck?> SetHomeostasisEnabledAsync(
             Guid brainId,
             bool enabled,
+            float homeostasisBaseProbability = 0f,
+            bool energyCouplingEnabled = false,
+            float energyTargetScale = 1f,
+            float energyProbabilityScale = 1f,
             CancellationToken cancellationToken = default)
         {
-            SetHomeostasisEnabledRequests.Add((brainId, enabled));
+            SetHomeostasisEnabledRequests.Add((
+                brainId,
+                enabled,
+                homeostasisBaseProbability,
+                energyCouplingEnabled,
+                energyTargetScale,
+                energyProbabilityScale));
             OperationLog.Enqueue("set_homeostasis");
             return Task.FromResult<IoCommandAck?>(new IoCommandAck
             {
@@ -4329,6 +4412,28 @@ public sealed class BasicsExecutionSessionTests
                 FailureDetail = PpoAvailable ? string.Empty : "test PPO manager unavailable",
                 Accepted = PpoAvailable,
                 Update = new ProtoPpo.PpoPolicyUpdateReport()
+            });
+        }
+
+        public Task<DirectRuntimeRewardControlResponse?> ApplyDirectRuntimeRewardControlAsync(
+            DirectRuntimeRewardControlRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            DirectRuntimeRewardControlRequests.Add(request.Clone());
+            DirectRuntimeRewardControlWasPaused.Add(
+                request.BrainId is not null
+                && request.BrainId.TryToGuid(out var brainId)
+                && _pausedBrains.ContainsKey(brainId));
+            return Task.FromResult<DirectRuntimeRewardControlResponse?>(new DirectRuntimeRewardControlResponse
+            {
+                Accepted = true,
+                BrainId = request.BrainId?.Clone(),
+                ControllerId = request.ControllerId,
+                ActionId = request.ActionId,
+                Surface = request.Surface,
+                AppliedTickFloor = request.ActionTickId,
+                Reward = request.Reward,
+                ControlValue = request.ControlValue
             });
         }
 

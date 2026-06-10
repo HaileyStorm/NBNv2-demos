@@ -740,12 +740,20 @@ public sealed class BasicsLiveTrialHarnessTests
         public Task<IoCommandAck?> SetPlasticityEnabledAsync(
             Guid brainId,
             bool enabled,
+            float plasticityRate = 0f,
+            bool probabilisticUpdates = false,
+            float plasticityDelta = 0f,
+            float plasticityRebaseThresholdPct = 0f,
             CancellationToken cancellationToken = default)
             => Task.FromResult<IoCommandAck?>(null);
 
         public Task<IoCommandAck?> SetHomeostasisEnabledAsync(
             Guid brainId,
             bool enabled,
+            float homeostasisBaseProbability = 0f,
+            bool energyCouplingEnabled = false,
+            float energyTargetScale = 1f,
+            float energyProbabilityScale = 1f,
             CancellationToken cancellationToken = default)
             => Task.FromResult<IoCommandAck?>(null);
 
@@ -796,6 +804,21 @@ public sealed class BasicsLiveTrialHarnessTests
             {
                 FailureReason = ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
                 FailureDetail = "test PPO manager unavailable"
+            });
+
+        public Task<DirectRuntimeRewardControlResponse?> ApplyDirectRuntimeRewardControlAsync(
+            DirectRuntimeRewardControlRequest request,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<DirectRuntimeRewardControlResponse?>(new DirectRuntimeRewardControlResponse
+            {
+                Accepted = true,
+                BrainId = request.BrainId?.Clone(),
+                ControllerId = request.ControllerId,
+                ActionId = request.ActionId,
+                Surface = request.Surface,
+                AppliedTickFloor = request.ActionTickId,
+                Reward = request.Reward,
+                ControlValue = request.ControlValue
             });
 
         public Task<SpeciationAssignResponse?> AssignSpeciationAsync(SpeciationAssignRequest request, CancellationToken cancellationToken = default)

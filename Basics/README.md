@@ -97,11 +97,11 @@ Advanced overrides are available through environment variables: `NBN_BASICS_UI_R
 
 The Basics UI local worker launcher starts WorkerNode roots on the current desktop and registers them with SettingsMonitor. When the Settings address field is blank, worker launch uses the host from the configured IO address with SettingsMonitor's default port `12010`. Set Settings address explicitly when the shared SettingsMonitor is on a different host or port. The worker advertise host must still resolve to the machine running Basics UI so HiveMind can place work back onto those WorkerNode roots.
 
-## PPO Reward-Policy Controller
+## PPO Reward-Policy Controllers
 
-The optional PPO path is a runtime reward-policy controller for generation candidates. Basics sends parent brain IDs, reproduction config, objective metadata, and PPO hyperparameters through IO Gateway to the sibling runtime's PPO manager. The runtime samples per-candidate reproduction actions, orchestrates artifact rollout around reproduction and speciation, then Basics sends evaluated candidate rewards back through IO so the PPO manager can update future reproduction-action policy.
+Basics exposes two optional runtime reward-policy paths. Artifact PPO sends parent brain IDs, reproduction config, objective metadata, and PPO hyperparameters through IO Gateway to the sibling runtime's PPO manager. The runtime samples per-candidate reproduction actions, orchestrates artifact rollout around reproduction and speciation, then Basics sends evaluated candidate rewards back through IO so the PPO manager can update future reproduction-action policy. Direct brain reward-control is separate: Basics sends sample-level `ApplyDirectRuntimeRewardControl` actions through IO Gateway so HiveMind can modulate bounded live runtime surfaces such as plasticity and homeostasis for the evaluated brain. The two modes can be enabled together because artifact PPO owns structural child generation while direct reward-control owns live runtime config modulation.
 
-For Multiplication, the task profile still leaves PPO disabled by default, but pre-fills PPO controls with the current conservative defaults: `12` rollout ticks, `2` rollout batches, `3` epochs, `4` minibatch size, and `basics.record_score` reward feedback. That reward favors ready balanced/tolerance accuracy over raw fitness. The PPO sweep script uses the same richer Multiplication mutation band as the UI profile, including function mutation and the larger axon/parameter/strength deltas.
+For Multiplication, the task profile still leaves both PPO modes disabled by default, but pre-fills artifact PPO controls with the best current swept defaults: `24` rollout ticks, `1` rollout batch, `3` epochs, `2` minibatch size, and `basics.record_score` reward feedback. That reward favors ready balanced/tolerance accuracy over raw fitness. The PPO sweep script uses the same richer Multiplication mutation band as the UI profile, including function mutation and the larger axon/parameter/strength deltas.
 
 For controlled throughput sweeps, `tools/benchmark_multiplication_perf.py` can generate either local-reproduction configs or PPO controller configs. The PPO mode is explicit in result metadata:
 
@@ -112,10 +112,10 @@ python3 tools/benchmark_multiplication_perf.py --ppo-rollout-controller --popula
 For live PPO reward-policy setting sweeps, `tools/sweep_multiplication_ppo.py` runs one Multiplication harness trial per settings combo, streams per-generation progress, prints the current best settings after each combo, and writes a final recommendation:
 
 ```bash
-python3 tools/sweep_multiplication_ppo.py --rollout-ticks 8,12,16 --rollout-batches 1,2 --epochs 2,3,5 --minibatch-sizes 1,2,4 --population 32 --max-concurrent-brains 32 --max-generations 15 --trial-timeout-seconds 600
+python3 tools/sweep_multiplication_ppo.py --ppo-modes artifact,direct,combined --rollout-ticks 16,24,32 --rollout-batches 1,2 --epochs 2,3,5 --minibatch-sizes 1,2,4 --population 64 --max-concurrent-brains 64 --max-generations 8 --trial-timeout-seconds 600
 ```
 
-The sweep script automatically raises `ReproductionRunCount` to the largest requested rollout batch count so batch settings are not silently capped by the generation scheduler. It retries zero-generation IO connection failures with a fresh client endpoint, and a trial timeout or a no-output-vector liveness collapse aborts the sweep early so the remaining result grid is not filled with misleading zero-fitness trials from a poisoned runtime state. Live harness trials also clean up retained final best-candidate brains after report capture so repeated sweeps do not accumulate export-only brains in the runtime.
+The sweep script automatically raises `ReproductionRunCount` to the largest requested rollout batch count so batch settings are not silently capped by the generation scheduler. It retries zero-generation IO connection or infrastructure failures with a fresh client endpoint, records completed-generation slopes for tie-breaking, and aborts only after repeated consecutive runtime liveness/capacity failures. Direct-only mode runs once per population because artifact PPO rollout, batch, epoch, and minibatch settings are inactive there. Live harness trials also clean up retained final best-candidate brains after report capture so repeated sweeps do not accumulate export-only brains in the runtime.
 
 ## Live Harness
 

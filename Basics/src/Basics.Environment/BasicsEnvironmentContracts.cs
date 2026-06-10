@@ -668,9 +668,10 @@ public sealed record BasicsPpoOptimizerOptions
 {
     public const string CurrentSemanticsLabel = "PPO reward-policy controller";
     public const string CurrentSemanticsDisclosure =
-        "Runtime PPO uses IO reward feedback from evaluated candidates to update a clipped policy over reproduction actions for future artifact rollouts. It is a controlling generation mode, but still an optional off-path controller; NBN brain execution itself is not backprop-trained.";
+        "Runtime PPO can control artifact reproduction actions, live brain runtime-control surfaces, or both. Artifact PPO uses the PPO manager to update a clipped policy over reproduction actions for future artifact rollouts. Direct brain control uses IO/HiveMind reward-control to modulate bounded live runtime configuration for a specific brain. NBN brain execution itself is not backprop-trained.";
 
     public bool Enabled { get; init; }
+    public bool DirectRuntimeControlEnabled { get; init; }
     public string ObjectiveName { get; init; } = "multiplication";
     public string RewardSignal { get; init; } = "basics.record_score";
     public ulong RolloutTickCount { get; init; } = 12;
@@ -682,10 +683,14 @@ public sealed record BasicsPpoOptimizerOptions
     public uint OptimizationEpochCount { get; init; } = 3;
     public uint MinibatchSize { get; init; } = 4;
     public ulong Seed { get; init; } = 42;
+    public float DirectPlasticityRateMin { get; init; } = 0.0005f;
+    public float DirectPlasticityRateMax { get; init; } = 0.02f;
+    public float DirectHomeostasisBaseProbabilityMin { get; init; } = 0.001f;
+    public float DirectHomeostasisBaseProbabilityMax { get; init; } = 0.05f;
 
     public BasicsContractValidationResult Validate()
     {
-        if (!Enabled)
+        if (!Enabled && !DirectRuntimeControlEnabled)
         {
             return BasicsContractValidationResult.Success;
         }
@@ -701,49 +706,79 @@ public sealed record BasicsPpoOptimizerOptions
             errors.Add("PPO reward signal is required when PPO is enabled.");
         }
 
-        if (RolloutTickCount == 0)
+        if (Enabled)
         {
-            errors.Add("PPO rollout tick count must be > 0.");
+            if (RolloutTickCount == 0)
+            {
+                errors.Add("PPO rollout tick count must be > 0.");
+            }
+
+            if (RolloutBatchCount == 0)
+            {
+                errors.Add("PPO rollout batch count must be > 0.");
+            }
+
+            if (RolloutBatchCount > uint.MaxValue)
+            {
+                errors.Add($"PPO rollout batch count must be <= {uint.MaxValue}.");
+            }
+
+            if (!float.IsFinite(ClipEpsilon) || ClipEpsilon <= 0f || ClipEpsilon > 1f)
+            {
+                errors.Add("PPO clip epsilon must be a finite value greater than 0 and <= 1.");
+            }
+
+            if (!float.IsFinite(DiscountGamma) || DiscountGamma <= 0f || DiscountGamma > 1f)
+            {
+                errors.Add("PPO discount gamma must be a finite value greater than 0 and <= 1.");
+            }
+
+            if (!float.IsFinite(GaeLambda) || GaeLambda <= 0f || GaeLambda > 1f)
+            {
+                errors.Add("PPO GAE lambda must be a finite value greater than 0 and <= 1.");
+            }
+
+            if (!float.IsFinite(LearningRate) || LearningRate <= 0f)
+            {
+                errors.Add("PPO learning rate must be a finite value greater than 0.");
+            }
+
+            if (OptimizationEpochCount == 0)
+            {
+                errors.Add("PPO optimization epoch count must be > 0.");
+            }
+
+            if (MinibatchSize == 0)
+            {
+                errors.Add("PPO minibatch size must be > 0.");
+            }
         }
 
-        if (RolloutBatchCount == 0)
+        if (DirectRuntimeControlEnabled)
         {
-            errors.Add("PPO rollout batch count must be > 0.");
-        }
+            if (!float.IsFinite(DirectPlasticityRateMin) || DirectPlasticityRateMin < 0f)
+            {
+                errors.Add("Direct PPO plasticity rate minimum must be a finite value >= 0.");
+            }
 
-        if (RolloutBatchCount > uint.MaxValue)
-        {
-            errors.Add($"PPO rollout batch count must be <= {uint.MaxValue}.");
-        }
+            if (!float.IsFinite(DirectPlasticityRateMax) || DirectPlasticityRateMax < DirectPlasticityRateMin)
+            {
+                errors.Add("Direct PPO plasticity rate maximum must be finite and >= the minimum.");
+            }
 
-        if (!float.IsFinite(ClipEpsilon) || ClipEpsilon <= 0f || ClipEpsilon > 1f)
-        {
-            errors.Add("PPO clip epsilon must be a finite value greater than 0 and <= 1.");
-        }
+            if (!float.IsFinite(DirectHomeostasisBaseProbabilityMin)
+                || DirectHomeostasisBaseProbabilityMin < 0f
+                || DirectHomeostasisBaseProbabilityMin > 1f)
+            {
+                errors.Add("Direct PPO homeostasis probability minimum must be a finite value between 0 and 1.");
+            }
 
-        if (!float.IsFinite(DiscountGamma) || DiscountGamma <= 0f || DiscountGamma > 1f)
-        {
-            errors.Add("PPO discount gamma must be a finite value greater than 0 and <= 1.");
-        }
-
-        if (!float.IsFinite(GaeLambda) || GaeLambda <= 0f || GaeLambda > 1f)
-        {
-            errors.Add("PPO GAE lambda must be a finite value greater than 0 and <= 1.");
-        }
-
-        if (!float.IsFinite(LearningRate) || LearningRate <= 0f)
-        {
-            errors.Add("PPO learning rate must be a finite value greater than 0.");
-        }
-
-        if (OptimizationEpochCount == 0)
-        {
-            errors.Add("PPO optimization epoch count must be > 0.");
-        }
-
-        if (MinibatchSize == 0)
-        {
-            errors.Add("PPO minibatch size must be > 0.");
+            if (!float.IsFinite(DirectHomeostasisBaseProbabilityMax)
+                || DirectHomeostasisBaseProbabilityMax < DirectHomeostasisBaseProbabilityMin
+                || DirectHomeostasisBaseProbabilityMax > 1f)
+            {
+                errors.Add("Direct PPO homeostasis probability maximum must be finite, <= 1, and >= the minimum.");
+            }
         }
 
         return BasicsContractValidationResult.FromErrors(errors);

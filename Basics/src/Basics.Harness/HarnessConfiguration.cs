@@ -126,6 +126,7 @@ internal sealed record HarnessFileConfig
                 PpoOptimizer = new BasicsPpoOptimizerOptions
                 {
                     Enabled = normalizedEnvironment.PpoOptimizer.Enabled,
+                    DirectRuntimeControlEnabled = normalizedEnvironment.PpoOptimizer.DirectRuntimeControlEnabled,
                     ObjectiveName = normalizedEnvironment.PpoOptimizer.ObjectiveName,
                     RewardSignal = normalizedEnvironment.PpoOptimizer.RewardSignal,
                     RolloutTickCount = normalizedEnvironment.PpoOptimizer.RolloutTickCount,
@@ -136,7 +137,11 @@ internal sealed record HarnessFileConfig
                     LearningRate = normalizedEnvironment.PpoOptimizer.LearningRate,
                     OptimizationEpochCount = normalizedEnvironment.PpoOptimizer.OptimizationEpochCount,
                     MinibatchSize = normalizedEnvironment.PpoOptimizer.MinibatchSize,
-                    Seed = normalizedEnvironment.PpoOptimizer.Seed
+                    Seed = normalizedEnvironment.PpoOptimizer.Seed,
+                    DirectPlasticityRateMin = normalizedEnvironment.PpoOptimizer.DirectPlasticityRateMin,
+                    DirectPlasticityRateMax = normalizedEnvironment.PpoOptimizer.DirectPlasticityRateMax,
+                    DirectHomeostasisBaseProbabilityMin = normalizedEnvironment.PpoOptimizer.DirectHomeostasisBaseProbabilityMin,
+                    DirectHomeostasisBaseProbabilityMax = normalizedEnvironment.PpoOptimizer.DirectHomeostasisBaseProbabilityMax
                 }
             },
             MaxTrialCount = Trials.MaxTrialCount,
@@ -247,6 +252,7 @@ internal sealed record HarnessEnvironmentConfig
 internal sealed record HarnessPpoOptimizerConfig
 {
     public bool Enabled { get; init; }
+    public bool DirectRuntimeControlEnabled { get; init; }
     public string ObjectiveName { get; init; } = "multiplication";
     public string RewardSignal { get; init; } = "basics.record_score";
     public ulong RolloutTickCount { get; init; } = 12;
@@ -258,6 +264,10 @@ internal sealed record HarnessPpoOptimizerConfig
     public uint OptimizationEpochCount { get; init; } = 3;
     public uint MinibatchSize { get; init; } = 4;
     public ulong Seed { get; init; } = 42;
+    public float DirectPlasticityRateMin { get; init; } = 0.0005f;
+    public float DirectPlasticityRateMax { get; init; } = 0.02f;
+    public float DirectHomeostasisBaseProbabilityMin { get; init; } = 0.001f;
+    public float DirectHomeostasisBaseProbabilityMax { get; init; } = 0.05f;
 }
 
 internal sealed record HarnessTemplateConfig

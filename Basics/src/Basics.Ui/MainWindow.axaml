@@ -413,7 +413,7 @@
 
                         <Grid IsVisible="{Binding ShowPpoOptimizerSettings}"
                               ColumnDefinitions="Auto,*"
-                              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
                               ColumnSpacing="12"
                               RowSpacing="10">
                             <TextBlock Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
@@ -421,14 +421,18 @@
                                        FontWeight="SemiBold"
                                        Foreground="#182436" />
                             <CheckBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
-                                      Content="Use PPO reward-policy service as generation controller"
+                                      Content="Use artifact PPO as generation controller"
                                       IsChecked="{Binding PpoOptimizerEnabled}"
-                                      ToolTip.Tip="When enabled, PPO controls candidate generation through IO Gateway and updates future reproduction-action policy from evaluated reward feedback." />
-                            <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                                      ToolTip.Tip="When enabled, the PPO manager controls candidate generation through IO Gateway and updates future reproduction-action policy from evaluated reward feedback." />
+                            <CheckBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                                      Content="Use direct brain reward-control during evaluation"
+                                      IsChecked="{Binding DirectRuntimeControlEnabled}"
+                                      ToolTip.Tip="When enabled, Basics sends sample-level reward-control actions through IO Gateway so HiveMind can modulate bounded live plasticity and homeostasis surfaces for the evaluated brain." />
+                            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
                                        Text="{Binding PpoOptimizerDetail}"
                                        Foreground="#6C7A89"
                                        TextWrapping="Wrap" />
-                            <Grid Grid.Row="3"
+                            <Grid Grid.Row="4"
                                   Grid.ColumnSpan="2"
                                   IsVisible="{Binding ShowPpoServiceStatus}"
                                   ColumnDefinitions="*,Auto"
@@ -447,7 +451,7 @@
                                            Foreground="#6C7A89"
                                            TextWrapping="Wrap" />
                             </Grid>
-                            <Grid Grid.Row="4"
+                            <Grid Grid.Row="5"
                                   Grid.ColumnSpan="2"
                                   IsVisible="{Binding ShowPpoOptimizerConfiguration}"
                                   ColumnDefinitions="Auto,140,Auto,140,Auto,140"

@@ -102,11 +102,19 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
     Task<IoCommandAck?> SetPlasticityEnabledAsync(
         Guid brainId,
         bool enabled,
+        float plasticityRate = 0f,
+        bool probabilisticUpdates = false,
+        float plasticityDelta = 0f,
+        float plasticityRebaseThresholdPct = 0f,
         CancellationToken cancellationToken = default);
 
     Task<IoCommandAck?> SetHomeostasisEnabledAsync(
         Guid brainId,
         bool enabled,
+        float homeostasisBaseProbability = 0f,
+        bool energyCouplingEnabled = false,
+        float energyTargetScale = 1f,
+        float energyProbabilityScale = 1f,
         CancellationToken cancellationToken = default);
 
     Task<IoCommandAck?> SynchronizeBrainRuntimeConfigAsync(
@@ -139,6 +147,10 @@ public interface IBasicsRuntimeClient : IAsyncDisposable
 
     Task<PpoRecordRewardsResponse?> RecordPpoRewardsAsync(
         PpoRecordRewardsRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<DirectRuntimeRewardControlResponse?> ApplyDirectRuntimeRewardControlAsync(
+        DirectRuntimeRewardControlRequest request,
         CancellationToken cancellationToken = default);
 
     Task<SpeciationAssignResponse?> AssignSpeciationAsync(
@@ -904,6 +916,10 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     public async Task<IoCommandAck?> SetPlasticityEnabledAsync(
         Guid brainId,
         bool enabled,
+        float plasticityRate = 0f,
+        bool probabilisticUpdates = false,
+        float plasticityDelta = 0f,
+        float plasticityRebaseThresholdPct = 0f,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -920,11 +936,11 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                     {
                         BrainId = brainId.ToProtoUuid(),
                         PlasticityEnabled = enabled,
-                        PlasticityRate = 0f,
-                        ProbabilisticUpdates = false,
-                        PlasticityDelta = 0f,
+                        PlasticityRate = plasticityRate,
+                        ProbabilisticUpdates = probabilisticUpdates,
+                        PlasticityDelta = plasticityDelta,
                         PlasticityRebaseThreshold = 0,
-                        PlasticityRebaseThresholdPct = 0f,
+                        PlasticityRebaseThresholdPct = plasticityRebaseThresholdPct,
                         PlasticityEnergyCostModulationEnabled = false,
                         PlasticityEnergyCostReferenceTickCost = 1,
                         PlasticityEnergyCostResponseStrength = 0f,
@@ -944,6 +960,10 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     public async Task<IoCommandAck?> SetHomeostasisEnabledAsync(
         Guid brainId,
         bool enabled,
+        float homeostasisBaseProbability = 0f,
+        bool energyCouplingEnabled = false,
+        float energyTargetScale = 1f,
+        float energyProbabilityScale = 1f,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -962,11 +982,11 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                         HomeostasisEnabled = enabled,
                         HomeostasisTargetMode = Nbn.Proto.Control.HomeostasisTargetMode.HomeostasisTargetZero,
                         HomeostasisUpdateMode = Nbn.Proto.Control.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
-                        HomeostasisBaseProbability = 0f,
+                        HomeostasisBaseProbability = homeostasisBaseProbability,
                         HomeostasisMinStepCodes = 1,
-                        HomeostasisEnergyCouplingEnabled = false,
-                        HomeostasisEnergyTargetScale = 1f,
-                        HomeostasisEnergyProbabilityScale = 1f
+                        HomeostasisEnergyCouplingEnabled = energyCouplingEnabled,
+                        HomeostasisEnergyTargetScale = energyTargetScale,
+                        HomeostasisEnergyProbabilityScale = energyProbabilityScale
                     },
                     _requestTimeout)
                 .WaitAsync(cancellationToken)
@@ -1182,6 +1202,33 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
             var response = await _system.Root.RequestAsync<PpoRecordRewardsResult>(
                     _ioPid,
                     new PpoRecordRewards { Request = request },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return response?.Response;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<DirectRuntimeRewardControlResponse?> ApplyDirectRuntimeRewardControlAsync(
+        DirectRuntimeRewardControlRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(request);
+
+        try
+        {
+            var response = await _system.Root.RequestAsync<ApplyDirectRuntimeRewardControlResult>(
+                    _ioPid,
+                    new ApplyDirectRuntimeRewardControl { Request = request },
                     _requestTimeout)
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);

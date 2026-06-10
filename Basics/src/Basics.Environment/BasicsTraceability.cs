@@ -136,6 +136,7 @@ public sealed record BasicsTaskSettingsTraceRecord(
 
 public sealed record BasicsPpoOptimizerTraceRecord(
     bool Enabled,
+    bool DirectRuntimeControlEnabled,
     string ObjectiveName,
     string RewardSignal,
     ulong RolloutTickCount,
@@ -146,7 +147,11 @@ public sealed record BasicsPpoOptimizerTraceRecord(
     float LearningRate,
     uint OptimizationEpochCount,
     uint MinibatchSize,
-    ulong Seed);
+    ulong Seed,
+    float DirectPlasticityRateMin,
+    float DirectPlasticityRateMax,
+    float DirectHomeostasisBaseProbabilityMin,
+    float DirectHomeostasisBaseProbabilityMax);
 
 public sealed record BasicsExecutionPlanTraceRecord(
     int SchemaVersion,
@@ -269,6 +274,7 @@ public static class BasicsTraceability
                     taskSettings.Multiplication.BehaviorStageGateFull)),
             PpoOptimizer: new BasicsPpoOptimizerTraceRecord(
                 ppo.Enabled,
+                ppo.DirectRuntimeControlEnabled,
                 ppo.ObjectiveName,
                 ppo.RewardSignal,
                 ppo.RolloutTickCount,
@@ -279,7 +285,11 @@ public static class BasicsTraceability
                 ppo.LearningRate,
                 ppo.OptimizationEpochCount,
                 ppo.MinibatchSize,
-                ppo.Seed));
+                ppo.Seed,
+                ppo.DirectPlasticityRateMin,
+                ppo.DirectPlasticityRateMax,
+                ppo.DirectHomeostasisBaseProbabilityMin,
+                ppo.DirectHomeostasisBaseProbabilityMax));
     }
 
     public static BasicsBuildTraceRecord BuildBuildTrace(

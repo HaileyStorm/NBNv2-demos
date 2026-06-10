@@ -149,6 +149,7 @@ public sealed record BasicsLiveTrialSchedulingSnapshot(
 
 public sealed record BasicsLiveTrialPpoOptimizerSnapshot(
     bool Enabled,
+    bool DirectRuntimeControlEnabled,
     string ObjectiveName,
     string RewardSignal,
     ulong RolloutTickCount,
@@ -159,7 +160,11 @@ public sealed record BasicsLiveTrialPpoOptimizerSnapshot(
     float LearningRate,
     uint OptimizationEpochCount,
     uint MinibatchSize,
-    ulong Seed);
+    ulong Seed,
+    float DirectPlasticityRateMin,
+    float DirectPlasticityRateMax,
+    float DirectHomeostasisBaseProbabilityMin,
+    float DirectHomeostasisBaseProbabilityMax);
 
 public sealed record BasicsLiveTrialConfigurationSnapshot(
     string ClientName,
@@ -696,6 +701,7 @@ public sealed class BasicsLiveTrialHarness
                 options.Scheduling.RunAllocation.DiversityBoost),
             PpoOptimizer: new BasicsLiveTrialPpoOptimizerSnapshot(
                 options.PpoOptimizer.Enabled,
+                options.PpoOptimizer.DirectRuntimeControlEnabled,
                 options.PpoOptimizer.ObjectiveName,
                 options.PpoOptimizer.RewardSignal,
                 options.PpoOptimizer.RolloutTickCount,
@@ -706,7 +712,11 @@ public sealed class BasicsLiveTrialHarness
                 options.PpoOptimizer.LearningRate,
                 options.PpoOptimizer.OptimizationEpochCount,
                 options.PpoOptimizer.MinibatchSize,
-                options.PpoOptimizer.Seed));
+                options.PpoOptimizer.Seed,
+                options.PpoOptimizer.DirectPlasticityRateMin,
+                options.PpoOptimizer.DirectPlasticityRateMax,
+                options.PpoOptimizer.DirectHomeostasisBaseProbabilityMin,
+                options.PpoOptimizer.DirectHomeostasisBaseProbabilityMax));
 
     private static BasicsEnvironmentOptions ApplyConfigurationSnapshot(
         BasicsEnvironmentOptions current,
@@ -777,6 +787,7 @@ public sealed class BasicsLiveTrialHarness
             PpoOptimizer = new BasicsPpoOptimizerOptions
             {
                 Enabled = snapshot.PpoOptimizer.Enabled,
+                DirectRuntimeControlEnabled = snapshot.PpoOptimizer.DirectRuntimeControlEnabled,
                 ObjectiveName = snapshot.PpoOptimizer.ObjectiveName,
                 RewardSignal = snapshot.PpoOptimizer.RewardSignal,
                 RolloutTickCount = snapshot.PpoOptimizer.RolloutTickCount,
@@ -787,7 +798,11 @@ public sealed class BasicsLiveTrialHarness
                 LearningRate = snapshot.PpoOptimizer.LearningRate,
                 OptimizationEpochCount = snapshot.PpoOptimizer.OptimizationEpochCount,
                 MinibatchSize = snapshot.PpoOptimizer.MinibatchSize,
-                Seed = snapshot.PpoOptimizer.Seed
+                Seed = snapshot.PpoOptimizer.Seed,
+                DirectPlasticityRateMin = snapshot.PpoOptimizer.DirectPlasticityRateMin,
+                DirectPlasticityRateMax = snapshot.PpoOptimizer.DirectPlasticityRateMax,
+                DirectHomeostasisBaseProbabilityMin = snapshot.PpoOptimizer.DirectHomeostasisBaseProbabilityMin,
+                DirectHomeostasisBaseProbabilityMax = snapshot.PpoOptimizer.DirectHomeostasisBaseProbabilityMax
             }
         };
     }

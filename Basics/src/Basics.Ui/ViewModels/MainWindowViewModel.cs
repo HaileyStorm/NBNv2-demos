@@ -195,17 +195,22 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _multiplicationBehaviorRampStartText = "0.35";
     private string _multiplicationBehaviorRampFullText = "0.50";
     private bool _ppoOptimizerEnabled;
+    private bool _directRuntimeControlEnabled;
     private string _ppoObjectiveName = "multiplication";
     private string _ppoRewardSignal = "basics.record_score";
-    private string _ppoRolloutTickCountText = "12";
-    private string _ppoRolloutBatchCountText = "2";
+    private string _ppoRolloutTickCountText = "24";
+    private string _ppoRolloutBatchCountText = "1";
     private string _ppoClipEpsilonText = "0.2";
     private string _ppoDiscountGammaText = "0.99";
     private string _ppoGaeLambdaText = "0.95";
     private string _ppoLearningRateText = "0.0003";
     private string _ppoOptimizationEpochCountText = "3";
-    private string _ppoMinibatchSizeText = "4";
+    private string _ppoMinibatchSizeText = "2";
     private string _ppoSeedText = "42";
+    private float _directPlasticityRateMin = 0.0005f;
+    private float _directPlasticityRateMax = 0.02f;
+    private float _directHomeostasisBaseProbabilityMin = 0.001f;
+    private float _directHomeostasisBaseProbabilityMax = 0.05f;
     private string _ppoServiceStatus = "PPO service status not checked.";
     private string _ppoServiceDetail = "Enable PPO and connect to IO to check the manager through IO Gateway.";
     private bool _isPpoServiceStatusBusy;
@@ -830,6 +835,18 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    public bool DirectRuntimeControlEnabled
+    {
+        get => _directRuntimeControlEnabled;
+        set
+        {
+            if (SetProperty(ref _directRuntimeControlEnabled, value))
+            {
+                RaiseTaskSettingsBindings();
+            }
+        }
+    }
+
     public string PpoObjectiveName
     {
         get => _ppoObjectiveName;
@@ -934,14 +951,22 @@ public sealed class MainWindowViewModel : ViewModelBase
            && !ShowMultiplicationTaskSettings;
 
     public string OptimizationModeTitle
-        => PpoOptimizerEnabled
-            ? "Generation Controller: Runtime PPO Reproduction Policy"
-            : "Optimization Mode: Local Reproduction";
+        => (PpoOptimizerEnabled, DirectRuntimeControlEnabled) switch
+        {
+            (true, true) => "Generation Controller: Combined Runtime PPO",
+            (true, false) => "Generation Controller: Runtime PPO Reproduction Policy",
+            (false, true) => "Runtime Controller: Direct Brain Reward-Control",
+            _ => "Optimization Mode: Local Reproduction"
+        };
 
     public string PpoOptimizerDetail
-        => PpoOptimizerEnabled
-            ? $"Runtime PPO is the generation controller for {SelectedTask?.DisplayName ?? "the selected task"}. Basics sends parent context and reward feedback through IO Gateway; the PPO manager samples reproduction actions for future artifact rollouts and discovers service.endpoint.ppo_manager through Settings Manager. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}; epochs {PpoOptimizationEpochCountText}; minibatch {PpoMinibatchSizeText}."
-            : "Local reproduction/speciation owns generation control. PPO remains off and no PPO endpoint is configured by Basics.";
+        => (PpoOptimizerEnabled, DirectRuntimeControlEnabled) switch
+        {
+            (true, true) => $"Combined runtime PPO is active for {SelectedTask?.DisplayName ?? "the selected task"}. Artifact PPO uses the PPO manager through IO Gateway for reproduction actions; direct brain reward-control uses IO/HiveMind to modulate bounded live plasticity/homeostasis during evaluation. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}; epochs {PpoOptimizationEpochCountText}; minibatch {PpoMinibatchSizeText}.",
+            (true, false) => $"Runtime PPO is the generation controller for {SelectedTask?.DisplayName ?? "the selected task"}. Basics sends parent context and reward feedback through IO Gateway; the PPO manager samples reproduction actions for future artifact rollouts and discovers service.endpoint.ppo_manager through Settings Manager. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}; epochs {PpoOptimizationEpochCountText}; minibatch {PpoMinibatchSizeText}.",
+            (false, true) => $"Direct brain reward-control is active for {SelectedTask?.DisplayName ?? "the selected task"}. Basics sends sample-level reward-control actions through IO Gateway to HiveMind for bounded live plasticity/homeostasis modulation; local reproduction still owns structural child generation. Objective {PpoObjectiveName}; reward {PpoRewardSignal}.",
+            _ => "Local reproduction/speciation owns generation control. PPO remains off and no PPO endpoint is configured by Basics."
+        };
 
     public string SchedulingSectionTitle
         => PpoOptimizerEnabled
@@ -951,6 +976,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     public string SchedulingSectionDetail
         => PpoOptimizerEnabled
             ? "Local scheduling controls are hidden because PPO owns candidate selection. Basics still supplies diversity, strength source, speciation membership, and IO-neuron protection as parent context for the runtime policy."
+            : DirectRuntimeControlEnabled
+                ? "Direct brain reward-control is active during evaluation, but local reproduction/speciation still selects parent pairs, allocates reproduction runs, and applies adaptive diversity pressure directly."
             : "Local reproduction/speciation selects parent pairs, allocates reproduction runs, and applies adaptive diversity pressure directly.";
 
     public string PpoServiceStatus
@@ -1716,6 +1743,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             MultiplicationBehaviorRampFullText = taskSettings.Multiplication.BehaviorStageGateFull.ToString("0.0##", CultureInfo.InvariantCulture);
             var ppo = profile.PpoOptimizer ?? new BasicsPpoOptimizerOptions();
             PpoOptimizerEnabled = ppo.Enabled;
+            DirectRuntimeControlEnabled = ppo.DirectRuntimeControlEnabled;
             PpoObjectiveName = ppo.ObjectiveName;
             PpoRewardSignal = ppo.RewardSignal;
             PpoRolloutTickCountText = ppo.RolloutTickCount.ToString(CultureInfo.InvariantCulture);
@@ -1727,6 +1755,10 @@ public sealed class MainWindowViewModel : ViewModelBase
             PpoOptimizationEpochCountText = ppo.OptimizationEpochCount.ToString(CultureInfo.InvariantCulture);
             PpoMinibatchSizeText = ppo.MinibatchSize.ToString(CultureInfo.InvariantCulture);
             PpoSeedText = ppo.Seed.ToString(CultureInfo.InvariantCulture);
+            _directPlasticityRateMin = ppo.DirectPlasticityRateMin;
+            _directPlasticityRateMax = ppo.DirectPlasticityRateMax;
+            _directHomeostasisBaseProbabilityMin = ppo.DirectHomeostasisBaseProbabilityMin;
+            _directHomeostasisBaseProbabilityMax = ppo.DirectHomeostasisBaseProbabilityMax;
             SelectedDiversityPreset = DiversityPresets.FirstOrDefault(option => option.Value == profile.DiversityPreset)
                 ?? SelectedDiversityPreset;
 
@@ -2601,21 +2633,45 @@ public sealed class MainWindowViewModel : ViewModelBase
                 BehaviorStageGateFull = ParseRequiredFloat(MultiplicationBehaviorRampFullText, "Multiplication behavior ramp full score", errors)
             }
         };
-        var ppoOptimizer = PpoOptimizerEnabled
+        var defaultPpoOptimizer = new BasicsPpoOptimizerOptions();
+        var ppoOptimizer = PpoOptimizerEnabled || DirectRuntimeControlEnabled
             ? new BasicsPpoOptimizerOptions
             {
-                Enabled = true,
+                Enabled = PpoOptimizerEnabled,
+                DirectRuntimeControlEnabled = DirectRuntimeControlEnabled,
                 ObjectiveName = PpoObjectiveName.Trim(),
                 RewardSignal = PpoRewardSignal.Trim(),
-                RolloutTickCount = ParseRequiredULong(PpoRolloutTickCountText, "PPO rollout tick count", errors),
-                RolloutBatchCount = ParseRequiredULong(PpoRolloutBatchCountText, "PPO rollout batch count", errors),
-                ClipEpsilon = ParseRequiredFloat(PpoClipEpsilonText, "PPO clip epsilon", errors),
-                DiscountGamma = ParseRequiredFloat(PpoDiscountGammaText, "PPO discount gamma", errors),
-                GaeLambda = ParseRequiredFloat(PpoGaeLambdaText, "PPO GAE lambda", errors),
-                LearningRate = ParseRequiredFloat(PpoLearningRateText, "PPO learning rate", errors),
-                OptimizationEpochCount = ParseRequiredUInt(PpoOptimizationEpochCountText, "PPO optimization epoch count", errors),
-                MinibatchSize = ParseRequiredUInt(PpoMinibatchSizeText, "PPO minibatch size", errors),
-                Seed = ParseRequiredULong(PpoSeedText, "PPO seed", errors)
+                RolloutTickCount = PpoOptimizerEnabled
+                    ? ParseRequiredULong(PpoRolloutTickCountText, "PPO rollout tick count", errors)
+                    : defaultPpoOptimizer.RolloutTickCount,
+                RolloutBatchCount = PpoOptimizerEnabled
+                    ? ParseRequiredULong(PpoRolloutBatchCountText, "PPO rollout batch count", errors)
+                    : defaultPpoOptimizer.RolloutBatchCount,
+                ClipEpsilon = PpoOptimizerEnabled
+                    ? ParseRequiredFloat(PpoClipEpsilonText, "PPO clip epsilon", errors)
+                    : defaultPpoOptimizer.ClipEpsilon,
+                DiscountGamma = PpoOptimizerEnabled
+                    ? ParseRequiredFloat(PpoDiscountGammaText, "PPO discount gamma", errors)
+                    : defaultPpoOptimizer.DiscountGamma,
+                GaeLambda = PpoOptimizerEnabled
+                    ? ParseRequiredFloat(PpoGaeLambdaText, "PPO GAE lambda", errors)
+                    : defaultPpoOptimizer.GaeLambda,
+                LearningRate = PpoOptimizerEnabled
+                    ? ParseRequiredFloat(PpoLearningRateText, "PPO learning rate", errors)
+                    : defaultPpoOptimizer.LearningRate,
+                OptimizationEpochCount = PpoOptimizerEnabled
+                    ? ParseRequiredUInt(PpoOptimizationEpochCountText, "PPO optimization epoch count", errors)
+                    : defaultPpoOptimizer.OptimizationEpochCount,
+                MinibatchSize = PpoOptimizerEnabled
+                    ? ParseRequiredUInt(PpoMinibatchSizeText, "PPO minibatch size", errors)
+                    : defaultPpoOptimizer.MinibatchSize,
+                Seed = PpoOptimizerEnabled
+                    ? ParseRequiredULong(PpoSeedText, "PPO seed", errors)
+                    : defaultPpoOptimizer.Seed,
+                DirectPlasticityRateMin = _directPlasticityRateMin,
+                DirectPlasticityRateMax = _directPlasticityRateMax,
+                DirectHomeostasisBaseProbabilityMin = _directHomeostasisBaseProbabilityMin,
+                DirectHomeostasisBaseProbabilityMax = _directHomeostasisBaseProbabilityMax
             }
             : new BasicsPpoOptimizerOptions();
         var diversityPreset = SelectedDiversityPreset?.Value ?? BasicsDiversityPreset.Medium;
