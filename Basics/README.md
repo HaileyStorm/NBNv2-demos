@@ -109,13 +109,20 @@ For controlled throughput sweeps, `tools/benchmark_multiplication_perf.py` can g
 python3 tools/benchmark_multiplication_perf.py --ppo-rollout-controller --populations 256 --worker-counts 8,16 --max-concurrencies 16,32
 ```
 
-For live PPO reward-policy setting sweeps, `tools/sweep_multiplication_ppo.py` runs one Multiplication harness trial per settings combo, streams per-generation progress, prints the current best settings after each combo, and writes a final recommendation:
+For live PPO reward-policy setting sweeps, `tools/sweep_multiplication_ppo.py` runs one Multiplication harness trial per settings combo, streams per-generation progress, prints the current best settings after each combo, and writes a final recommendation. Grid search is the default and remains useful for small spaces:
 
 ```bash
 python3 tools/sweep_multiplication_ppo.py --ppo-modes artifact,direct,combined --rollout-ticks 16,24,32 --rollout-batches 1,2 --epochs 2,3,5 --minibatch-sizes 1,2,4 --population 64 --max-concurrent-brains 64 --max-generations 8 --trial-timeout-seconds 600
 ```
 
-The sweep script automatically raises `ReproductionRunCount` to the largest requested rollout batch count so batch settings are not silently capped by the generation scheduler. It retries zero-generation IO connection or infrastructure failures with a fresh client endpoint, records completed-generation slopes for tie-breaking, and aborts only after repeated consecutive runtime liveness/capacity failures. Use `--shuffle-seed` and `--repeat-count` when comparing settings that may be confounded by runtime state or row ordering. Direct-only mode runs once per population because artifact PPO rollout, batch, epoch, and minibatch settings are inactive there. Live harness trials also clean up retained final best-candidate brains after report capture so repeated sweeps do not accumulate export-only brains in the runtime.
+Optuna search is available as an optional dependency for broader spaces where evaluating every combination is wasteful:
+
+```bash
+python3 -m pip install --user optuna
+python3 tools/sweep_multiplication_ppo.py --search optuna --optuna-trials 10 --seed-summary artifacts/ppo-sweeps/20260610T215034Z/summary.json --narrow-from-seed --ppo-modes artifact,combined --rollout-ticks 12,16,20,24,28 --rollout-batches 1,2 --epochs 2,3,4,5 --minibatch-sizes 2 --population 64 --max-concurrent-brains 64 --max-generations 50 --trial-timeout-seconds 600 --optuna-timeout-seconds 3600
+```
+
+The sweep script automatically raises `ReproductionRunCount` to the largest requested rollout batch count so batch settings are not silently capped by the generation scheduler. It retries zero-generation IO connection or infrastructure failures with a fresh client endpoint, records completed-generation slopes for tie-breaking, and aborts only after repeated consecutive runtime liveness/capacity failures. Use `--shuffle-seed` and `--repeat-count` when comparing grid settings that may be confounded by runtime state or row ordering. For Optuna, `--seed-summary` enqueues high-ranking previous rows, and `--narrow-from-seed` keeps top seed values plus adjacent values from the requested lists. Direct-only mode runs once per population because artifact PPO rollout, batch, epoch, and minibatch settings are inactive there. Live harness trials also clean up retained final best-candidate brains after report capture so repeated sweeps do not accumulate export-only brains in the runtime.
 
 ## Live Harness
 

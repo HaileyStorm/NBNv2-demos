@@ -137,6 +137,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Sweep live Basics Multiplication PPO reward-policy settings."
     )
+    parser.add_argument(
+        "--search",
+        choices=("grid", "optuna"),
+        default="grid",
+        help="Search strategy. Grid preserves the historical cartesian sweep; optuna samples trials from the same value lists.",
+    )
     parser.add_argument("--ppo-modes", type=parse_mode_list, default=parse_mode_list("artifact"))
     parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("8,16,24"))
     parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1,2,4"))
@@ -154,6 +160,58 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Shuffle combo order with this deterministic seed to reduce order/runtime-state confounding.",
+    )
+    parser.add_argument(
+        "--optuna-trials",
+        type=int,
+        default=20,
+        help="Number of Optuna trials to run when --search optuna is selected.",
+    )
+    parser.add_argument(
+        "--optuna-timeout-seconds",
+        type=int,
+        default=None,
+        help="Optional total wall-clock cap for the Optuna study.",
+    )
+    parser.add_argument(
+        "--optuna-study-name",
+        default=None,
+        help="Optional Optuna study name. Defaults to a timestamped Basics Multiplication study.",
+    )
+    parser.add_argument(
+        "--optuna-storage",
+        default=None,
+        help="Optional Optuna storage URL, for example sqlite:///Basics/artifacts/ppo-sweeps/optuna.sqlite3.",
+    )
+    parser.add_argument(
+        "--optuna-sampler-seed",
+        type=int,
+        default=None,
+        help="Deterministic Optuna sampler seed. Defaults to --shuffle-seed when present.",
+    )
+    parser.add_argument(
+        "--optuna-pruner",
+        choices=("none", "median"),
+        default="median",
+        help="Optuna pruner to configure for the study. Current trial execution reports final values only.",
+    )
+    parser.add_argument(
+        "--seed-summary",
+        type=Path,
+        action="append",
+        default=[],
+        help="Previous sweep summary.json to enqueue as Optuna seed trials. May be repeated.",
+    )
+    parser.add_argument(
+        "--seed-top-k",
+        type=int,
+        default=5,
+        help="Number of prior valid results to enqueue from each --seed-summary.",
+    )
+    parser.add_argument(
+        "--narrow-from-seed",
+        action="store_true",
+        help="Restrict each value list to top seed values plus adjacent values from the original list.",
     )
     parser.add_argument("--max-concurrent-brains", type=int, default=32)
     parser.add_argument(
@@ -235,9 +293,20 @@ def main() -> int:
     else:
         args.output_root = args.output_root.resolve()
 
-    combos = build_combos(args)
     args.effective_reproduction_run_count = args.reproduction_run_count or max(args.rollout_batches)
+    if args.optuna_trials <= 0:
+        raise SystemExit("--optuna-trials must be > 0")
+    if args.seed_top_k <= 0:
+        raise SystemExit("--seed-top-k must be > 0")
 
+    if args.search == "optuna":
+        return run_optuna_search(args)
+
+    combos = build_combos(args)
+    return run_grid_search(args, combos)
+
+
+def run_grid_search(args: argparse.Namespace, combos: list[PpoCombo]) -> int:
     print(f"Planned PPO reward-policy sweep: {len(combos)} combo(s)")
     generation_budget = args.max_generations if args.max_generations > 0 else None
     population_text = ",".join(str(population) for population in args.population)
@@ -326,6 +395,322 @@ def main() -> int:
     print(f"Summary: {args.output_root / 'summary.json'}")
     print(f"Rows:    {results_path}")
     return 0
+
+
+def run_optuna_search(args: argparse.Namespace) -> int:
+    optuna = import_optuna()
+    seed_combos = load_seed_combos(args)
+    if args.narrow_from_seed and seed_combos:
+        apply_seed_narrowing(args, seed_combos)
+
+    study_name = args.optuna_study_name or f"basics-multiplication-ppo-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    sampler_seed = args.optuna_sampler_seed if args.optuna_sampler_seed is not None else args.shuffle_seed
+    sampler = optuna.samplers.TPESampler(seed=sampler_seed)
+    pruner = (
+        optuna.pruners.NopPruner()
+        if args.optuna_pruner == "none"
+        else optuna.pruners.MedianPruner(n_startup_trials=max(3, min(5, args.optuna_trials // 2)))
+    )
+    study = optuna.create_study(
+        direction="maximize",
+        study_name=study_name,
+        storage=args.optuna_storage,
+        load_if_exists=bool(args.optuna_storage),
+        sampler=sampler,
+        pruner=pruner,
+    )
+
+    for combo in seed_combos:
+        if combo_is_in_search_space(args, combo):
+            study.enqueue_trial(combo_to_trial_params(combo), skip_if_exists=True)
+
+    print(f"Planned Optuna PPO reward-policy search: {args.optuna_trials} trial(s)")
+    print(
+        f"Search space: modes={','.join(args.ppo_modes)} population={','.join(map(str, args.population))} "
+        f"ticks={','.join(map(str, args.rollout_ticks))} batches={','.join(map(str, args.rollout_batches))} "
+        f"epochs={','.join(map(str, args.epochs))} minibatch={','.join(map(str, args.minibatch_sizes))}"
+    )
+    print(
+        f"Optuna: study={study_name} storage={args.optuna_storage or 'memory'} "
+        f"seed={sampler_seed if sampler_seed is not None else 'none'} pruner={args.optuna_pruner} "
+        f"timeout={args.optuna_timeout_seconds if args.optuna_timeout_seconds is not None else 'none'}s"
+    )
+    if seed_combos:
+        print(f"Seeded {sum(1 for combo in seed_combos if combo_is_in_search_space(args, combo))} prior combo(s).")
+
+    if args.dry_run:
+        for trial_number in range(1, args.optuna_trials + 1):
+            trial = study.ask()
+            combo = suggest_combo(args, trial, trial_number)
+            print(f"  {format_combo(combo)}")
+            study.tell(trial, objective_for_invalid_result())
+        return 0
+
+    ensure_io_reachable(args.io_address)
+    if not args.skip_build:
+        build_harness(args)
+
+    args.output_root.mkdir(parents=True, exist_ok=True)
+    results_path = args.output_root / "results.jsonl"
+    best: SweepResult | None = None
+    results: list[SweepResult] = []
+    sweep_started = time.monotonic()
+    study_deadline = None if args.optuna_timeout_seconds is None else sweep_started + max(1, args.optuna_timeout_seconds)
+    consecutive_infrastructure_failures = 0
+
+    for trial_index in range(1, args.optuna_trials + 1):
+        if study_deadline is not None and time.monotonic() >= study_deadline:
+            print("[optuna] stopping before next trial because the study timeout was reached.")
+            break
+
+        trial = study.ask()
+        combo = suggest_combo(args, trial, trial_index)
+        trial.set_user_attr("combo", asdict(combo))
+        print()
+        print(f"=== [trial {trial_index}/{args.optuna_trials}] Running {combo.label} ===")
+        result = run_combo(args, combo, trial_index, args.optuna_trials)
+        results.append(result)
+        with results_path.open("a", encoding="utf-8") as writer:
+            writer.write(json.dumps(result_to_json(result), sort_keys=True) + "\n")
+
+        trial.set_user_attr("result", result_to_json(result))
+        print_result(result)
+        if result.infrastructure_failure:
+            consecutive_infrastructure_failures += 1
+            study.tell(trial, state=optuna.trial.TrialState.PRUNED)
+            write_summary(args.output_root, results, best, optuna_summary(args, study))
+            print_infrastructure_failure(
+                result,
+                consecutive_infrastructure_failures,
+                args.max_consecutive_infrastructure_failures)
+            if consecutive_infrastructure_failures >= args.max_consecutive_infrastructure_failures:
+                print(
+                    "  Aborting search: repeated runtime liveness/capacity failures indicate the "
+                    "runtime should be restarted or WorkerNode placement inventory should be checked."
+                )
+                print(f"Summary: {args.output_root / 'summary.json'}")
+                print(f"Rows:    {results_path}")
+                return 3
+            print("  Preserving prior results and continuing with the next sampled combo.")
+            print_current_best(best)
+            print_sweep_progress(len(results), args.optuna_trials, sweep_started)
+            continue
+
+        consecutive_infrastructure_failures = 0
+        objective = objective_value(result)
+        study.tell(trial, objective)
+        print(f"[optuna] objective={objective:.6f} best_value={study.best_value:.6f}")
+        if result.valid and (best is None or rank_key(result) > rank_key(best)):
+            best = result
+        print_current_best(best)
+        print_sweep_progress(len(results), args.optuna_trials, sweep_started)
+
+    write_summary(args.output_root, results, best, optuna_summary(args, study))
+    print()
+    print("Final recommendation")
+    if best is None:
+        print("  No valid completed generation was observed; reduce load or inspect the run logs above.")
+        return 2
+
+    print_recommendation(best)
+    print(f"Summary: {args.output_root / 'summary.json'}")
+    print(f"Rows:    {results_path}")
+    return 0
+
+
+def import_optuna() -> Any:
+    try:
+        import optuna  # type: ignore[import-not-found]
+    except ModuleNotFoundError as ex:
+        raise SystemExit(
+            "Optuna is required for --search optuna. Install it with "
+            "python3 -m pip install optuna, or rerun with --search grid."
+        ) from ex
+    return optuna
+
+
+def suggest_combo(args: argparse.Namespace, trial: Any, trial_index: int) -> PpoCombo:
+    mode = trial.suggest_categorical("mode", args.ppo_modes)
+    population = trial.suggest_categorical("population", args.population)
+    if mode == "direct":
+        return PpoCombo(
+            mode,
+            population,
+            args.rollout_ticks[0],
+            args.rollout_batches[0],
+            args.epochs[0],
+            args.minibatch_sizes[0],
+            repeat_index=trial_index)
+
+    return PpoCombo(
+        mode,
+        population,
+        trial.suggest_categorical("rollout_ticks", args.rollout_ticks),
+        trial.suggest_categorical("rollout_batches", args.rollout_batches),
+        trial.suggest_categorical("epochs", args.epochs),
+        trial.suggest_categorical("minibatch_size", args.minibatch_sizes),
+        repeat_index=trial_index)
+
+
+def combo_to_trial_params(combo: PpoCombo) -> dict[str, Any]:
+    return {
+        "mode": combo.mode,
+        "population": combo.population,
+        "rollout_ticks": combo.rollout_ticks,
+        "rollout_batches": combo.rollout_batches,
+        "epochs": combo.epochs,
+        "minibatch_size": combo.minibatch_size,
+    }
+
+
+def combo_is_in_search_space(args: argparse.Namespace, combo: PpoCombo) -> bool:
+    return (
+        combo.mode in args.ppo_modes
+        and combo.population in args.population
+        and (combo.mode == "direct" or combo.rollout_ticks in args.rollout_ticks)
+        and (combo.mode == "direct" or combo.rollout_batches in args.rollout_batches)
+        and (combo.mode == "direct" or combo.epochs in args.epochs)
+        and (combo.mode == "direct" or combo.minibatch_size in args.minibatch_sizes)
+    )
+
+
+def objective_value(result: SweepResult) -> float:
+    if not result.valid:
+        return objective_for_invalid_result()
+    stability_penalty = 0.0 if result.evaluation_failures == 0 and not result.timed_out else 0.05
+    speed_bonus = 0.0
+    if result.seconds_per_generation is not None and result.seconds_per_generation > 0:
+        speed_bonus = min(0.02, 0.01 / result.seconds_per_generation)
+    return (
+        result.best_fitness
+        + (0.10 * result.best_accuracy)
+        + (0.025 * result.fitness_slope_to_best)
+        + (0.010 * result.accuracy_slope_to_best)
+        + speed_bonus
+        - stability_penalty
+    )
+
+
+def objective_for_invalid_result() -> float:
+    return -1.0
+
+
+def load_seed_combos(args: argparse.Namespace) -> list[PpoCombo]:
+    combos: list[PpoCombo] = []
+    for summary_path in args.seed_summary:
+        path = summary_path.expanduser()
+        if not path.is_absolute():
+            path = args.repo_root / path
+        if not path.exists():
+            raise SystemExit(f"--seed-summary not found: {path}")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        result_payloads = payload.get("results") or []
+        ranked = sorted(
+            (item for item in result_payloads if item.get("valid")),
+            key=seed_rank_key,
+            reverse=True,
+        )
+        for item in ranked[: args.seed_top_k]:
+            combo = combo_from_result_payload(item)
+            if combo is not None:
+                combos.append(combo)
+    return dedupe_combos(combos)
+
+
+def combo_from_result_payload(payload: Mapping[str, Any]) -> PpoCombo | None:
+    combo = payload.get("combo")
+    if not isinstance(combo, Mapping):
+        return None
+    mode = str(combo.get("mode") or "artifact").lower()
+    if mode not in {"artifact", "direct", "combined"}:
+        mode = "artifact"
+    try:
+        return PpoCombo(
+            mode=mode,
+            population=int(combo.get("population") or 0),
+            rollout_ticks=int(combo.get("rollout_ticks") or combo.get("rolloutTicks") or 1),
+            rollout_batches=int(combo.get("rollout_batches") or combo.get("rolloutBatches") or 1),
+            epochs=int(combo.get("epochs") or 1),
+            minibatch_size=int(combo.get("minibatch_size") or combo.get("minibatchSize") or 1),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def seed_rank_key(payload: Mapping[str, Any]) -> tuple[float, float, float, float]:
+    return (
+        float_or_zero(payload.get("best_fitness")),
+        float_or_zero(payload.get("best_accuracy")),
+        float_or_zero(payload.get("fitness_slope_to_best")),
+        float_or_zero(payload.get("accuracy_slope_to_best")),
+    )
+
+
+def dedupe_combos(combos: list[PpoCombo]) -> list[PpoCombo]:
+    seen: set[tuple[str, int, int, int, int, int]] = set()
+    result: list[PpoCombo] = []
+    for combo in combos:
+        key = (
+            combo.mode,
+            combo.population,
+            combo.rollout_ticks,
+            combo.rollout_batches,
+            combo.epochs,
+            combo.minibatch_size,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(combo)
+    return result
+
+
+def apply_seed_narrowing(args: argparse.Namespace, seed_combos: list[PpoCombo]) -> None:
+    args.ppo_modes = narrow_modes(args.ppo_modes, [combo.mode for combo in seed_combos])
+    args.population = narrow_int_values(args.population, [combo.population for combo in seed_combos])
+    args.rollout_ticks = narrow_int_values(args.rollout_ticks, [combo.rollout_ticks for combo in seed_combos if combo.mode != "direct"])
+    args.rollout_batches = narrow_int_values(args.rollout_batches, [combo.rollout_batches for combo in seed_combos if combo.mode != "direct"])
+    args.epochs = narrow_int_values(args.epochs, [combo.epochs for combo in seed_combos if combo.mode != "direct"])
+    args.minibatch_sizes = narrow_int_values(args.minibatch_sizes, [combo.minibatch_size for combo in seed_combos if combo.mode != "direct"])
+
+
+def narrow_modes(values: list[str], selected: list[str]) -> list[str]:
+    narrowed = [mode for mode in values if mode in set(selected)]
+    return narrowed or values
+
+
+def narrow_int_values(values: list[int], selected: list[int]) -> list[int]:
+    selected_set = set(selected)
+    if not selected_set:
+        return values
+    keep: set[int] = set()
+    for index, value in enumerate(values):
+        if value not in selected_set:
+            continue
+        keep.add(value)
+        if index > 0:
+            keep.add(values[index - 1])
+        if index + 1 < len(values):
+            keep.add(values[index + 1])
+    narrowed = [value for value in values if value in keep]
+    return narrowed or values
+
+
+def optuna_summary(args: argparse.Namespace, study: Any) -> dict[str, Any]:
+    try:
+        best_value = study.best_value
+    except ValueError:
+        best_value = None
+    return {
+        "mode": "optuna",
+        "study_name": study.study_name,
+        "storage": args.optuna_storage,
+        "trials_requested": args.optuna_trials,
+        "timeout_seconds": args.optuna_timeout_seconds,
+        "sampler_seed": args.optuna_sampler_seed if args.optuna_sampler_seed is not None else args.shuffle_seed,
+        "pruner": args.optuna_pruner,
+        "best_value": best_value,
+    }
 
 
 def harness_project(args: argparse.Namespace) -> Path:
@@ -452,6 +837,15 @@ def run_combo_attempt(
     with stdout_path.open("w", encoding="utf-8") as log:
         log.write(f"# {' '.join(cmd)}\n")
         log.flush()
+        last_logged_progress_line: str | None = None
+        repeated_progress_lines = 0
+
+        def flush_repeated_progress() -> None:
+            nonlocal repeated_progress_lines
+            if repeated_progress_lines > 0:
+                log.write(f"# repeated previous progress line {repeated_progress_lines} time(s)\n")
+                repeated_progress_lines = 0
+
         env = dict(os.environ) if args.verbose_harness_output else quiet_harness_environment(os.environ)
         process = subprocess.Popen(
             cmd,
@@ -464,9 +858,20 @@ def run_combo_attempt(
         )
         assert process.stdout is not None
         for line in process.stdout:
-            log.write(line)
-            log.flush()
             stripped = line.rstrip()
+            is_repeated_progress = (
+                not args.verbose_harness_output
+                and last_logged_progress_line == stripped
+                and GEN_RE.search(stripped) is not None
+            )
+            if is_repeated_progress:
+                repeated_progress_lines += 1
+            else:
+                flush_repeated_progress()
+                log.write(line)
+                log.flush()
+                last_logged_progress_line = stripped if GEN_RE.search(stripped) is not None else None
+
             report_match = REPORT_RE.match(stripped)
             if report_match:
                 report_path = Path(report_match.group("path")).expanduser()
@@ -492,6 +897,8 @@ def run_combo_attempt(
                 continue
             if args.verbose_harness_output or should_echo_harness_line(stripped):
                 print(stripped)
+        flush_repeated_progress()
+        log.flush()
         exit_code = process.wait()
 
     duration = time.monotonic() - started
@@ -814,12 +1221,19 @@ def print_infrastructure_failure(
     print(f"  Detail: {result.outcome_detail or result.error}")
 
 
-def write_summary(output_root: Path, results: list[SweepResult], best: SweepResult | None) -> None:
+def write_summary(
+    output_root: Path,
+    results: list[SweepResult],
+    best: SweepResult | None,
+    search: Mapping[str, Any] | None = None,
+) -> None:
     payload = {
         "completed_at_utc": datetime.now(timezone.utc).isoformat(),
         "best": None if best is None else result_to_json(best),
         "results": [result_to_json(result) for result in results],
     }
+    if search is not None:
+        payload["search"] = dict(search)
     (output_root / "summary.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
