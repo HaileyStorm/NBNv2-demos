@@ -27,6 +27,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     // Basics uses an explicit caller-side wait budget so burst placement does not fail on HiveMind's short idle-only default.
     private static readonly TimeSpan DefaultSpawnPlacementTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RetryableSpawnFailureBackoff = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan CapacityWideSpawnFailureBackoff = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan BrainTeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BrainTeardownPollInterval = TimeSpan.FromMilliseconds(100);
     // A tiny stagger reduces local thundering-herd placement spikes without materially slowing evaluation.
@@ -1652,7 +1653,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
                 if (ResolveFailureCategory(result.Member.LastEvaluation) is "spawn_failed" or "spawn_not_placed")
                 {
-                    await Task.Delay(RetryableSpawnFailureBackoff, cancellationToken).ConfigureAwait(false);
+                    await Task.Delay(ResolveSpawnFailureBackoff(result.Member.LastEvaluation), cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -2041,7 +2042,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
         if (IsCapacityWideSpawnFailure(diagnostic))
         {
-            return false;
+            return true;
         }
 
         if (diagnostic.Contains("spawn_request_canceled", StringComparison.Ordinal)
@@ -2063,6 +2064,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         return !diagnostic.Contains("ready_window_exhausted", StringComparison.Ordinal);
+    }
+
+    private static TimeSpan ResolveSpawnFailureBackoff(BasicsTaskEvaluationResult? evaluation)
+    {
+        var diagnostic = evaluation?.Diagnostics.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        return !string.IsNullOrWhiteSpace(diagnostic) && IsCapacityWideSpawnFailure(diagnostic)
+            ? CapacityWideSpawnFailureBackoff
+            : RetryableSpawnFailureBackoff;
     }
 
     private static bool IsFatalSpawnFailure(BasicsTaskEvaluationResult? evaluation)
