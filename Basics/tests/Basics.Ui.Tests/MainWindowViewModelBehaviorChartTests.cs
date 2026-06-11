@@ -214,6 +214,8 @@ public sealed class MainWindowViewModelBehaviorChartTests
         Assert.Equal("1", viewModel.PpoRolloutBatchCountText);
         Assert.Equal("2", viewModel.PpoOptimizationEpochCountText);
         Assert.Equal("2", viewModel.PpoMinibatchSizeText);
+        Assert.Equal("2", viewModel.ReproductionRunCountOverrideText);
+        Assert.Equal("50", viewModel.MaximumGenerationsText);
 
         viewModel.PpoOptimizerEnabled = true;
 
@@ -251,7 +253,7 @@ public sealed class MainWindowViewModelBehaviorChartTests
         var options = BuildEnvironmentOptions(viewModel);
 
         Assert.True(options.PpoOptimizer.Enabled);
-        Assert.Equal(new BasicsReproductionSchedulingPolicy(), options.Scheduling);
+        Assert.Equal(BasicsDiversityTuning.CreateScheduling(BasicsDiversityPreset.Medium), options.Scheduling);
         Assert.Equal(new BasicsAdaptiveDiversityOptions(), options.AdaptiveDiversity);
     }
 

@@ -2567,7 +2567,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         };
 
         var scheduling = PpoOptimizerEnabled
-            ? new BasicsReproductionSchedulingPolicy()
+            ? BasicsDiversityTuning.CreateScheduling(BasicsDiversityPreset.Medium)
             : new BasicsReproductionSchedulingPolicy
             {
                 ParentSelection = new BasicsParentSelectionPolicy

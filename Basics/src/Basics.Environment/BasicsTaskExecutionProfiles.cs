@@ -167,22 +167,29 @@ public static class BasicsTaskExecutionProfiles
             MaxReadyWindowTicks = 4,
             SampleRepeatCount = 1
         },
+        DiversityPreset = BasicsDiversityPreset.Medium,
         AdaptiveDiversity = new BasicsAdaptiveDiversityOptions
         {
             Enabled = true,
-            StallGenerationWindow = 8
+            StallGenerationWindow = 4
         },
         VariationBand = RicherExplorationProfile.VariationBand with
         {
             MaxAxonDelta = 14
         },
+        SeedShape = new BasicsSeedShapeConstraints(),
         Sizing = new BasicsSizingOverrides
         {
             InitialPopulationCount = 64,
             MinimumPopulationCount = 64,
             MaximumPopulationCount = 64,
-            ReproductionRunCount = 1,
+            ReproductionRunCount = 2,
             MaxConcurrentBrains = 64
+        },
+        Scheduling = BasicsDiversityTuning.CreateScheduling(BasicsDiversityPreset.Medium),
+        StopCriteria = new BasicsExecutionStopCriteria
+        {
+            MaximumGenerations = 50
         },
         PpoOptimizer = new BasicsPpoOptimizerOptions
         {
