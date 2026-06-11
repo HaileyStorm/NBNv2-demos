@@ -2926,7 +2926,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             0);
         if (output is null)
         {
-            return new PrimeObservationResult(null, timing);
+            return new PrimeObservationResult("startup_vector_missing:vectors_seen=0:last_tick=0", timing);
         }
 
         var failureDetail = ClassifyObservationVectorFailure(output, 0, lastTick: 0);
@@ -3135,7 +3135,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 : $"vector_missing:vectors_seen={vectorsSeen}:last_tick={lastTick}";
         }
 
-        if (output.Values.Count < (int)BasicsIoGeometry.OutputWidth)
+        if (output.Values.Count != (int)BasicsIoGeometry.OutputWidth)
         {
             return readyEventsSeen > 0
                 ? $"width_mismatch:observed_width={output.Values.Count}:expected_width={(int)BasicsIoGeometry.OutputWidth}:vectors_seen={vectorsSeen}:ready_events_seen={readyEventsSeen}:last_vector_tick={output.TickId}:last_ready_tick={lastReadyTick}"

@@ -542,17 +542,14 @@ public sealed class BasicsExecutionSessionTests
                 _ => { },
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Stopped, final.State);
-            Assert.Contains("output liveness failure", final.StatusText, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
             Assert.Contains(
-                "vector_missing",
+                "startup_vector_missing",
                 final.EvaluationFailureSummary,
                 StringComparison.Ordinal);
             Assert.True(runtimeClient.SpawnRequestCount > 2, $"Expected vector-missing failures to retry, observed {runtimeClient.SpawnRequestCount} spawn request(s).");
             Assert.NotNull(final.LatestBatchTiming);
-            Assert.True(final.LatestBatchTiming!.AverageObservationAttemptCount > 0d);
-            Assert.True(final.LatestBatchTiming.AverageObservationSecondsPerAttempt > 0d);
-            Assert.True(final.LatestBatchTiming.AverageObservationWaitSeconds > 0d);
+            Assert.True(final.LatestBatchTiming!.AverageObservationWaitSeconds > 0d);
         }
         finally
         {
@@ -650,7 +647,7 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
-    public async Task ExecutionSession_TreatsMissingStartupPrimeVector_AsNonFatalWarmupMiss()
+    public async Task ExecutionSession_ReportsMissingStartupPrimeVector_AsLivenessFailure()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
         {
@@ -667,12 +664,9 @@ public sealed class BasicsExecutionSessionTests
                 _ => { },
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
-            Assert.Equal(0, final.EvaluationFailureCount);
-            Assert.True(final.BestAccuracy >= 1f);
-            Assert.NotNull(final.LatestBatchTiming);
-            Assert.True(final.LatestBatchTiming!.AverageObservationAttemptCount > 0d);
-            Assert.DoesNotContain("startup_vector_missing", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.True(final.EvaluationFailureCount > 0);
+            Assert.Contains("startup_vector_missing", final.EvaluationFailureSummary, StringComparison.Ordinal);
         }
         finally
         {
@@ -876,6 +870,35 @@ public sealed class BasicsExecutionSessionTests
 
             Assert.Equal(BasicsExecutionState.Failed, final.State);
             Assert.Contains("width_mismatch", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.Contains("output_width_mismatch", final.LatestBatchTiming?.FailureSummary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_ReportsOverWideOutputVectorAsWidthMismatch()
+    {
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            DefaultBehavior = "and",
+            OutputVectorWidthOverride = 3
+        };
+        var session = CreateSession(runtimeClient);
+
+        try
+        {
+            var final = await session.RunAsync(
+                CreatePlan(BasicsOutputObservationMode.VectorPotential),
+                new AndTaskPlugin(),
+                _ => { },
+                new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+
+            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Contains("width_mismatch", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.Contains("observed_width=3", final.EvaluationFailureSummary, StringComparison.Ordinal);
             Assert.Contains("output_width_mismatch", final.LatestBatchTiming?.FailureSummary, StringComparison.Ordinal);
         }
         finally
@@ -3938,7 +3961,9 @@ public sealed class BasicsExecutionSessionTests
                 var vector = new[] { value, ready };
                 if (OutputVectorWidthOverride is int outputVectorWidth)
                 {
-                    vector = vector.Take(Math.Max(0, Math.Min(outputVectorWidth, vector.Length))).ToArray();
+                    vector = Enumerable.Range(0, Math.Max(0, outputVectorWidth))
+                        .Select(index => index < vector.Length ? vector[index] : 0f)
+                        .ToArray();
                 }
                 if (!suppressThisInput
                     && !SuppressOutputVectors
