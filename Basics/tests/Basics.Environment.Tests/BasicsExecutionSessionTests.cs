@@ -743,6 +743,8 @@ public sealed class BasicsExecutionSessionTests
 
             Assert.Equal(BasicsExecutionState.Failed, final.State);
             Assert.Contains("vector_missing", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.Contains("output_timeout", final.LatestBatchTiming?.FailureSummary ?? string.Empty, StringComparison.Ordinal);
+            Assert.DoesNotContain("output_width_mismatch", final.LatestBatchTiming?.FailureSummary ?? string.Empty, StringComparison.Ordinal);
             Assert.True(final.EvaluationFailureCount > 0);
         }
         finally
@@ -779,6 +781,8 @@ public sealed class BasicsExecutionSessionTests
 
             Assert.Equal(BasicsExecutionState.Failed, final.State);
             Assert.Contains("vector_missing", final.EvaluationFailureSummary, StringComparison.Ordinal);
+            Assert.Contains("output_timeout", final.LatestBatchTiming?.FailureSummary ?? string.Empty, StringComparison.Ordinal);
+            Assert.DoesNotContain("output_width_mismatch", final.LatestBatchTiming?.FailureSummary ?? string.Empty, StringComparison.Ordinal);
             Assert.True(final.EvaluationFailureCount > 0);
         }
         finally

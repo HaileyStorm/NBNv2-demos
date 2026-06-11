@@ -1537,6 +1537,18 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 .ToArray();
             var batchTiming = BuildBatchTimingSummary(generation, chunkIndex + 1, chunkCount, batchResults, batchStopwatch.Elapsed);
             batchTimings.Add(batchTiming);
+            if (generation > 1 && IsOutputStartupLivenessCollapse(batchResults))
+            {
+                var activeMembers = evaluated
+                    .Concat(reusedBatchMembers)
+                    .Concat(batchResults.Select(static result => result.Member))
+                    .ToArray();
+                await TeardownPopulationBrainsAsync(activeMembers, CancellationToken.None).ConfigureAwait(false);
+
+                throw new InvalidOperationException(
+                    $"Generation {generation} batch {chunkIndex + 1} aborted after output liveness failure: {BuildOutputStartupLivenessCollapseDetail(batchResults)}");
+            }
+
             evaluated.AddRange(reusedBatchMembers);
             evaluated.AddRange(batchResults.Select(static result => result.Member));
             if (retainEvaluatedBrainsForPpo)
@@ -2159,7 +2171,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return false;
         }
 
-        return !diagnostic.Contains("ready_window_exhausted", StringComparison.Ordinal);
+        var detail = diagnostic["output_timeout_or_width_mismatch:".Length..];
+        return !detail.StartsWith("ready_window_exhausted", StringComparison.Ordinal)
+               && !IsOutputWidthMismatchDetail(detail);
     }
 
     private static TimeSpan ResolveSpawnFailureBackoff(BasicsTaskEvaluationResult? evaluation)
@@ -2193,6 +2207,29 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                || diagnostic.Contains("spawn_request_failed", StringComparison.Ordinal)
                || diagnostic.Contains("spawn_empty_response", StringComparison.Ordinal)
                || diagnostic.Contains("spawn_invalid_request", StringComparison.Ordinal);
+    }
+
+    private static bool IsOutputStartupLivenessCollapse(IReadOnlyList<MemberEvaluationResult> results)
+        => results.Count > 0
+           && results.All(static result => IsOutputStartupVectorMissing(result.Member.LastEvaluation));
+
+    private static bool IsOutputStartupVectorMissing(BasicsTaskEvaluationResult? evaluation)
+        => evaluation?.Diagnostics.Any(static diagnostic =>
+               (diagnostic.StartsWith("output_timeout_or_width_mismatch:vector_missing", StringComparison.Ordinal)
+                || diagnostic.StartsWith("output_timeout_or_width_mismatch:startup_vector_missing", StringComparison.Ordinal))
+               && diagnostic.Contains("vectors_seen=0", StringComparison.Ordinal)
+               && diagnostic.Contains("last_tick=0", StringComparison.Ordinal)) == true;
+
+    private static string BuildOutputStartupLivenessCollapseDetail(IReadOnlyList<MemberEvaluationResult> results)
+    {
+        var grouped = results
+            .Select(static result => result.Member.LastEvaluation?.Diagnostics.FirstOrDefault(static value => !string.IsNullOrWhiteSpace(value)))
+            .Where(static diagnostic => !string.IsNullOrWhiteSpace(diagnostic))
+            .GroupBy(static diagnostic => diagnostic!, StringComparer.Ordinal)
+            .OrderByDescending(static group => group.Count())
+            .ThenBy(static group => group.Key, StringComparer.Ordinal)
+            .Select(static group => $"{group.Key} x{group.Count()}");
+        return string.Join("; ", grouped);
     }
 
     private static int ResolveSetupConcurrency(int eligibleWorkerCount, int maxConcurrent)
@@ -2565,14 +2602,16 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         var diagnostic = evaluation.Diagnostics[0];
-        if (diagnostic.StartsWith("output_timeout_or_width_mismatch:", StringComparison.Ordinal))
+        const string outputFailurePrefix = "output_timeout_or_width_mismatch:";
+        if (diagnostic.StartsWith(outputFailurePrefix, StringComparison.Ordinal))
         {
-            if (diagnostic.Contains("ready_window_exhausted", StringComparison.Ordinal))
+            var detail = diagnostic[outputFailurePrefix.Length..];
+            if (detail.StartsWith("ready_window_exhausted", StringComparison.Ordinal))
             {
                 return "ready_timeout";
             }
 
-            if (diagnostic.Contains("width_mismatch", StringComparison.Ordinal))
+            if (IsOutputWidthMismatchDetail(detail))
             {
                 return "output_width_mismatch";
             }
@@ -2583,6 +2622,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         var delimiter = diagnostic.IndexOf(':');
         return delimiter <= 0 ? diagnostic : diagnostic[..delimiter];
     }
+
+    private static bool IsOutputWidthMismatchDetail(string detail)
+        => detail.StartsWith("width_mismatch", StringComparison.Ordinal)
+           || detail.StartsWith("startup_width_mismatch", StringComparison.Ordinal);
 
     private static bool CanReuseEvaluation(PopulationMember member)
         => member.LastEvaluation is not null && member.LastEvaluation.Diagnostics.Count == 0;

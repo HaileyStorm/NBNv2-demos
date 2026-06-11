@@ -78,6 +78,7 @@ class SweepResult:
     outcome: str = "unknown"
     outcome_detail: str = ""
     timed_out: bool = False
+    runtime_liveness_failure: bool = False
     error: str = ""
 
     @property
@@ -92,6 +93,7 @@ class SweepResult:
     def infrastructure_failure(self) -> bool:
         return (
             (self.timed_out and self.completed_generations == 0)
+            or self.runtime_liveness_failure
             or is_infrastructure_failure_detail(self.outcome_detail)
             or is_infrastructure_failure_detail(self.error)
         )
@@ -150,12 +152,12 @@ def parse_args() -> argparse.Namespace:
         default="grid",
         help="Search strategy. Grid preserves the historical cartesian sweep; optuna samples trials from the same value lists.",
     )
-    parser.add_argument("--ppo-modes", type=parse_mode_list, default=parse_mode_list("artifact"))
-    parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("8,16,24"))
-    parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1,2,4"))
-    parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("2,3,5"))
-    parser.add_argument("--minibatch-sizes", type=parse_int_list, default=parse_int_list("1,2,4"))
-    parser.add_argument("--population", type=parse_int_list, default=parse_int_list("32"))
+    parser.add_argument("--ppo-modes", type=parse_mode_list, default=parse_mode_list("combined"))
+    parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("16"))
+    parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1"))
+    parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("3"))
+    parser.add_argument("--minibatch-sizes", type=parse_int_list, default=parse_int_list("2"))
+    parser.add_argument("--population", type=parse_int_list, default=parse_int_list("64"))
     parser.add_argument(
         "--repeat-count",
         type=int,
@@ -1127,6 +1129,9 @@ def summarize_report(combo: PpoCombo, report_path: Path, exit_code: int, duratio
     )
     if is_infrastructure_failure_detail(outcome_detail):
         status = "infrastructure_failed"
+    runtime_liveness_failure = has_runtime_liveness_failure(snapshots, terminal)
+    if runtime_liveness_failure:
+        status = "infrastructure_failed"
     elif outcome_detail.startswith("optuna_pruned"):
         status = "pruned"
     return SweepResult(
@@ -1147,7 +1152,42 @@ def summarize_report(combo: PpoCombo, report_path: Path, exit_code: int, duratio
         outcome=outcome,
         outcome_detail=outcome_detail,
         timed_out=timed_out,
+        runtime_liveness_failure=runtime_liveness_failure,
     )
+
+
+def has_runtime_liveness_failure(snapshots: list[Any], terminal: Mapping[str, Any]) -> bool:
+    candidate_snapshots = [snapshot for snapshot in snapshots if isinstance(snapshot, Mapping)]
+    if terminal:
+        candidate_snapshots.append(terminal)
+
+    for snapshot in candidate_snapshots:
+        for key in ("LatestBatchTiming", "LatestGenerationTiming"):
+            timing = snapshot.get(key)
+            if isinstance(timing, Mapping) and is_runtime_liveness_timing(timing):
+                return True
+    return False
+
+
+def is_runtime_liveness_timing(timing: Mapping[str, Any]) -> bool:
+    failed = int_or_zero(timing.get("FailedBrainCount"))
+    successful = int_or_zero(timing.get("SuccessfulBrainCount"))
+    if failed <= 0 or successful > 0:
+        return False
+
+    failure_summary = str(timing.get("FailureSummary") or "").lower()
+    if not (
+        "output_timeout" in failure_summary
+        or "vector_missing" in failure_summary
+        # Older reports misclassified vector_missing as output_width_mismatch because
+        # the diagnostic prefix contains "width_mismatch"; keep this for seeded summaries.
+        or "output_width_mismatch" in failure_summary
+    ):
+        return False
+
+    # True output width mismatches return quickly. The observed runtime liveness collapse
+    # spends almost all evaluation time waiting for vectors that never arrive.
+    return float_or_zero(timing.get("AverageObservationWaitSeconds")) >= 10.0
 
 
 def newest_report_path(report_dir: Path, started_monotonic: float | None = None) -> Path | None:
@@ -1317,6 +1357,11 @@ def print_infrastructure_failure(
         f"({consecutive_failures}/{max_consecutive_failures} consecutive)."
     )
     print(f"  Detail: {result.outcome_detail or result.error}")
+    if result.runtime_liveness_failure:
+        print(
+            "  Runtime liveness was inferred from batch timing: all evaluated brains "
+            "in a batch failed while waiting for output vectors."
+        )
 
 
 def write_summary(
@@ -1422,6 +1467,7 @@ def is_infrastructure_failure_detail(value: str | None) -> bool:
     return (
         "spawn_worker_unavailable" in normalized
         or "no eligible workers are available for placement" in normalized
+        or "output liveness failure" in normalized
         or (
             "output_timeout_or_width_mismatch:vector_missing" in normalized
             and "vectors_seen=0" in normalized
