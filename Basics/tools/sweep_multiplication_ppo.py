@@ -1129,7 +1129,10 @@ def summarize_report(combo: PpoCombo, report_path: Path, exit_code: int, duratio
     )
     if is_infrastructure_failure_detail(outcome_detail):
         status = "infrastructure_failed"
-    runtime_liveness_failure = has_runtime_liveness_failure(snapshots, terminal)
+    runtime_liveness_failure = (
+        has_runtime_liveness_failure(snapshots, terminal)
+        or is_runtime_liveness_failure_detail(outcome_detail)
+    )
     if runtime_liveness_failure:
         status = "infrastructure_failed"
     elif outcome_detail.startswith("optuna_pruned"):
@@ -1467,7 +1470,16 @@ def is_infrastructure_failure_detail(value: str | None) -> bool:
     return (
         "spawn_worker_unavailable" in normalized
         or "no eligible workers are available for placement" in normalized
-        or "output liveness failure" in normalized
+        or is_runtime_liveness_failure_detail(value)
+    )
+
+
+def is_runtime_liveness_failure_detail(value: str | None) -> bool:
+    if not value:
+        return False
+    normalized = value.lower()
+    return (
+        "output liveness failure" in normalized
         or (
             "output_timeout_or_width_mismatch:vector_missing" in normalized
             and "vectors_seen=0" in normalized
