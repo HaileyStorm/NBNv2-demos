@@ -829,6 +829,11 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             if (SetProperty(ref _ppoOptimizerEnabled, value))
             {
+                if (value && IsMultiplicationTaskSelected() && !DirectRuntimeControlEnabled)
+                {
+                    DirectRuntimeControlEnabled = true;
+                }
+
                 RefreshPpoServiceStatusForMode();
                 RaiseTaskSettingsBindings();
             }
@@ -962,7 +967,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public string PpoOptimizerDetail
         => (PpoOptimizerEnabled, DirectRuntimeControlEnabled) switch
         {
-            (true, true) => $"Combined runtime PPO is active for {SelectedTask?.DisplayName ?? "the selected task"}. Artifact PPO uses the PPO manager through IO Gateway for reproduction actions; direct brain reward-control uses IO/HiveMind to modulate bounded live plasticity/homeostasis during evaluation. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}; epochs {PpoOptimizationEpochCountText}; minibatch {PpoMinibatchSizeText}.",
+            (true, true) => $"Combined runtime PPO is active for {SelectedTask?.DisplayName ?? "the selected task"}. Artifact PPO provides generation control through the PPO manager and IO Gateway reproduction actions discovered through Settings Manager, then reward feedback updates future policy; direct brain reward-control uses IO/HiveMind to modulate bounded live plasticity/homeostasis during evaluation. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}; epochs {PpoOptimizationEpochCountText}; minibatch {PpoMinibatchSizeText}.",
             (true, false) => $"Runtime PPO is the generation controller for {SelectedTask?.DisplayName ?? "the selected task"}. Basics sends parent context and reward feedback through IO Gateway; the PPO manager samples reproduction actions for future artifact rollouts and discovers service.endpoint.ppo_manager through Settings Manager. Objective {PpoObjectiveName}; reward {PpoRewardSignal}; rollout {PpoRolloutBatchCountText}x{PpoRolloutTickCountText}; epochs {PpoOptimizationEpochCountText}; minibatch {PpoMinibatchSizeText}.",
             (false, true) => $"Direct brain reward-control is active for {SelectedTask?.DisplayName ?? "the selected task"}. Basics sends sample-level reward-control actions through IO Gateway to HiveMind for bounded live plasticity/homeostasis modulation; local reproduction still owns structural child generation. Objective {PpoObjectiveName}; reward {PpoRewardSignal}.",
             _ => "Local reproduction/speciation owns generation control. PPO remains off and no PPO endpoint is configured by Basics."
@@ -3761,6 +3766,9 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private static float ResolvePeakMetric(IReadOnlyList<float> history, float fallbackValue)
         => history.Count == 0 ? fallbackValue : Math.Max(fallbackValue, history.Max());
+
+    private bool IsMultiplicationTaskSelected()
+        => string.Equals(SelectedTask?.TaskId, "multiplication", StringComparison.OrdinalIgnoreCase);
 
     private static float? ResolveBestCandidateAccuracyMetric(BasicsExecutionBestCandidateSummary? bestCandidate, string key)
         => bestCandidate?.ScoreBreakdown.TryGetValue(key, out var value) == true

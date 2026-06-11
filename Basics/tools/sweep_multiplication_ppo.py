@@ -153,9 +153,9 @@ def parse_args() -> argparse.Namespace:
         help="Search strategy. Grid preserves the historical cartesian sweep; optuna samples trials from the same value lists.",
     )
     parser.add_argument("--ppo-modes", type=parse_mode_list, default=parse_mode_list("combined"))
-    parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("16"))
+    parser.add_argument("--rollout-ticks", type=parse_int_list, default=parse_int_list("24"))
     parser.add_argument("--rollout-batches", type=parse_int_list, default=parse_int_list("1"))
-    parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("3"))
+    parser.add_argument("--epochs", type=parse_int_list, default=parse_int_list("2"))
     parser.add_argument("--minibatch-sizes", type=parse_int_list, default=parse_int_list("2"))
     parser.add_argument("--population", type=parse_int_list, default=parse_int_list("64"))
     parser.add_argument(
@@ -342,7 +342,7 @@ def run_grid_search(args: argparse.Namespace, combos: list[PpoCombo]) -> int:
     )
     print(
         "Note: latest completed 50-generation PPO sweep favored combined mode with "
-        "rollout_ticks=16, rollout_batches=1, epochs=3, minibatch_size=2, population=64 "
+        "rollout_ticks=24, rollout_batches=1, epochs=2, minibatch_size=2, population=64 "
         "for Multiplication."
     )
     for combo in combos:

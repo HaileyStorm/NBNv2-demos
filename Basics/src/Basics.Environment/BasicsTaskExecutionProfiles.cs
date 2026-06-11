@@ -178,24 +178,24 @@ public static class BasicsTaskExecutionProfiles
         },
         Sizing = new BasicsSizingOverrides
         {
-            InitialPopulationCount = 256,
-            MinimumPopulationCount = 256,
-            MaximumPopulationCount = 256,
-            ReproductionRunCount = 3,
-            MaxConcurrentBrains = 256
+            InitialPopulationCount = 64,
+            MinimumPopulationCount = 64,
+            MaximumPopulationCount = 64,
+            ReproductionRunCount = 1,
+            MaxConcurrentBrains = 64
         },
         PpoOptimizer = new BasicsPpoOptimizerOptions
         {
             Enabled = false,
             ObjectiveName = "multiplication",
             RewardSignal = "basics.record_score",
-            RolloutTickCount = 16,
+            RolloutTickCount = 24,
             RolloutBatchCount = 1,
             ClipEpsilon = 0.20f,
             DiscountGamma = 0.99f,
             GaeLambda = 0.95f,
             LearningRate = 0.0003f,
-            OptimizationEpochCount = 3,
+            OptimizationEpochCount = 2,
             MinibatchSize = 2,
             Seed = 42
         }

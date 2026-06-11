@@ -204,18 +204,25 @@ public sealed class MainWindowViewModelBehaviorChartTests
 
         Assert.True(viewModel.ShowPpoOptimizerSettings);
         Assert.False(viewModel.PpoOptimizerEnabled);
+        Assert.False(viewModel.DirectRuntimeControlEnabled);
         Assert.False(viewModel.ShowPpoOptimizerConfiguration);
         Assert.True(viewModel.ShowLocalReproductionSchedulingControls);
         Assert.False(viewModel.ShowPpoSchedulingNotice);
         Assert.Equal("Optimization Mode: Local Reproduction", viewModel.OptimizationModeTitle);
+        Assert.Equal("basics.record_score", viewModel.PpoRewardSignal);
+        Assert.Equal("24", viewModel.PpoRolloutTickCountText);
+        Assert.Equal("1", viewModel.PpoRolloutBatchCountText);
+        Assert.Equal("2", viewModel.PpoOptimizationEpochCountText);
+        Assert.Equal("2", viewModel.PpoMinibatchSizeText);
 
         viewModel.PpoOptimizerEnabled = true;
 
+        Assert.True(viewModel.DirectRuntimeControlEnabled);
         Assert.True(viewModel.ShowPpoOptimizerConfiguration);
         Assert.True(viewModel.ShowPpoServiceStatus);
         Assert.False(viewModel.ShowLocalReproductionSchedulingControls);
         Assert.True(viewModel.ShowPpoSchedulingNotice);
-        Assert.Equal("Generation Controller: Runtime PPO Reproduction Policy", viewModel.OptimizationModeTitle);
+        Assert.Equal("Generation Controller: Combined Runtime PPO", viewModel.OptimizationModeTitle);
         Assert.Equal("PPO Parent Context + Runtime Policy", viewModel.SchedulingSectionTitle);
         Assert.Contains("generation control", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("reward feedback", viewModel.PpoOptimizerDetail, StringComparison.OrdinalIgnoreCase);
