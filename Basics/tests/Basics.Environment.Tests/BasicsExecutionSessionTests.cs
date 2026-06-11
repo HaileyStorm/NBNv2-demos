@@ -542,7 +542,8 @@ public sealed class BasicsExecutionSessionTests
                 _ => { },
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Failed, final.State);
+            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.Contains("output liveness failure", final.StatusText, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(
                 "vector_missing",
                 final.EvaluationFailureSummary,

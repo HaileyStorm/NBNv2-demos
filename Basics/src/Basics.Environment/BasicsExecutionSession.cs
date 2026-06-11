@@ -344,6 +344,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 var generationMetrics = BuildGenerationMetrics(population, plan.StopCriteria, includeWinnerRuntimeState: true, currentGeneration: generation);
                 if (IsGenerationFullyFailed(population))
                 {
+                    var failureSummary = generationMetrics.EvaluationFailureSummary;
+                    var isOutputLivenessFailure = IsOutputLivenessFailureDetail(failureSummary);
                     (population, bestCandidateSoFar) = await TryRetainBestCandidateForExportAsync(
                             taskPlugin.Contract,
                             population,
@@ -355,11 +357,9 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     return CreateFinalSnapshot(
                         plan.StopCriteria,
                         publishSnapshot,
-                        BasicsExecutionState.Failed,
-                        "Execution failed.",
-                        string.IsNullOrWhiteSpace(generationMetrics.EvaluationFailureSummary)
-                            ? $"Generation {generation} produced no viable evaluations."
-                            : $"Generation {generation} produced no viable evaluations. {generationMetrics.EvaluationFailureSummary}.",
+                        isOutputLivenessFailure ? BasicsExecutionState.Stopped : BasicsExecutionState.Failed,
+                        isOutputLivenessFailure ? "Execution stopped after runtime output liveness failure." : "Execution failed.",
+                        BuildNoViableEvaluationsDetail(generation, failureSummary, isOutputLivenessFailure),
                         speciationEpochId,
                         generation,
                         population,
@@ -756,6 +756,8 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
         catch (Exception ex)
         {
+            var detail = ex.GetBaseException().Message;
+            var isOutputLivenessFailure = IsOutputLivenessFailureDetail(detail);
             (population, bestCandidateSoFar) = await TryRetainBestCandidateForExportAsync(
                     taskPlugin.Contract,
                     population,
@@ -766,9 +768,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             return CreateFinalSnapshot(
                 plan.StopCriteria,
                 publishSnapshot,
-                BasicsExecutionState.Failed,
-                "Execution failed.",
-                ex.GetBaseException().Message,
+                isOutputLivenessFailure ? BasicsExecutionState.Stopped : BasicsExecutionState.Failed,
+                isOutputLivenessFailure ? "Execution stopped after runtime output liveness failure." : "Execution failed.",
+                isOutputLivenessFailure
+                    ? $"{detail} Best-so-far candidate was retained; restart or inspect runtime services before continuing."
+                    : detail,
                 speciationEpochId,
                 accuracyHistory.Count,
                 population,
@@ -2212,6 +2216,14 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
     private static bool IsOutputStartupLivenessCollapse(IReadOnlyList<MemberEvaluationResult> results)
         => results.Count > 0
            && results.All(static result => IsOutputStartupVectorMissing(result.Member.LastEvaluation));
+
+    private static bool IsOutputLivenessFailureDetail(string? detail)
+        => !string.IsNullOrWhiteSpace(detail)
+           && (detail.Contains("aborted after output liveness failure", StringComparison.Ordinal)
+               || (detail.Contains("output_timeout_or_width_mismatch:vector_missing", StringComparison.Ordinal)
+                   && detail.Contains("vectors_seen=0", StringComparison.Ordinal)
+                   && (detail.Contains("last_tick=0", StringComparison.Ordinal)
+                       || detail.Contains("last_vector_tick=0", StringComparison.Ordinal))));
 
     private static bool IsOutputStartupVectorMissing(BasicsTaskEvaluationResult? evaluation)
         => evaluation?.Diagnostics.Any(static diagnostic =>
@@ -6688,6 +6700,19 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
 
         return summary;
+    }
+
+    private static string BuildNoViableEvaluationsDetail(
+        int generation,
+        string? failureSummary,
+        bool outputLivenessFailure)
+    {
+        var summary = string.IsNullOrWhiteSpace(failureSummary)
+            ? $"Generation {generation} produced no viable evaluations."
+            : $"Generation {generation} produced no viable evaluations. {failureSummary}.";
+        return outputLivenessFailure
+            ? $"{summary} Best-so-far candidate was retained; restart or inspect runtime services before continuing."
+            : summary;
     }
 
     private static string NormalizeSpeciesId(string? value)
