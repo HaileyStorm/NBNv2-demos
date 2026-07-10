@@ -1,7 +1,12 @@
 # Project-specific multi-agent roles for NBNv2-demos.
-# Model policy: use only GPT-5.5 and gpt-5.3-codex-spark in role configs.
-# If a Spark role is blocked by quota, rerun that scoped task on GPT-5.5,
-# usually with medium reasoning unless the task demands high reasoning.
+# Sol is the default model. Terra and Luna cover bounded scout and documentation
+# roles. Spark is an operator-selected fallback only when GPT-5.6 quota is
+# unavailable and Spark quota remains available.
+
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+model_context_window = 480000
+model_auto_compact_token_limit = 480000
 
 [agents.explorer]
 description = "Read-heavy scout for demo ownership, call paths, sibling-runtime touchpoints, and candidate files."

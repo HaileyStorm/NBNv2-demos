@@ -57,11 +57,11 @@
 
 ## Codex model policy
 
-- Repo-local Codex agents may use only GPT-5.5 or `gpt-5.3-codex-spark`.
-- Do not add, restore, or pin GPT-5.4 for repo-local agents.
-- Use GPT-5.5 as the default non-Spark model for correctness-heavy demo guard roles and any fallback from Spark quota limits.
-- When a Spark role cannot run because of quota, rerun the same scoped task on GPT-5.5. Use medium reasoning by default for Spark replacement unless the task is ambiguous, cross-cutting, or correctness-critical.
-- Keep Spark for low-risk read-only discovery, packetizing, and narrowly scoped mapping where its speed is useful and quota is available.
+- Use GPT-5.6 Sol as the default model for local work, implementation, review, and correctness-heavy demo guards.
+- Use GPT-5.6 Terra for code-oriented scouts and GPT-5.6 Luna for bounded documentation or packetizing roles.
+- Use `high` or greater reasoning for coding work except short, rote changes. Never use less than `medium` reasoning for any work.
+- Spark is a fallback only when the selected GPT-5.6 model is unavailable because of quota and Spark quota remains available; rerun the same scoped task explicitly rather than pinning Spark in a primary role profile.
+- Keep repo-local context-window and automatic-compaction overrides at 480,000 tokens.
 - Before landing Codex agent model changes, run `tools/verify-codex-model-policy.sh`.
 
 ## Repo-specific agent roles
