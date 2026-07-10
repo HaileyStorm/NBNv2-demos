@@ -108,6 +108,8 @@ public sealed record BasicsSeedVariationBand
 
 public sealed record BasicsSeedShapeConstraints
 {
+    private const int MaximumActiveInternalRegionCount = NbnConstants.OutputRegionId - 1;
+
     public int? MinActiveInternalRegionCount { get; init; }
     public int? MaxActiveInternalRegionCount { get; init; }
     public int? MinInternalNeuronCount { get; init; }
@@ -124,6 +126,16 @@ public sealed record BasicsSeedShapeConstraints
             MaxActiveInternalRegionCount,
             "Active internal region count",
             errors);
+        if (MinActiveInternalRegionCount is > MaximumActiveInternalRegionCount)
+        {
+            errors.Add($"Active internal region count minimum must be <= {MaximumActiveInternalRegionCount} when set.");
+        }
+
+        if (MaxActiveInternalRegionCount is > MaximumActiveInternalRegionCount)
+        {
+            errors.Add($"Active internal region count maximum must be <= {MaximumActiveInternalRegionCount} when set.");
+        }
+
         ValidateOptionalMinMax(
             MinInternalNeuronCount,
             MaxInternalNeuronCount,

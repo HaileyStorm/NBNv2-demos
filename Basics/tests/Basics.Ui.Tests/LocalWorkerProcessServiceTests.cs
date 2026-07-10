@@ -122,6 +122,74 @@ public sealed class LocalWorkerProcessServiceTests
         Assert.Equal("No launched workers to stop.", result.StatusText);
     }
 
+    [Fact]
+    public async Task RunProcessCommandAsync_WhenCanceled_TerminatesParentAndChildProcesses()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        var testRoot = Path.Combine(Path.GetTempPath(), "nbn-basics-build-cancel", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testRoot);
+        var parentPidPath = Path.Combine(testRoot, "parent.pid");
+        var childPidPath = Path.Combine(testRoot, "child.pid");
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var command = LocalWorkerProcessService.RunProcessCommandAsync(
+                "/bin/sh",
+                startInfo =>
+                {
+                    startInfo.ArgumentList.Add("-c");
+                    startInfo.ArgumentList.Add($"echo $$ > '{parentPidPath}'; sleep 60 & echo $! > '{childPidPath}'; wait");
+                },
+                cancellation.Token);
+            await WaitForFileAsync(parentPidPath);
+            await WaitForFileAsync(childPidPath);
+            var parentPid = int.Parse(await File.ReadAllTextAsync(parentPidPath));
+            var childPid = int.Parse(await File.ReadAllTextAsync(childPidPath));
+
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => command);
+
+            await WaitForAsync(() => !IsProcessAlive(parentPid) && !IsProcessAlive(childPid));
+            Assert.False(IsProcessAlive(parentPid));
+            Assert.False(IsProcessAlive(childPid));
+        }
+        finally
+        {
+            Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    private static async Task WaitForFileAsync(string path)
+        => await WaitForAsync(() => File.Exists(path) && new FileInfo(path).Length > 0);
+
+    private static async Task WaitForAsync(Func<bool> predicate)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (!predicate() && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.True(predicate(), "Timed out waiting for process state.");
+    }
+
+    private static bool IsProcessAlive(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
     private static int CountOption(IReadOnlyList<string> args, string option)
         => args.Count(value => string.Equals(value, option, StringComparison.Ordinal));
 

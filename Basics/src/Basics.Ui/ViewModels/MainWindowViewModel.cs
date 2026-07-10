@@ -108,7 +108,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     private BasicsRuntimeClientOptions? _runtimeClientOptions;
     private BasicsExecutionSession? _executionSession;
     private CancellationTokenSource? _executionCts;
+    private TaskCompletionSource? _executionCompletion;
     private BasicsExecutionRunLog? _executionRunLog;
+    private readonly object _shutdownSync = new();
+    private readonly object _winnerOwnershipSync = new();
+    private readonly CancellationTokenSource _shutdownCts = new();
+    private Task? _shutdownTask;
     private BasicsEnvironmentPlan? _lastPlan;
     private BasicsExecutionPlanTraceRecord? _lastPlanTrace;
     private BasicsBuildTraceRecord? _lastBuildTrace;
@@ -1549,21 +1554,42 @@ public sealed class MainWindowViewModel : ViewModelBase
                 return;
             }
 
-            _dispatcher.Post(() =>
+            var accepted = new List<(BasicsImportedBrainFile File, BasicsDefinitionAnalysis Analysis)>();
+            var rejected = new List<string>();
+            foreach (var file in imported)
             {
-                foreach (var file in imported)
+                try
                 {
                     var analysis = BasicsDefinitionAnalyzer.Analyze(file.DefinitionBytes);
                     if (!analysis.Geometry.IsValid)
                     {
-                        InitialBrainSeedStatus = $"Skipped {file.DisplayName}: expected {BasicsIoGeometry.InputWidth}->{BasicsIoGeometry.OutputWidth} geometry.";
+                        rejected.Add($"{file.DisplayName}: expected {BasicsIoGeometry.InputWidth}->{BasicsIoGeometry.OutputWidth} geometry");
                         continue;
                     }
 
-                    UpsertInitialBrainSeed(file, analysis);
+                    accepted.Add((file, analysis));
+                }
+                catch (Exception ex)
+                {
+                    rejected.Add($"{file.DisplayName}: {ex.GetBaseException().Message}");
+                }
+            }
+
+            _dispatcher.Post(() =>
+            {
+                foreach (var item in accepted)
+                {
+                    UpsertInitialBrainSeed(item.File, item.Analysis);
                 }
 
                 UpdateInitialBrainSeedStatus();
+                if (rejected.Count > 0)
+                {
+                    InitialBrainSeedStatus = accepted.Count == 0
+                        ? $"Initial brain import rejected: {string.Join("; ", rejected)}"
+                        : $"{InitialBrainSeedStatus} Skipped {rejected.Count}: {string.Join("; ", rejected)}";
+                }
+
                 RefreshValidationState();
             });
         }
@@ -1819,8 +1845,23 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private async Task StartAsync()
     {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _executionCompletion = completion;
         try
         {
+            await StartCoreAsync(_shutdownCts.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            completion.TrySetResult();
+        }
+    }
+
+    private async Task StartCoreAsync(CancellationToken shutdownToken)
+    {
+        try
+        {
+            shutdownToken.ThrowIfCancellationRequested();
             if (_runtimeClient is null)
             {
                 ExecutionStatus = "Start blocked.";
@@ -1842,6 +1883,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 "Starting...",
                 $"Preparing a fresh {options.SelectedTask.DisplayName} run from the current capacity and seed settings.");
             await StopExecutionAsync().ConfigureAwait(false);
+            shutdownToken.ThrowIfCancellationRequested();
 
             if (!TaskPluginRegistry.TryCreate(options.SelectedTask.TaskId, options.TaskSettings, out var plugin))
             {
@@ -1860,6 +1902,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             {
                 return;
             }
+            shutdownToken.ThrowIfCancellationRequested();
 
             if (options.PpoOptimizer.Enabled
                 && !await RefreshPpoServiceStatusAsync().ConfigureAwait(false))
@@ -1872,12 +1915,14 @@ public sealed class MainWindowViewModel : ViewModelBase
                 });
                 return;
             }
+            shutdownToken.ThrowIfCancellationRequested();
 
             SetExecutionPhase(
                 "Starting...",
                 $"Building the {options.SelectedTask.DisplayName} execution plan and sizing the initial population.");
             var planner = new BasicsEnvironmentPlanner(_runtimeClient);
             var plan = await planner.BuildPlanAsync(options).ConfigureAwait(false);
+            shutdownToken.ThrowIfCancellationRequested();
             var planTrace = BasicsTraceability.BuildPlanTrace(plan);
             var buildTrace = BuildCurrentBuildTrace();
             _dispatcher.Post(() => ApplyPlan(plan));
@@ -1906,18 +1951,18 @@ public sealed class MainWindowViewModel : ViewModelBase
                 });
 
             _executionSession = session;
-            _executionCts = new CancellationTokenSource();
-                _dispatcher.Post(() =>
-                {
-                    ResetCharts();
-                    IsExecutionRunning = true;
-                    ExecutionStatus = "Starting...";
-                    ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}. Diversity {FormatDiversityPreset(plan.DiversityPreset)} with adaptive stall boost {(plan.AdaptiveDiversity.Enabled ? "on" : "off")}. Stop target: {FormatStopCriteria(plan.StopCriteria)}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
-                    ExecutionLogPath = _executionRunLog is null
-                        ? "Run log: unavailable."
-                        : $"Run log: {_executionRunLog.Path}";
-                    RaiseCommandStates();
-                });
+            _executionCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownToken);
+            _dispatcher.Post(() =>
+            {
+                ResetCharts();
+                IsExecutionRunning = true;
+                ExecutionStatus = "Starting...";
+                ExecutionDetail = $"Launching {plan.SelectedTask.DisplayName} with template family {plan.SeedTemplate.TemplateId}. Diversity {FormatDiversityPreset(plan.DiversityPreset)} with adaptive stall boost {(plan.AdaptiveDiversity.Enabled ? "on" : "off")}. Stop target: {FormatStopCriteria(plan.StopCriteria)}, generation limit {FormatGenerationLimit(plan.StopCriteria.MaximumGenerations)}.";
+                ExecutionLogPath = _executionRunLog is null
+                    ? "Run log: unavailable."
+                    : $"Run log: {_executionRunLog.Path}";
+                RaiseCommandStates();
+            });
 
             try
             {
@@ -1927,6 +1972,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                         snapshot =>
                         {
                             _executionRunLog?.AppendSnapshot(snapshot);
+                            CaptureTerminalWinnerOwnership(snapshot.BestCandidate, snapshot.State);
                             _dispatcher.Post(() => ApplyExecutionSnapshot(snapshot, plan.Capacity.RecommendedMaxConcurrentBrains));
                         },
                         _executionCts.Token)
@@ -1950,6 +1996,10 @@ public sealed class MainWindowViewModel : ViewModelBase
                     RaiseCommandStates();
                 });
             }
+        }
+        catch (OperationCanceledException) when (shutdownToken.IsCancellationRequested)
+        {
+            // Normal application-shutdown path, including cancellation before a session is published.
         }
         catch (Exception ex)
         {
@@ -2354,7 +2404,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                && TaskPluginRegistry.TryGet(SelectedTask.TaskId, out _);
     }
 
-    private bool CanStop() => (IsExecutionRunning && _executionCts is not null) || _retainedWinnerBrainId != Guid.Empty;
+    private bool CanStop() => (IsExecutionRunning && _executionCts is not null) || GetRetainedWinnerBrainId() != Guid.Empty;
 
     private bool CanExportBest() => HasArtifactRef(_winnerDefinitionArtifact);
 
@@ -2783,7 +2833,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        if (_retainedWinnerBrainId != Guid.Empty)
+        if (GetRetainedWinnerBrainId() != Guid.Empty)
         {
             _dispatcher.Post(() =>
             {
@@ -2792,9 +2842,44 @@ public sealed class MainWindowViewModel : ViewModelBase
                 RaiseCommandStates();
             });
 
-            await ReleaseRetainedWinnerAsync("basics_ui_release_winner").ConfigureAwait(false);
+            if (await ReleaseRetainedWinnerAsync("basics_ui_release_winner").ConfigureAwait(false))
+            {
+                _dispatcher.Post(() => ClearWinnerState(clearArtifacts: true));
+            }
+        }
+    }
+
+    public Task ShutdownAsync()
+    {
+        lock (_shutdownSync)
+        {
+            return _shutdownTask ??= ShutdownCoreAsync();
+        }
+    }
+
+    private async Task ShutdownCoreAsync()
+    {
+        _shutdownCts.Cancel();
+        var executionCompletion = _executionCompletion?.Task ?? Task.CompletedTask;
+        var executionCts = _executionCts;
+        if (executionCts is not null)
+        {
+            try
+            {
+                executionCts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The run completed while shutdown was taking its lifecycle snapshot.
+            }
+        }
+
+        await executionCompletion.ConfigureAwait(false);
+        if (await ReleaseRetainedWinnerAsync("basics_ui_window_close").ConfigureAwait(false))
+        {
             _dispatcher.Post(() => ClearWinnerState(clearArtifacts: true));
         }
+        await DisposeRuntimeClientAsync().ConfigureAwait(false);
     }
 
     private void ApplyExecutionSnapshot(BasicsExecutionSnapshot snapshot, int maxConcurrentBrains)
@@ -3204,21 +3289,61 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
-    private async Task ReleaseRetainedWinnerAsync(string reason)
+    private async Task<bool> ReleaseRetainedWinnerAsync(string reason)
     {
-        var retainedBrainId = _retainedWinnerBrainId;
-        _retainedWinnerBrainId = Guid.Empty;
+        var retainedBrainId = GetRetainedWinnerBrainId();
+        if (retainedBrainId == Guid.Empty)
+        {
+            return true;
+        }
 
-        if (retainedBrainId != Guid.Empty && _runtimeClient is not null)
+        var runtimeClient = _runtimeClient;
+        if (runtimeClient is null)
+        {
+            return false;
+        }
+
+        var confirmedRemoved = false;
+        for (var attempt = 1; attempt <= 3 && !confirmedRemoved; attempt++)
         {
             try
             {
-                await _runtimeClient.KillBrainAsync(retainedBrainId, reason).ConfigureAwait(false);
-                await _runtimeClient.WaitForBrainTerminatedAsync(retainedBrainId, TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+                await runtimeClient.KillBrainAsync(retainedBrainId, reason).ConfigureAwait(false);
+                var terminated = await runtimeClient.WaitForBrainTerminatedAsync(
+                        retainedBrainId,
+                        TimeSpan.FromSeconds(10))
+                    .ConfigureAwait(false);
+                confirmedRemoved = terminated?.BrainId?.TryToGuid(out var terminatedBrainId) == true
+                                   && terminatedBrainId == retainedBrainId;
+                if (!confirmedRemoved)
+                {
+                    var info = await runtimeClient.RequestBrainInfoAsync(retainedBrainId).ConfigureAwait(false);
+                    confirmedRemoved = info is not null && (info.InputWidth == 0 || info.OutputWidth == 0);
+                }
             }
             catch
             {
-                // Best-effort cleanup only.
+                // Retry transient transport failures before giving up ownership.
+            }
+
+            if (!confirmedRemoved && attempt < 3)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
+            }
+        }
+
+        if (confirmedRemoved)
+        {
+            lock (_winnerOwnershipSync)
+            {
+                if (_retainedWinnerBrainId == retainedBrainId)
+                {
+                    _retainedWinnerBrainId = Guid.Empty;
+                    if (_liveWinnerBrainId == retainedBrainId)
+                    {
+                        _liveWinnerBrainId = Guid.Empty;
+                    }
+                }
             }
         }
 
@@ -3227,6 +3352,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             UpdateWinnerExportSummary();
             RaiseCommandStates();
         });
+        return confirmedRemoved;
     }
 
     private void ApplyWinnerArtifacts(BasicsExecutionBestCandidateSummary winner, bool retainWinner)
@@ -3246,16 +3372,60 @@ public sealed class MainWindowViewModel : ViewModelBase
             _winnerSnapshotArtifact = null;
         }
 
-        _liveWinnerBrainId = winner.ActiveBrainId ?? Guid.Empty;
-        _retainedWinnerBrainId = retainWinner ? _liveWinnerBrainId : Guid.Empty;
+        if (!_shutdownCts.IsCancellationRequested)
+        {
+            lock (_winnerOwnershipSync)
+            {
+                _liveWinnerBrainId = winner.ActiveBrainId ?? Guid.Empty;
+                _retainedWinnerBrainId = retainWinner ? _liveWinnerBrainId : Guid.Empty;
+            }
+        }
+
         UpdateWinnerExportSummary();
         RaiseCommandStates();
     }
 
+    private void CaptureTerminalWinnerOwnership(
+        BasicsExecutionBestCandidateSummary? winner,
+        BasicsExecutionState state)
+    {
+        if (state is not (BasicsExecutionState.Succeeded or BasicsExecutionState.Failed or BasicsExecutionState.Stopped)
+            || winner?.ActiveBrainId is not Guid activeBrainId
+            || activeBrainId == Guid.Empty)
+        {
+            return;
+        }
+
+        lock (_winnerOwnershipSync)
+        {
+            _liveWinnerBrainId = activeBrainId;
+            _retainedWinnerBrainId = activeBrainId;
+        }
+    }
+
+    private Guid GetRetainedWinnerBrainId()
+    {
+        lock (_winnerOwnershipSync)
+        {
+            return _retainedWinnerBrainId;
+        }
+    }
+
+    private Guid GetLiveWinnerBrainId()
+    {
+        lock (_winnerOwnershipSync)
+        {
+            return _liveWinnerBrainId;
+        }
+    }
+
     private void ClearWinnerState(bool clearArtifacts)
     {
-        _liveWinnerBrainId = Guid.Empty;
-        _retainedWinnerBrainId = Guid.Empty;
+        lock (_winnerOwnershipSync)
+        {
+            _liveWinnerBrainId = Guid.Empty;
+            _retainedWinnerBrainId = Guid.Empty;
+        }
         if (clearArtifacts)
         {
             _winnerDefinitionArtifact = null;
@@ -3277,7 +3447,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        WinnerExportStatus = _retainedWinnerBrainId != Guid.Empty
+        var retainedWinnerBrainId = GetRetainedWinnerBrainId();
+        WinnerExportStatus = retainedWinnerBrainId != Guid.Empty
             ? "Best-so-far brain retained for export."
             : IsExecutionRunning
                 ? "Current best-so-far artifacts available."
@@ -3298,9 +3469,9 @@ public sealed class MainWindowViewModel : ViewModelBase
                 : "No snapshot artifact is currently available for this candidate.");
         }
 
-        if (_retainedWinnerBrainId != Guid.Empty)
+        if (retainedWinnerBrainId != Guid.Empty)
         {
-            detailParts.Add($"Live best brain {_retainedWinnerBrainId:N} stays active until the retained export is cleared by Stop, Disconnect, or the next run.");
+            detailParts.Add($"Live best brain {retainedWinnerBrainId:N} stays active until the retained export is cleared by Stop, Disconnect, or the next run.");
         }
         else if (IsExecutionRunning)
         {
@@ -3316,15 +3487,15 @@ public sealed class MainWindowViewModel : ViewModelBase
     }
 
     private bool CanCaptureLiveWinnerSnapshot()
-        => _liveWinnerBrainId != Guid.Empty && _runtimeClient is not null;
+        => GetLiveWinnerBrainId() != Guid.Empty && _runtimeClient is not null;
 
     private bool CanCaptureLiveWinnerDefinition()
-        => _liveWinnerBrainId != Guid.Empty && _runtimeClient is not null;
+        => GetLiveWinnerBrainId() != Guid.Empty && _runtimeClient is not null;
 
     private async Task<ArtifactRef?> TryExportLiveWinnerDefinitionAsync()
     {
         var runtimeClient = _runtimeClient;
-        var liveWinnerBrainId = _liveWinnerBrainId;
+        var liveWinnerBrainId = GetLiveWinnerBrainId();
         if (runtimeClient is null || liveWinnerBrainId == Guid.Empty)
         {
             return null;
@@ -3350,7 +3521,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private async Task<ArtifactRef?> TryCaptureLiveWinnerSnapshotAsync(string expectedWinnerArtifactSha)
     {
         var runtimeClient = _runtimeClient;
-        var liveWinnerBrainId = _liveWinnerBrainId;
+        var liveWinnerBrainId = GetLiveWinnerBrainId();
         if (runtimeClient is null || liveWinnerBrainId == Guid.Empty)
         {
             return null;

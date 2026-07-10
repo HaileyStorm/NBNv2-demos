@@ -7,8 +7,9 @@ namespace Nbn.Demos.Basics.Ui;
 public partial class MainWindow : Window
 {
     private readonly IBasicsLocalWorkerProcessService _workerProcessService;
-    private bool _closingAfterWorkerShutdown;
-    private bool _workerShutdownInProgress;
+    private bool _closingAfterShutdown;
+    private bool _shutdownInProgress;
+    private Task? _shutdownTask;
 
     public MainWindow()
     {
@@ -23,18 +24,18 @@ public partial class MainWindow : Window
 
     protected override void OnClosing(WindowClosingEventArgs e)
     {
-        if (_workerShutdownInProgress)
+        if (_shutdownInProgress)
         {
             e.Cancel = true;
             base.OnClosing(e);
             return;
         }
 
-        if (!_closingAfterWorkerShutdown && _workerProcessService.LaunchedWorkerCount > 0)
+        if (!_closingAfterShutdown)
         {
             e.Cancel = true;
-            _workerShutdownInProgress = true;
-            _ = CloseAfterWorkerShutdownAsync();
+            _shutdownInProgress = true;
+            _ = CloseAfterShutdownAsync();
         }
 
         base.OnClosing(e);
@@ -42,22 +43,68 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        _workerProcessService.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        base.OnClosed(e);
+        try
+        {
+            ShutdownAsync().GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Closing is terminal; both cleanup paths were already attempted.
+        }
+        finally
+        {
+            base.OnClosed(e);
+        }
     }
 
-    private async Task CloseAfterWorkerShutdownAsync()
+    private async Task CloseAfterShutdownAsync()
     {
+        try
+        {
+            await ShutdownAsync();
+        }
+        catch
+        {
+            // Closing is terminal; both cleanup paths were already attempted.
+        }
+        finally
+        {
+            _shutdownInProgress = false;
+            _closingAfterShutdown = true;
+            Close();
+            _closingAfterShutdown = false;
+        }
+    }
+
+    private Task ShutdownAsync() => _shutdownTask ??= ShutdownCoreAsync();
+
+    private async Task ShutdownCoreAsync()
+    {
+        Exception? shutdownFailure = null;
+        try
+        {
+            if (DataContext is MainWindowViewModel viewModel)
+            {
+                await viewModel.ShutdownAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            shutdownFailure = ex;
+        }
+
         try
         {
             await _workerProcessService.DisposeAsync();
         }
-        finally
+        catch (Exception ex)
         {
-            _workerShutdownInProgress = false;
-            _closingAfterWorkerShutdown = true;
-            Close();
-            _closingAfterWorkerShutdown = false;
+            shutdownFailure ??= ex;
+        }
+
+        if (shutdownFailure is not null)
+        {
+            throw shutdownFailure;
         }
     }
 }

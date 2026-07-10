@@ -33,6 +33,64 @@ public sealed class BasicsRuntimeClientTests
     }
 
     [Fact]
+    public async Task StartAsync_WhenCallerAlreadyCanceled_ReleasesBoundPort()
+    {
+        var port = GetFreeTcpPort();
+        var options = new BasicsRuntimeClientOptions
+        {
+            BindHost = "127.0.0.1",
+            Port = port
+        };
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            BasicsRuntimeClient.StartAsync(options, cancellation.Token));
+
+        await using var client = await BasicsRuntimeClient.StartAsync(options);
+        Assert.NotNull(client);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenReceiverSetupFails_ReleasesBoundPort()
+    {
+        var port = GetFreeTcpPort();
+        var invalidOptions = new BasicsRuntimeClientOptions
+        {
+            IoAddress = null!,
+            BindHost = "127.0.0.1",
+            Port = port
+        };
+
+        await Assert.ThrowsAsync<NullReferenceException>(() => BasicsRuntimeClient.StartAsync(invalidOptions));
+
+        await using var client = await BasicsRuntimeClient.StartAsync(invalidOptions with
+        {
+            IoAddress = "127.0.0.1:12050"
+        });
+        Assert.NotNull(client);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenRemoteConfigurationFails_CleansAllocatedActorSystem()
+    {
+        var port = GetFreeTcpPort();
+        var invalidOptions = new BasicsRuntimeClientOptions
+        {
+            BindHost = "127.0.0.1",
+            Port = -1
+        };
+
+        await Assert.ThrowsAnyAsync<Exception>(() => BasicsRuntimeClient.StartAsync(invalidOptions));
+
+        await using var client = await BasicsRuntimeClient.StartAsync(invalidOptions with
+        {
+            Port = port
+        });
+        Assert.NotNull(client);
+    }
+
+    [Fact]
     public async Task WaitForOutputVectorAsync_AssemblesOutputVectorSegments()
     {
         var port = GetFreeTcpPort();
@@ -115,6 +173,51 @@ public sealed class BasicsRuntimeClientTests
     }
 
     [Fact]
+    public async Task OutputWaits_PropagateCallerCancellation()
+    {
+        var options = new BasicsRuntimeClientOptions
+        {
+            BindHost = "127.0.0.1",
+            Port = GetFreeTcpPort()
+        };
+
+        await using var client = await BasicsRuntimeClient.StartAsync(options);
+        using var vectorCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.WaitForOutputVectorAsync(
+            Guid.NewGuid(),
+            afterTickExclusive: 0,
+            TimeSpan.FromSeconds(5),
+            vectorCancellation.Token));
+
+        using var eventCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.WaitForOutputEventAsync(
+            Guid.NewGuid(),
+            afterTickExclusive: 0,
+            TimeSpan.FromSeconds(5),
+            cancellationToken: eventCancellation.Token));
+    }
+
+    [Fact]
+    public async Task OutputWaits_ReturnNullForLocalTimeout()
+    {
+        var options = new BasicsRuntimeClientOptions
+        {
+            BindHost = "127.0.0.1",
+            Port = GetFreeTcpPort()
+        };
+
+        await using var client = await BasicsRuntimeClient.StartAsync(options);
+        Assert.Null(await client.WaitForOutputVectorAsync(
+            Guid.NewGuid(),
+            afterTickExclusive: 0,
+            TimeSpan.FromMilliseconds(20)));
+        Assert.Null(await client.WaitForOutputEventAsync(
+            Guid.NewGuid(),
+            afterTickExclusive: 0,
+            TimeSpan.FromMilliseconds(20)));
+    }
+
+    [Fact]
     public async Task SubscribeOutputsVectorAsync_RetriesQueuedAckUntilSubscriptionIsActive()
     {
         var port = GetFreeTcpPort();
@@ -146,7 +249,7 @@ public sealed class BasicsRuntimeClientTests
                 Assert.True(message.BrainId?.TryToGuid(out var observedBrainId) == true && observedBrainId == brainId);
                 Assert.False(string.IsNullOrWhiteSpace(message.SubscriberActor));
                 Assert.Contains(receiverPid.Id, message.SubscriberActor, StringComparison.Ordinal);
-                Assert.Equal(OutputSubscriptionDeliveryMode.LatestOnly, message.DeliveryMode);
+                Assert.Equal(OutputSubscriptionDeliveryMode.Exact, message.DeliveryMode);
             });
     }
 

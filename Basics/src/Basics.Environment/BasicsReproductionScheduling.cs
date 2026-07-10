@@ -12,15 +12,27 @@ public sealed record BasicsParentSelectionPolicy
     public BasicsContractValidationResult Validate()
     {
         var errors = new List<string>();
+        if (!double.IsFinite(FitnessWeight)
+            || !double.IsFinite(DiversityWeight)
+            || !double.IsFinite(SpeciesBalanceWeight))
+        {
+            errors.Add("Parent selection weights must be finite.");
+        }
+
         if (FitnessWeight < 0d || DiversityWeight < 0d || SpeciesBalanceWeight < 0d)
         {
             errors.Add("Parent selection weights must be >= 0.");
         }
 
         var totalWeight = FitnessWeight + DiversityWeight + SpeciesBalanceWeight;
-        if (totalWeight <= 0d)
+        if (!double.IsFinite(totalWeight) || totalWeight <= 0d)
         {
-            errors.Add("Parent selection weights must sum to > 0.");
+            errors.Add("Parent selection weights must have a finite sum > 0.");
+        }
+
+        if (!double.IsFinite(EliteFraction))
+        {
+            errors.Add("EliteFraction must be finite.");
         }
 
         if (EliteFraction is < 0d or > 1d)
@@ -28,14 +40,20 @@ public sealed record BasicsParentSelectionPolicy
             errors.Add("EliteFraction must be between 0 and 1.");
         }
 
+        if (!double.IsFinite(ExplorationFraction))
+        {
+            errors.Add("ExplorationFraction must be finite.");
+        }
+
         if (ExplorationFraction is < 0d or > 1d)
         {
             errors.Add("ExplorationFraction must be between 0 and 1.");
         }
 
-        if (EliteFraction + ExplorationFraction > 1d)
+        var combinedFraction = EliteFraction + ExplorationFraction;
+        if (!double.IsFinite(combinedFraction) || combinedFraction > 1d)
         {
-            errors.Add("EliteFraction + ExplorationFraction must be <= 1.");
+            errors.Add("EliteFraction + ExplorationFraction must be finite and <= 1.");
         }
 
         if (MaxParentsPerSpecies <= 0)
@@ -74,14 +92,14 @@ public sealed record BasicsRunAllocationPolicy
             errors.Add($"MaxRunsPerPair must be <= {MaximumRunsPerPair}.");
         }
 
-        if (FitnessExponent <= 0d)
+        if (!double.IsFinite(FitnessExponent) || FitnessExponent <= 0d)
         {
-            errors.Add("FitnessExponent must be > 0.");
+            errors.Add("FitnessExponent must be finite and > 0.");
         }
 
-        if (DiversityBoost < 0d)
+        if (!double.IsFinite(DiversityBoost) || DiversityBoost < 0d)
         {
-            errors.Add("DiversityBoost must be >= 0.");
+            errors.Add("DiversityBoost must be finite and >= 0.");
         }
 
         return BasicsContractValidationResult.FromErrors(errors);

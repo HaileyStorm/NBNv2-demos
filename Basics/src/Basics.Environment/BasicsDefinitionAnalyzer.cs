@@ -1,5 +1,6 @@
 using Nbn.Shared;
 using Nbn.Shared.Format;
+using Nbn.Shared.Validation;
 
 namespace Nbn.Demos.Basics.Environment;
 
@@ -15,6 +16,18 @@ public static class BasicsDefinitionAnalyzer
         ArgumentNullException.ThrowIfNull(bytes);
 
         var header = NbnBinary.ReadNbnHeader(bytes);
+        var sections = header.Regions
+            .Select((entry, regionId) => (Entry: entry, RegionId: regionId))
+            .Where(static pair => pair.Entry.NeuronSpan > 0)
+            .Select(pair => NbnBinary.ReadNbnRegionSection(bytes, pair.Entry.Offset))
+            .ToArray();
+        var semanticValidation = NbnBinaryValidator.ValidateNbn(header, sections);
+        if (!semanticValidation.IsValid)
+        {
+            throw new InvalidDataException(
+                $"Definition failed canonical NBN validation: {string.Join("; ", semanticValidation.Issues.Select(static issue => issue.ToString()))}");
+        }
+
         var geometry = new BasicsBrainGeometryValidation(
             IsValid: header.Regions[NbnConstants.InputRegionId].NeuronSpan == BasicsIoGeometry.InputWidth
                      && header.Regions[NbnConstants.OutputRegionId].NeuronSpan == BasicsIoGeometry.OutputWidth,

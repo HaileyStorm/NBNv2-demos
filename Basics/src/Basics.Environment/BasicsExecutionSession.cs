@@ -806,7 +806,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
         }
     }
 
-    public ValueTask DisposeAsync() => _artifactPublisher.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await CleanupTrackedBrainsAsync(CancellationToken.None).ConfigureAwait(false);
+        await _artifactPublisher.DisposeAsync().ConfigureAwait(false);
+    }
 
     private async Task<ulong> EnsureFreshSpeciationEpochAsync(CancellationToken cancellationToken)
     {
@@ -3065,12 +3069,12 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                     readyEventCursor);
                 if (failureDetail is not null)
                 {
-                    if (bestFallbackOutput is not null
+                    if (CanUseReadyLaneFallback(bestFallbackOutput, readyEventsSeen)
                         && IsVectorMissingFailure(failureDetail)
                         && bestFallbackReadyConfidence >= outputSamplingPolicy.VectorReadyThreshold)
                     {
                         return new ObservationAttemptResult(
-                            CreateObservation(bestFallbackOutput, Math.Max(1, observedTicks)),
+                            CreateObservation(bestFallbackOutput!, Math.Max(1, observedTicks)),
                             null);
                     }
 
@@ -3104,10 +3108,10 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
                 }
             }
 
-            if (bestFallbackOutput is not null)
+            if (CanUseReadyLaneFallback(bestFallbackOutput, readyEventsSeen))
             {
                 return new ObservationAttemptResult(
-                    CreateObservation(bestFallbackOutput, Math.Max(1, observedTicks), bestFallbackReadyConfidence),
+                    CreateObservation(bestFallbackOutput!, Math.Max(1, observedTicks), bestFallbackReadyConfidence),
                     null);
             }
 
@@ -3165,6 +3169,11 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
 
     private static bool IsVectorMissingFailure(string failureDetail)
         => failureDetail.StartsWith("vector_missing", StringComparison.Ordinal);
+
+    private static bool CanUseReadyLaneFallback(
+        BasicsRuntimeOutputVector? fallbackOutput,
+        int readyEventsSeen)
+        => fallbackOutput is not null && readyEventsSeen == 0;
 
     private static bool TryResolveEarliestReadyObservation(
         IReadOnlyDictionary<ulong, BasicsRuntimeOutputVector> vectorsByTick,
@@ -3298,7 +3307,7 @@ public sealed class BasicsExecutionSession : IBasicsExecutionRunner
             while (!timeoutCts.IsCancellationRequested)
             {
                 var info = await _runtimeClient.RequestBrainInfoAsync(brainId, timeoutCts.Token).ConfigureAwait(false);
-                if (info is null || info.InputWidth == 0 || info.OutputWidth == 0)
+                if (info is not null && (info.InputWidth == 0 || info.OutputWidth == 0))
                 {
                     return true;
                 }

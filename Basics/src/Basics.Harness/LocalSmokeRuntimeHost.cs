@@ -34,6 +34,7 @@ internal sealed record LocalSmokeRuntimeHostOptions
 
 internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
 {
+    private static readonly TimeSpan FailedStartCleanupTimeout = TimeSpan.FromSeconds(5);
     private readonly ActorSystem _system;
     private readonly string _runtimeRoot;
 
@@ -97,99 +98,149 @@ internal sealed class LocalSmokeRuntimeHost : IAsyncDisposable
         Directory.CreateDirectory(artifactRoot);
         Directory.CreateDirectory(speciationRoot);
 
-        var system = new ActorSystem();
-        system.WithRemote(
-            RemoteConfig.BindToLocalhost(options.IoPort).WithProtoMessages(
-                NbnCommonReflection.Descriptor,
-                NbnControlReflection.Descriptor,
-                    NbnIoReflection.Descriptor,
-                    ProtoPpo.NbnPpoReflection.Descriptor,
-                    NbnReproReflection.Descriptor,
-                    NbnSignalsReflection.Descriptor,
-                    NbnSettingsReflection.Descriptor,
-                    ProtoSpec.NbnSpeciationReflection.Descriptor,
-                    NbnDebugReflection.Descriptor,
-                    NbnVizReflection.Descriptor));
-        await system.Remote().StartAsync().ConfigureAwait(false);
+        ActorSystem? system = null;
+        try
+        {
+            system = new ActorSystem();
+            system.WithRemote(
+                RemoteConfig.BindToLocalhost(options.IoPort).WithProtoMessages(
+                    NbnCommonReflection.Descriptor,
+                    NbnControlReflection.Descriptor,
+                        NbnIoReflection.Descriptor,
+                        ProtoPpo.NbnPpoReflection.Descriptor,
+                        NbnReproReflection.Descriptor,
+                        NbnSignalsReflection.Descriptor,
+                        NbnSettingsReflection.Descriptor,
+                        ProtoSpec.NbnSpeciationReflection.Descriptor,
+                        NbnDebugReflection.Descriptor,
+                        NbnVizReflection.Descriptor));
+            await system.Remote().StartAsync().ConfigureAwait(false);
 
-        var root = system.Root;
-        var localIoPid = new PID(string.Empty, IoNames.Gateway);
-        var localReproPid = new PID(string.Empty, ReproductionNames.Manager);
-        var localPpoPid = new PID(string.Empty, PpoNames.Manager);
-        var localSpeciationPid = new PID(string.Empty, SpeciationNames.Manager);
+            var root = system.Root;
+            var localIoPid = new PID(string.Empty, IoNames.Gateway);
+            var localReproPid = new PID(string.Empty, ReproductionNames.Manager);
+            var localPpoPid = new PID(string.Empty, PpoNames.Manager);
+            var localSpeciationPid = new PID(string.Empty, SpeciationNames.Manager);
 
-        var availability = new WorkerResourceAvailability(
-            cpuPercent: 100,
-            ramPercent: 100,
-            storagePercent: 100,
-            gpuComputePercent: 100,
-            gpuVramPercent: 100);
-        var capabilityProvider = new WorkerNodeCapabilityProvider(availability: availability);
+            var availability = new WorkerResourceAvailability(
+                cpuPercent: 100,
+                ramPercent: 100,
+                storagePercent: 100,
+                gpuComputePercent: 100,
+                gpuVramPercent: 100);
+            var capabilityProvider = new WorkerNodeCapabilityProvider(availability: availability);
 
-        var hiveMindPid = root.SpawnNamed(
-            Props.FromProducer(() => new HiveMindActor(CreateHiveMindOptions(options.TargetTickHz), ioPid: localIoPid)),
-            HiveMindNames.HiveMind);
+            var hiveMindPid = root.SpawnNamed(
+                Props.FromProducer(() => new HiveMindActor(CreateHiveMindOptions(options.TargetTickHz), ioPid: localIoPid)),
+                HiveMindNames.HiveMind);
 
-        var reproductionManagerPid = root.SpawnNamed(
-            Props.FromProducer(() => new ReproductionManagerActor(localIoPid)),
-            ReproductionNames.Manager);
+            var reproductionManagerPid = root.SpawnNamed(
+                Props.FromProducer(() => new ReproductionManagerActor(localIoPid)),
+                ReproductionNames.Manager);
 
-        var speciationStore = new SpeciationStore(Path.Combine(speciationRoot, "speciation.db"));
-        var speciationRuntimeConfig = SpeciationOptions.FromArgs(Array.Empty<string>()).ToRuntimeConfig();
-        var speciationManagerPid = root.SpawnNamed(
-            Props.FromProducer(() => new SpeciationManagerActor(
-                speciationStore,
-                speciationRuntimeConfig,
-                settingsPid: null,
-                reproductionManagerPid: localReproPid,
-                ioGatewayPid: localIoPid)),
-            SpeciationNames.Manager);
+            var speciationStore = new SpeciationStore(Path.Combine(speciationRoot, "speciation.db"));
+            var speciationRuntimeConfig = SpeciationOptions.FromArgs(Array.Empty<string>()).ToRuntimeConfig();
+            var speciationManagerPid = root.SpawnNamed(
+                Props.FromProducer(() => new SpeciationManagerActor(
+                    speciationStore,
+                    speciationRuntimeConfig,
+                    settingsPid: null,
+                    reproductionManagerPid: localReproPid,
+                    ioGatewayPid: localIoPid)),
+                SpeciationNames.Manager);
 
-        var ppoManagerPid = root.SpawnNamed(
-            Props.FromProducer(() => new PpoManagerActor(localIoPid, localReproPid, localSpeciationPid)),
-            PpoNames.Manager);
+            var ppoManagerPid = root.SpawnNamed(
+                Props.FromProducer(() => new PpoManagerActor(localIoPid, localReproPid, localSpeciationPid)),
+                PpoNames.Manager);
 
-        var ioGatewayPid = root.SpawnNamed(
-            Props.FromProducer(() => new IoGatewayActor(
-                CreateIoOptions(options.IoPort),
-                hiveMindPid: hiveMindPid,
-                reproPid: reproductionManagerPid,
-                speciationPid: speciationManagerPid,
-                ppoPid: ppoManagerPid)),
-            IoNames.Gateway);
-        root.Send(
-            ppoManagerPid,
-            new PpoManagerActor.DependencyPidsConfigured(
+            var ioGatewayPid = root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(
+                    CreateIoOptions(options.IoPort),
+                    hiveMindPid: hiveMindPid,
+                    reproPid: reproductionManagerPid,
+                    speciationPid: speciationManagerPid,
+                    ppoPid: ppoManagerPid)),
+                IoNames.Gateway);
+            root.Send(
+                ppoManagerPid,
+                new PpoManagerActor.DependencyPidsConfigured(
+                    ioGatewayPid,
+                    reproductionManagerPid,
+                    speciationManagerPid));
+
+            var workerId = Guid.NewGuid();
+            var workerPid = root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerId,
+                    string.Empty,
+                    artifactRootPath: artifactRoot,
+                    capabilitySnapshotProvider: capabilityProvider.GetCapabilities,
+                    resourceAvailability: availability)),
+                "worker-node");
+
+            PrimeWorkerDiscoveryEndpoints(root, workerPid, hiveMindPid.Id, ioGatewayPid.Id);
+            PrimeWorkers(root, hiveMindPid, workerPid, workerId, capabilityProvider.GetCapabilities());
+            await WaitForWorkerReadinessAsync(root, workerPid, options.ReadinessTimeout, cancellationToken).ConfigureAwait(false);
+
+            return new LocalSmokeRuntimeHost(
+                system,
+                runtimeRoot,
+                artifactRoot,
+                options.IoPort,
+                hiveMindPid,
                 ioGatewayPid,
                 reproductionManagerPid,
-                speciationManagerPid));
+                ppoManagerPid,
+                speciationManagerPid,
+                workerPid,
+                workerId);
+        }
+        catch
+        {
+            await CleanupFailedStartAsync(system, runtimeRoot).ConfigureAwait(false);
+            throw;
+        }
+    }
 
-        var workerId = Guid.NewGuid();
-        var workerPid = root.SpawnNamed(
-            Props.FromProducer(() => new WorkerNodeActor(
-                workerId,
-                string.Empty,
-                artifactRootPath: artifactRoot,
-                capabilitySnapshotProvider: capabilityProvider.GetCapabilities,
-                resourceAvailability: availability)),
-            "worker-node");
+    private static async Task CleanupFailedStartAsync(ActorSystem? system, string runtimeRoot)
+    {
+        if (system is not null)
+        {
+            try
+            {
+                await system.Remote().ShutdownAsync(true)
+                    .WaitAsync(FailedStartCleanupTimeout)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Preserve the startup exception.
+            }
 
-        PrimeWorkerDiscoveryEndpoints(root, workerPid, hiveMindPid.Id, ioGatewayPid.Id);
-        PrimeWorkers(root, hiveMindPid, workerPid, workerId, capabilityProvider.GetCapabilities());
-        await WaitForWorkerReadinessAsync(root, workerPid, options.ReadinessTimeout, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await system.ShutdownAsync()
+                    .WaitAsync(FailedStartCleanupTimeout)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Preserve the startup exception.
+            }
+        }
 
-        return new LocalSmokeRuntimeHost(
-            system,
-            runtimeRoot,
-            artifactRoot,
-            options.IoPort,
-            hiveMindPid,
-            ioGatewayPid,
-            reproductionManagerPid,
-            ppoManagerPid,
-            speciationManagerPid,
-            workerPid,
-            workerId);
+        SqliteConnection.ClearAllPools();
+        try
+        {
+            if (Directory.Exists(runtimeRoot))
+            {
+                Directory.Delete(runtimeRoot, recursive: true);
+            }
+        }
+        catch
+        {
+            // Preserve the startup exception.
+        }
     }
 
     public async Task WaitForIoReadinessAsync(

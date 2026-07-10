@@ -1,5 +1,8 @@
 using Nbn.Demos.Basics.Environment;
+using Nbn.Shared;
 using Nbn.Shared.Format;
+using Nbn.Shared.Packing;
+using Nbn.Shared.Validation;
 
 namespace Nbn.Demos.Basics.Environment.Tests;
 
@@ -70,6 +73,31 @@ public sealed class BasicsContractTests
     }
 
     [Fact]
+    public void ReproductionScheduling_RejectsEveryNonFiniteDoubleParameter()
+    {
+        var nonFiniteValues = new[] { double.NaN, double.PositiveInfinity, double.NegativeInfinity };
+        Func<double, BasicsParentSelectionPolicy>[] parentMutations =
+        {
+            value => new BasicsParentSelectionPolicy { FitnessWeight = value },
+            value => new BasicsParentSelectionPolicy { DiversityWeight = value },
+            value => new BasicsParentSelectionPolicy { SpeciesBalanceWeight = value },
+            value => new BasicsParentSelectionPolicy { EliteFraction = value },
+            value => new BasicsParentSelectionPolicy { ExplorationFraction = value }
+        };
+        Func<double, BasicsRunAllocationPolicy>[] allocationMutations =
+        {
+            value => new BasicsRunAllocationPolicy { FitnessExponent = value },
+            value => new BasicsRunAllocationPolicy { DiversityBoost = value }
+        };
+
+        foreach (var value in nonFiniteValues)
+        {
+            Assert.All(parentMutations, mutation => Assert.False(mutation(value).Validate().IsValid));
+            Assert.All(allocationMutations, mutation => Assert.False(mutation(value).Validate().IsValid));
+        }
+    }
+
+    [Fact]
     public void SeedShapeConstraints_RejectInvalidRanges()
     {
         var template = BasicsSeedTemplateContract.CreateDefault() with
@@ -90,6 +118,30 @@ public sealed class BasicsContractTests
         Assert.Contains(validation.Errors, error => error.Contains("Active internal region count maximum", StringComparison.Ordinal));
         Assert.Contains(validation.Errors, error => error.Contains("Internal neuron count minimum", StringComparison.Ordinal));
         Assert.Contains(validation.Errors, error => error.Contains("Axon count maximum", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SeedShapeConstraints_AllowAtMostThirtyInternalRegions()
+    {
+        Assert.True(new BasicsSeedShapeConstraints
+        {
+            MinActiveInternalRegionCount = 30,
+            MaxActiveInternalRegionCount = 30
+        }.Validate().IsValid);
+
+        var invalidMinimum = new BasicsSeedShapeConstraints
+        {
+            MinActiveInternalRegionCount = 31
+        }.Validate();
+        var invalidMaximum = new BasicsSeedShapeConstraints
+        {
+            MaxActiveInternalRegionCount = 31
+        }.Validate();
+
+        Assert.False(invalidMinimum.IsValid);
+        Assert.Contains(invalidMinimum.Errors, error => error.Contains("minimum must be <= 30", StringComparison.Ordinal));
+        Assert.False(invalidMaximum.IsValid);
+        Assert.Contains(invalidMaximum.Errors, error => error.Contains("maximum must be <= 30", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -427,5 +479,54 @@ public sealed class BasicsContractTests
         Assert.False(validation.IsValid);
         Assert.Contains(validation.Errors, error => error.Contains("geometry", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(validation.Errors, error => error.Contains("expected_2x2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void InitialBrainSeedValidation_RejectsSemanticNbnInvariantViolation()
+    {
+        var build = BasicsTemplateArtifactBuilder.Build(BasicsSeedTemplateContract.CreateDefault());
+        var header = NbnBinary.ReadNbnHeader(build.Bytes);
+        var sections = header.Regions
+            .Where(static entry => entry.NeuronSpan > 0)
+            .Select(entry => NbnBinary.ReadNbnRegionSection(build.Bytes, entry.Offset))
+            .ToArray();
+        var inputIndex = Array.FindIndex(sections, static section => section.RegionId == NbnConstants.InputRegionId);
+        Assert.True(inputIndex >= 0);
+        var input = sections[inputIndex];
+        var invalidAxons = input.AxonRecords.ToArray();
+        Assert.NotEmpty(invalidAxons);
+        invalidAxons[0] = new AxonRecord(
+            invalidAxons[0].StrengthCode,
+            targetNeuronId: 0,
+            targetRegionId: (byte)NbnConstants.InputRegionId);
+        sections[inputIndex] = new NbnRegionSection(
+            input.RegionId,
+            input.NeuronSpan,
+            input.TotalAxons,
+            input.Stride,
+            input.CheckpointCount,
+            input.Checkpoints,
+            input.NeuronRecords,
+            invalidAxons);
+        var canonicalValidation = NbnBinaryValidator.ValidateNbn(header, sections);
+        Assert.False(canonicalValidation.IsValid);
+        Assert.Contains(
+            canonicalValidation.Issues,
+            issue => issue.Message.Contains("may not target the input region", StringComparison.OrdinalIgnoreCase));
+        var invalidBytes = NbnBinary.WriteNbn(header, sections);
+        var seed = new BasicsInitialBrainSeed(
+            DisplayName: "semantic-invalid",
+            DefinitionBytes: invalidBytes,
+            DuplicateForReproduction: false,
+            Complexity: new BasicsDefinitionComplexitySummary(
+                build.Shape.ActiveInternalRegionCount,
+                build.Shape.InternalNeuronCount,
+                build.Shape.AxonCount));
+
+        var validation = seed.Validate();
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, error => error.Contains("canonical NBN validation", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(validation.Errors, error => error.Contains("may not target the input region", StringComparison.OrdinalIgnoreCase));
     }
 }

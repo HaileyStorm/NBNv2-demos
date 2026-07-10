@@ -516,13 +516,19 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
     private static async Task<(int ExitCode, string CombinedOutput)> RunDotnetCommandAsync(
         Action<ProcessStartInfo> configureStartInfo,
         CancellationToken cancellationToken)
+        => await RunProcessCommandAsync("dotnet", configureStartInfo, cancellationToken).ConfigureAwait(false);
+
+    internal static async Task<(int ExitCode, string CombinedOutput)> RunProcessCommandAsync(
+        string fileName,
+        Action<ProcessStartInfo> configureStartInfo,
+        CancellationToken cancellationToken)
     {
         var output = new List<string>();
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "dotnet",
+                FileName = fileName,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -532,12 +538,64 @@ public sealed class LocalWorkerProcessService : IBasicsLocalWorkerProcessService
         configureStartInfo(process.StartInfo);
 
         process.Start();
-        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-        output.Add(await stdout.ConfigureAwait(false));
-        output.Add(await stderr.ConfigureAwait(false));
-        return (process.ExitCode, string.Join(global::System.Environment.NewLine, output.Where(static text => !string.IsNullOrWhiteSpace(text))));
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            output.Add(await stdout.ConfigureAwait(false));
+            output.Add(await stderr.ConfigureAwait(false));
+            return (process.ExitCode, string.Join(global::System.Environment.NewLine, output.Where(static text => !string.IsNullOrWhiteSpace(text))));
+        }
+        catch
+        {
+            await TerminateProcessTreeAsync(process).ConfigureAwait(false);
+            await IgnoreFailureAsync(stdout, WorkerShutdownTimeout).ConfigureAwait(false);
+            await IgnoreFailureAsync(stderr, WorkerShutdownTimeout).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task TerminateProcessTreeAsync(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+            // The process may have exited concurrently with cancellation.
+        }
+
+        try
+        {
+            await process.WaitForExitAsync()
+                .WaitAsync(WorkerShutdownTimeout)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort cleanup; preserve the initiating exception.
+        }
+    }
+
+    private static async Task IgnoreFailureAsync(Task task, TimeSpan timeout)
+    {
+        try
+        {
+            await task.WaitAsync(timeout).ConfigureAwait(false);
+        }
+        catch
+        {
+            _ = task.ContinueWith(
+                static completed => _ = completed.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
     }
 
     private int FindNextAvailablePort(int requestedPort)

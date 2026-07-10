@@ -46,7 +46,7 @@ internal sealed class BasicsRuntimeReceiverActor : IActor
                 {
                     BrainId = subscribe.BrainId.ToProtoUuid(),
                     SubscriberActor = PidLabel(context.Self, context.System.Address),
-                    DeliveryMode = OutputSubscriptionDeliveryMode.LatestOnly
+                    DeliveryMode = OutputSubscriptionDeliveryMode.Exact
                 });
                 break;
             case BasicsSubscribeOutputsCommand subscribe:

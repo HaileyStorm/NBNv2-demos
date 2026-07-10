@@ -170,6 +170,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
     private static readonly TimeSpan OutputSubscriptionReadyTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan OutputSubscriptionRetryDelay = TimeSpan.FromMilliseconds(50);
     private static readonly TimeSpan OutputUnsubscriptionRequestTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan FailedStartCleanupTimeout = TimeSpan.FromSeconds(5);
     private const int OutputBufferCapacity = 256;
     private const int OutputEventBufferCapacity = 256;
     private const int TerminationBufferCapacity = 8;
@@ -216,31 +217,85 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var system = new ActorSystem();
-        system.WithRemote(BuildRemoteConfig(
-            options.BindHost,
-            options.Port,
-            options.AdvertiseHost,
-            options.AdvertisePort));
-        await system.Remote().StartAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+        Task? remoteStartTask = null;
+        try
+        {
+            system.WithRemote(BuildRemoteConfig(
+                options.BindHost,
+                options.Port,
+                options.AdvertiseHost,
+                options.AdvertisePort));
+            remoteStartTask = system.Remote().StartAsync();
+            await remoteStartTask.WaitAsync(cancellationToken).ConfigureAwait(false);
 
-        var runtimeEventSink = new RuntimeEventSinkProxy();
-        var receiverPid = system.Root.SpawnNamed(
-            Props.FromProducer(() => new BasicsRuntimeReceiverActor(runtimeEventSink)),
-            $"basics-runtime-receiver-{Guid.NewGuid():N}");
-        var client = new BasicsRuntimeClient(
-            system,
-            new PID(options.IoAddress.Trim(), options.IoGatewayName.Trim()),
-            receiverPid,
-            options.RequestTimeout);
-        runtimeEventSink.OnConnect = client.OnConnectAck;
-        runtimeEventSink.OnSingleOutput = client.OnOutputEvent;
-        runtimeEventSink.OnOutput = client.OnOutputVectorEvent;
-        runtimeEventSink.OnOutputSegment = client.OnOutputVectorSegment;
-        runtimeEventSink.OnTermination = client.OnBrainTerminated;
-        system.Root.Send(receiverPid, new BasicsSetIoGatewayPid(client._ioPid));
-        return client;
+            var runtimeEventSink = new RuntimeEventSinkProxy();
+            var receiverPid = system.Root.SpawnNamed(
+                Props.FromProducer(() => new BasicsRuntimeReceiverActor(runtimeEventSink)),
+                $"basics-runtime-receiver-{Guid.NewGuid():N}");
+            var client = new BasicsRuntimeClient(
+                system,
+                new PID(options.IoAddress.Trim(), options.IoGatewayName.Trim()),
+                receiverPid,
+                options.RequestTimeout);
+            runtimeEventSink.OnConnect = client.OnConnectAck;
+            runtimeEventSink.OnSingleOutput = client.OnOutputEvent;
+            runtimeEventSink.OnOutput = client.OnOutputVectorEvent;
+            runtimeEventSink.OnOutputSegment = client.OnOutputVectorSegment;
+            runtimeEventSink.OnTermination = client.OnBrainTerminated;
+            system.Root.Send(receiverPid, new BasicsSetIoGatewayPid(client._ioPid));
+            return client;
+        }
+        catch
+        {
+            if (remoteStartTask is { IsCompleted: false })
+            {
+                _ = CleanupAfterRemoteStartSettlesAsync(system, remoteStartTask);
+            }
+
+            await ShutdownAfterFailedStartAsync(system).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task ShutdownAfterFailedStartAsync(ActorSystem system)
+    {
+        try
+        {
+            await system.Remote().ShutdownAsync(graceful: true)
+                .WaitAsync(FailedStartCleanupTimeout)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // Preserve the initiating startup exception.
+        }
+
+        try
+        {
+            await system.ShutdownAsync()
+                .WaitAsync(FailedStartCleanupTimeout)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // Preserve the initiating startup exception.
+        }
+    }
+
+    private static async Task CleanupAfterRemoteStartSettlesAsync(ActorSystem system, Task remoteStartTask)
+    {
+        try
+        {
+            await remoteStartTask.ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+
+        await ShutdownAfterFailedStartAsync(system).ConfigureAwait(false);
     }
 
     public async Task<ConnectAck?> ConnectAsync(string clientName, CancellationToken cancellationToken = default)
@@ -657,7 +712,9 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 }
             }
         }
-        catch (OperationCanceledException) when (effectiveToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (
+            !cancellationToken.IsCancellationRequested
+            && timeoutCts?.IsCancellationRequested == true)
         {
             return null;
         }
@@ -698,7 +755,9 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 }
             }
         }
-        catch (OperationCanceledException) when (effectiveToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (
+            !cancellationToken.IsCancellationRequested
+            && timeoutCts?.IsCancellationRequested == true)
         {
             return null;
         }
@@ -1851,7 +1910,7 @@ public sealed class BasicsRuntimeClient : IBasicsRuntimeClient, IBasicsRuntimeEv
                 {
                     BrainId = brainId.ToProtoUuid(),
                     SubscriberActor = subscriberActor,
-                    DeliveryMode = OutputSubscriptionDeliveryMode.LatestOnly
+                    DeliveryMode = OutputSubscriptionDeliveryMode.Exact
                 }
                 : new SubscribeOutputs
                 {

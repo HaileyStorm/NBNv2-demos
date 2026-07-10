@@ -426,7 +426,9 @@ public sealed class BasicsExecutionSessionTests
                 _ => { },
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Succeeded, final.State);
+            Assert.True(
+                final.State == BasicsExecutionState.Succeeded,
+                $"Expected successful evented evaluation, got {final.State}: {final.DetailText}");
             Assert.Contains(
                 runtimeClient.SetOutputVectorSourceRequests,
                 static request => request.OutputVectorSource == OutputVectorSource.Potential);
@@ -524,6 +526,84 @@ public sealed class BasicsExecutionSessionTests
     }
 
     [Fact]
+    public void ExecutionSession_EventedOutput_DoesNotFallbackAfterUnmatchedReadyEvent()
+    {
+        var helper = typeof(BasicsExecutionSession).GetMethod(
+            "CanUseReadyLaneFallback",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(helper);
+        var vector = new BasicsRuntimeOutputVector(Guid.NewGuid(), 7, new[] { 0.7f, 1f });
+
+        Assert.True(Assert.IsType<bool>(helper!.Invoke(null, new object?[] { vector, 0 })));
+        Assert.False(Assert.IsType<bool>(helper.Invoke(null, new object?[] { vector, 1 })));
+    }
+
+    [Fact]
+    public async Task ExecutionSession_BrainTermination_DoesNotTreatNullBrainInfoAsRemoval()
+    {
+        var brainId = Guid.NewGuid();
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            SuppressBrainTerminationEvents = true
+        };
+        runtimeClient.BrainInfoResponses.Enqueue(null);
+        runtimeClient.BrainInfoResponses.Enqueue(new BrainInfo
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 0,
+            OutputWidth = 0
+        });
+        var session = CreateSession(runtimeClient);
+        var helper = typeof(BasicsExecutionSession).GetMethod(
+            "WaitForBrainTerminationAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(helper);
+
+        try
+        {
+            var wait = Assert.IsAssignableFrom<Task<bool>>(helper!.Invoke(
+                session,
+                new object[] { brainId, CancellationToken.None }));
+
+            Assert.True(await wait);
+            Assert.Equal(2, runtimeClient.BrainInfoRequestCount);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ExecutionSession_DisposeRetriesBrainsThatRemainTracked()
+    {
+        var brainId = Guid.NewGuid();
+        var runtimeClient = new FakeBasicsRuntimeClient
+        {
+            SuppressBrainTerminationEvents = true
+        };
+        runtimeClient.BrainInfoResponses.Enqueue(null);
+        runtimeClient.BrainInfoResponses.Enqueue(new BrainInfo
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 0,
+            OutputWidth = 0
+        });
+        var session = CreateSession(runtimeClient);
+        var trackedBrainsField = typeof(BasicsExecutionSession).GetField(
+            "_trackedBrains",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(trackedBrainsField);
+        var trackedBrains = Assert.IsType<ConcurrentDictionary<Guid, byte>>(trackedBrainsField!.GetValue(session));
+        trackedBrains[brainId] = 0;
+
+        await session.DisposeAsync();
+
+        Assert.False(trackedBrains.ContainsKey(brainId));
+        Assert.Equal(2, runtimeClient.BrainInfoRequestCount);
+    }
+
+    [Fact]
     public async Task ExecutionSession_EventedOutput_ReportsWhenVectorAndReadyStreamsStaySilent()
     {
         var runtimeClient = new FakeBasicsRuntimeClient
@@ -564,7 +644,8 @@ public sealed class BasicsExecutionSessionTests
         {
             DefaultBehavior = "and",
             ReadySignalDelayTicks = 16,
-            PreReadyOutputValue = 0f
+            PreReadyOutputValue = 0f,
+            SuppressReadyOutputEvents = true
         };
         var session = CreateSession(runtimeClient);
 
@@ -590,7 +671,9 @@ public sealed class BasicsExecutionSessionTests
                 snapshots.Add,
                 new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
 
-            Assert.Equal(BasicsExecutionState.Stopped, final.State);
+            Assert.True(
+                final.State == BasicsExecutionState.Stopped,
+                $"Expected generation-limited partial-ready stop, got {final.State}: {final.DetailText}");
             Assert.Equal(0f, final.BestCandidate?.ScoreBreakdown["ready_confidence"]);
             Assert.DoesNotContain("ready_window_exhausted", final.EvaluationFailureSummary, StringComparison.Ordinal);
             Assert.True(runtimeClient.SpawnRequestCount >= 2);
@@ -3661,6 +3744,9 @@ public sealed class BasicsExecutionSessionTests
         public string AwaitPlacementFailureCode { get; init; } = "spawn_request_canceled";
         public string AwaitPlacementFailureMessage { get; init; } = "placement visibility timed out";
         public int? OutputVectorWidthOverride { get; init; }
+        public bool SuppressBrainTerminationEvents { get; init; }
+        public Queue<BrainInfo?> BrainInfoResponses { get; } = new();
+        public int BrainInfoRequestCount { get; private set; }
         public bool ReuseSingleChildArtifactOnReproduce { get; init; }
         public bool ForceIncompatibleDistinctParents { get; init; }
         public bool PpoAvailable { get; init; }
@@ -3713,6 +3799,7 @@ public sealed class BasicsExecutionSessionTests
 
         public async Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId, CancellationToken cancellationToken = default)
         {
+            BrainInfoRequestCount++;
             var active = Interlocked.Increment(ref _activeBrainInfoRequests);
             UpdateMaxObservedConcurrentBrainInfoRequests(active);
             try
@@ -3720,6 +3807,11 @@ public sealed class BasicsExecutionSessionTests
                 if (BrainInfoDelay > TimeSpan.Zero)
                 {
                     await Task.Delay(BrainInfoDelay, cancellationToken);
+                }
+
+                if (BrainInfoResponses.Count > 0)
+                {
+                    return BrainInfoResponses.Dequeue();
                 }
 
                 return _brainDefinitions.ContainsKey(brainId)
@@ -4149,11 +4241,13 @@ public sealed class BasicsExecutionSessionTests
             Guid brainId,
             TimeSpan timeout,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<BrainTerminated?>(new BrainTerminated
-            {
-                BrainId = brainId.ToProtoUuid(),
-                Reason = "basics_evaluation_complete"
-            });
+            => Task.FromResult<BrainTerminated?>(SuppressBrainTerminationEvents
+                ? null
+                : new BrainTerminated
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    Reason = "basics_evaluation_complete"
+                });
 
         public Task<Nbn.Proto.Io.SetOutputVectorSourceAck?> SetOutputVectorSourceAsync(
             OutputVectorSource outputVectorSource,
