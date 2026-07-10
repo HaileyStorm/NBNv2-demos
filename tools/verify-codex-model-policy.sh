@@ -29,18 +29,18 @@ verify_profile() {
 for profile in .codex/config.toml .codex/agents/*.toml; do
   require_line "$profile" 'model_context_window = 480000'
   require_line "$profile" 'model_auto_compact_token_limit = 480000'
-  rg -qx 'model_reasoning_effort = "(medium|high|xhigh|max|ultra)"' "$profile" \
-    || fail "$profile must use reasoning effort medium or greater."
+  rg -qx 'model_reasoning_effort = "(high|xhigh|max)"' "$profile" \
+    || fail "$profile must use reasoning effort high, xhigh, or max."
 done
 
 verify_profile .codex/config.toml gpt-5.6-sol high
 
 for role in explorer ownership_mapper invariant_mapper test_mapper; do
-  verify_profile ".codex/agents/$role.toml" gpt-5.6-terra high
+  verify_profile ".codex/agents/$role.toml" gpt-5.6-luna xhigh
 done
 
 for role in docs_researcher packetizer; do
-  verify_profile ".codex/agents/$role.toml" gpt-5.6-luna medium
+  verify_profile ".codex/agents/$role.toml" gpt-5.6-luna high
 done
 
 for role in nbn_demo_spec_guard nbn_demo_io_invariants nbn_demo_docs_guard; do
