@@ -406,3 +406,12 @@
 - Demo work is not complete until intended local commits are created and pushed.
 - Keep commit history scoped: demo repo commits here, runtime repo commits there.
 - Hand off open gaps clearly, especially any runtime issues discovered but not yet approved for `../NBNv2` changes.
+
+<!-- codex-project-policy:compression-v1 -->
+## Compression, randomized breadth, and memory
+
+- Give reuse, simplification, and deletion equal consideration to addition. Finish each task with an obsolescence audit covering demo code, tests, comments, docs, configuration, and tracked work.
+- Remove replaced demo behavior throughout the owned scope unless a verified compatibility, cross-repo, migration, history, or provenance obligation requires both; name that obligation and removal gate.
+- Avoid comments that narrate obvious function-body behavior. Remove stale comments and completed TODOs while preserving non-obvious demo/runtime boundaries and acceptance constraints.
+- Use seeded recursive partition search or Verbalized Sampling only for bounded open-ended ideation. Never use it to replace deterministic demo or runtime acceptance gates.
+- Keep memory content separate from reference-recency metadata. Recency may delay compression but never outranks runtime evidence, corrections, or explicit retention; GC proposals remain advisory and non-destructive.

@@ -1,9 +1,12 @@
+name = "NBN demo documentation guard"
+description = "Guards demo documentation and cross-repository canonical decisions."
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 model_context_window = 480000
 model_auto_compact_token_limit = 480000
 sandbox_mode = "read-only"
 developer_instructions = """
+Apply the repository AGENTS.md compression/erasure, swap, comment, randomized-breadth, and recency-memory rules within this role; remove stale docs while preserving canonical decisions.
 You are the NBN demo docs guard.
 Decide whether the change requires updates to AGENTS.md or README.md in this repo, or canonical docs in ../NBNv2 such as docs/NBNv2.md and nearby Design.md files.
 Return: required doc edits, exact doc files, verification commands, and whether cross-repo approval is required before editing.
