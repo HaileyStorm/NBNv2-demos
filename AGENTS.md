@@ -7,6 +7,12 @@
 - This repo is for External World demo projects that integrate with the sibling NBN runtime repo at `../NBNv2`.
 - If rules conflict, this file wins for demo-repo work. When work moves into `../NBNv2`, stop and follow `../NBNv2/AGENTS.md`.
 
+## Inherited global harness policy
+
+- Inherit the global operating posture, multi-agent workflow, generic agent roles, model routing, context hygiene, Beads/BV lifecycle, workspace-sentinel rules, verification honesty, compression/obsolescence audit, and landing requirements unless this guide explicitly overrides them.
+- Generic roles such as `explorer`, `ownership_mapper`, `invariant_mapper`, `test_mapper`, `packetizer`, and `docs_researcher` come from the global harness. Repo-local agent profiles are reserved for NBN demo guards that encode behavior not present globally.
+- The repo-root `.beads/` tracker is canonical. Run lifecycle commands from this root with explicit issue IDs and follow the global close/sync rules.
+
 ## Purpose
 
 - This repo holds demo projects that exercise NBN from the outside, through the supported IO/runtime interfaces.
@@ -63,9 +69,18 @@
 - Keep repo-local context-window and automatic-compaction overrides at 480,000 tokens.
 - Before landing Codex agent model changes, run `tools/verify-codex-model-policy.sh`.
 
+## DeepSeek / Nous repository routing
+
+- DeepSeek is an optional third-party breadth lane, never the default or a release authority. The only approved supplemental target is `deepseek/deepseek-v4-flash-0731` at requested `max`, and only while the live catalog, credits, privacy gate, and transport checks pass.
+- Before giving DeepSeek filesystem or source access, disclose the third-party destination and outbound data class. Do not send private source, unreleased demo writing or artifacts, personal data, credentials, privileged records, private prompts/jobs, media, or run logs without explicit owner approval.
+- Keep `NOUS_API_KEY` environment-only. Never place credential values in prompts, commands, TOML, logs, screenshots, metadata, or tracked files.
+- Tool-free custom-provider use may take the Responses route only in a disposable isolated `CODEX_HOME`; tool-using runs must use the Chat Completions MCP bridge and obey the global one-tool-call, replay, turn-budget, and proof gates.
+- Limit filesystem access to explicit approved roots and keep it read-only unless the owner explicitly opts into the global guarded-write protocol. Treat all DeepSeek findings as provisional evidence; they cannot decide architecture, privacy/security, disputed requirements, irreversible actions, or release gates.
+- On confirmed credit exhaustion, quota/payment failure, model unavailability, or owner direction, stop the DeepSeek lane instead of silently switching to another third party; reallocate work under the Sol/Terra/Luna policy.
+
 ## Repo-specific agent roles
 
-- Local role wiring for this repo lives in `.codex/config.toml` and `.codex/agents/*.toml`.
+- Demo-specific role wiring lives in `.codex/config.toml` and `.codex/agents/nbn_demo_*.toml`; generic roles are inherited from the global harness.
 - `nbn_demo_spec_guard`: reads `../NBNv2/docs/NBNv2.md` and relevant `Design.md` files, then maps expected External World behavior, ownership boundaries, and doc impact for demo work.
 - `nbn_demo_io_invariants`: checks IO Gateway boundaries, region `0`/`31`, tick barriers, input/output contract safety, and reproduction protections against the assigned change.
 - `nbn_demo_docs_guard`: decides whether repo-local docs or canonical runtime docs in `../NBNv2` must change, and points to the exact doc files and verification commands.

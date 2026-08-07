@@ -1,36 +1,10 @@
-# Project-specific multi-agent roles for NBNv2-demos.
-# Sol is the default model. Terra and Luna cover bounded scout and documentation
-# roles. Spark is an operator-selected fallback only when GPT-5.6 quota is
-# unavailable and Spark quota remains available.
+# Project-specific NBNv2-demos guards. Generic roles and their routing are
+# inherited from the global Codex harness.
 
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 model_context_window = 480000
 model_auto_compact_token_limit = 480000
-
-[agents.explorer]
-description = "Read-heavy scout for demo ownership, call paths, sibling-runtime touchpoints, and candidate files."
-config_file = "agents/explorer.toml"
-
-[agents.ownership_mapper]
-description = "Focused read-only mapper for demo owners, entry points, dependent files, and runtime handoff boundaries."
-config_file = "agents/ownership_mapper.toml"
-
-[agents.invariant_mapper]
-description = "Focused read-only mapper for External World constraints, contract parity, and likely invariant gaps."
-config_file = "agents/invariant_mapper.toml"
-
-[agents.test_mapper]
-description = "Focused read-only mapper for existing demo coverage, missing regression tests, and verification commands."
-config_file = "agents/test_mapper.toml"
-
-[agents.packetizer]
-description = "Condenses noisy multi-agent findings into a clean handoff packet."
-config_file = "agents/packetizer.toml"
-
-[agents.docs_researcher]
-description = "Primary-source documentation and web research agent."
-config_file = "agents/docs_researcher.toml"
 
 [agents.nbn_demo_spec_guard]
 description = "Demo spec scout that reads ../NBNv2 canonical docs and nearby Design.md files before non-trivial External World behavior work."
