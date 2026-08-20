@@ -34,3 +34,7 @@ This repository holds External World demo projects for NBN. Each demo is a consu
 - Do not fork or hand-maintain copies of canonical NBN contracts here unless there is an explicit generation or vendoring workflow.
 - Root-level shared demo libraries under `src/` hold reusable demo-side primitives, such as behavior occupancy metrics that are derived from External World rollouts rather than NBN runtime internals.
 - If demo work uncovers an issue in `../NBNv2`, summarize it first. Cross-repo fixes in `../NBNv2` are allowed only after explicit user approval in the active session.
+
+## Support
+
+This project is free. Donations are entirely optional and never affect access or support; they sustain Hailey's open-source work. You can use [Buy Me a Coffee](https://buymeacoffee.com/threadspan), or see the [donation details, safety, and privacy notes](https://github.com/HaileyStorm/threadspan/blob/main/docs/DONATIONS.md). No route is preferred. This repository does not collect donor identities or telemetry, and it never asks for wallet keys; verify recipients independently because transfers may be irreversible.
