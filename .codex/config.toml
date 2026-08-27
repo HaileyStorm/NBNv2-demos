@@ -1,8 +1,8 @@
 # Project-specific NBNv2-demos guards. Generic roles and their routing are
-# inherited from the global Codex harness.
+# inherited from the global Codex harness. Keep the top-level model and effort
+# unset so the native picker controls interactive tasks; named roles below pin
+# their own noninteractive model policy.
 
-model = "gpt-5.6-sol"
-model_reasoning_effort = "high"
 model_context_window = 480000
 model_auto_compact_token_limit = 480000
 
