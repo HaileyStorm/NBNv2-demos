@@ -1,10 +1,7 @@
 # Project-specific NBNv2-demos guards. Generic roles and their routing are
-# inherited from the global Codex harness. Keep the top-level model and effort
-# unset so the native picker controls interactive tasks; named roles below pin
-# their own noninteractive model policy.
-
-model_context_window = 480000
-model_auto_compact_token_limit = 480000
+# inherited from the global Codex harness. Keep top-level model, effort, context,
+# and compaction unset so the native picker and selected route catalog control
+# interactive tasks; named roles below pin their own noninteractive policy.
 
 [agents.nbn_demo_spec_guard]
 description = "Demo spec scout that reads ../NBNv2 canonical docs and nearby Design.md files before non-trivial External World behavior work."
