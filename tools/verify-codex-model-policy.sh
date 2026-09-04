@@ -9,6 +9,7 @@ from pathlib import Path
 import tomllib
 
 root_path = Path(".codex/config.toml")
+root_text = root_path.read_text(encoding="utf-8")
 with root_path.open("rb") as stream:
     root = tomllib.load(stream)
 
@@ -28,6 +29,18 @@ models = root.get("models", {})
 if isinstance(models, dict) and "new_thread" in models:
     raise SystemExit(
         f"{root_path} must omit models.new_thread so the native picker controls interactive tasks."
+    )
+
+if "global Astra `medium`" not in root_text:
+    raise SystemExit(f"{root_path} must document the inherited Astra medium controller.")
+
+policy_path = Path("AGENTS.md")
+policy = policy_path.read_text(encoding="utf-8")
+expected_controller = "New unpinned interactive tasks inherit GPT-6 Astra `medium`"
+stale_controller = "New unpinned interactive tasks inherit GPT-6 Astra `low`"
+if expected_controller not in policy or stale_controller in policy:
+    raise SystemExit(
+        f"{policy_path} must set the unpinned Astra controller to medium."
     )
 
 expected_roles = {
@@ -82,7 +95,7 @@ for role, relative_path in expected_roles.items():
         raise SystemExit(f"{profile_path} must retain the no-edit guard instruction")
 
 print(
-    "Repo-specific Codex guards verified: root model/context selection is picker/catalog-owned; "
+    "Repo-specific Codex routing verified: the unpinned controller inherits Astra/medium; "
     "named Sol/high roles use 320k context and 272k compaction."
 )
 PY
