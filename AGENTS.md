@@ -41,10 +41,7 @@
   - section 19, `Protocol schemas (.proto)`
   - `../NBNv2/src/Nbn.Runtime.IO/Design.md`
   - `../NBNv2/src/Nbn.Shared/Design.md`
-- Prefer narrow scouting passes before edits:
-  1. contract/ownership map in `../NBNv2`
-  2. invariant/risk map for the intended demo interaction
-  3. verification/test map for affected runtime contracts
+- Choose the smallest useful scouting set before edits, normally one to three passes: map cross-repo contracts and ownership when boundaries matter, map invariants when protocol or timing rules are in scope, and map verification when behavior changes.
 - After any failed, aborted, or partially-applied edit attempt, immediately re-read the affected file(s) from disk and inspect `git diff` before making the next edit. Never assume a large patch landed exactly as intended.
 - For large-file edits, prefer smaller verified patches over one broad rewrite, and verify exact anchor text before every scripted replacement.
 
@@ -52,20 +49,17 @@
 
 - For non-trivial demo behavior work, start with `nbn_demo_spec_guard` or an equivalent scout that reads the sibling runtime spec before deep code analysis.
 - For clearly bounded mechanical or docs-only edits, that full spec pass is optional when the task does not depend on runtime behavior details.
-- Default demo repo fan-out for behavior work:
-  1. `nbn_demo_spec_guard` for expected behavior, demo-vs-runtime ownership boundaries, and doc anchors in `../NBNv2`
-  2. `nbn_demo_io_invariants` for IO Gateway, region `0`/`31`, tick ordering, input/output, and reproduction safety rules
-  3. `test_mapper` or `verifier` for the demo regression surface and exact commands
+- Choose the smallest useful set of agents for behavior work, normally one to three. Always include `nbn_demo_spec_guard` or an equivalent spec pass; add `nbn_demo_io_invariants` when IO Gateway, region `0`/`31`, tick ordering, input/output, or reproduction rules are in scope; add `test_mapper` or `verifier` when behavior or its regression surface changes.
 - Add `nbn_demo_docs_guard` when the change may alter demo guidance, runtime-facing behavior, or canonical docs in `../NBNv2`.
-- Prefer multiple narrow agents over one broad worker; keep final synthesis, prioritization, and merge decisions in the main thread.
+- Delegate independent work when it can save time or improve quality. Keep agents narrow, allow one writer per file or symbol cluster, and keep final synthesis, prioritization, and merge decisions in the controlling thread.
 - When the spec or repo surface is large, split it across fresh read-only agents and compress the findings with `packetizer` before editing.
 - Continue to refer back to `../NBNv2/docs/NBNv2.md` and nearby `Design.md` docs throughout edits, verification, and handoff; re-run targeted repo agents when scope shifts.
 
 ## Codex model policy
 
-- Never use `ultra`. Astra `low` is the primary controller; use Astra `high` only for the three project guard roles or consequential review.
-- Interactive tasks inherit Astra `low` and 602,000/512,000 context policy from the global harness. Demo guards use Astra `high` with the same context policy; inherited Luna/Terra profiles own their bounded role contexts.
-- Explicit user model, reasoning, or context selections override this policy. Spark remains a manual fallback only for definitely bounded, suitable work; preserve checkpoints and use the temporary-incident procedure when capacity is unavailable.
+- Never use `ultra`. New unpinned interactive tasks inherit GPT-6 Astra `low` and the 602,000/512,000 context policy from the global harness. An explicit user, picker, task, or project model, reasoning, or context choice wins.
+- Demo guards explicitly use Astra `high` with the same context policy. Use the global Pareto envelope for other specialists: Luna for bounded read-heavy work, Sol for consequential implementation, invariants, architecture, and review, and Terra where its configured role is the better fit. Select agents for the actual risk; the controlling thread owns synthesis and final judgment.
+- Spark remains a manual fallback only for definitely bounded, suitable work. Preserve checkpoints and use the temporary-incident procedure when capacity is unavailable; do not silently change model, provider, effort, or route.
 - Before landing Codex agent model changes, run `tools/verify-codex-model-policy.sh`.
 
 ## DeepSeek / Nous repository routing
@@ -75,7 +69,7 @@
 - Keep `NOUS_API_KEY` environment-only. Never place credential values in prompts, commands, TOML, logs, screenshots, metadata, or tracked files.
 - Tool-free custom-provider use may take the Responses route only in a disposable isolated `CODEX_HOME`; tool-using runs must use the Chat Completions MCP bridge and obey the global one-tool-call, replay, turn-budget, and proof gates.
 - Limit filesystem access to explicit approved roots and keep it read-only unless the owner explicitly opts into the global guarded-write protocol. Treat all DeepSeek findings as provisional evidence; they cannot decide architecture, privacy/security, disputed requirements, irreversible actions, or release gates.
-- On confirmed credit exhaustion, quota/payment failure, model unavailability, or owner direction, stop the DeepSeek lane instead of silently switching to another third party; reallocate work under the Astra/Luna/Terra routing envelope.
+- On confirmed credit exhaustion, quota/payment failure, model unavailability, or owner direction, stop the DeepSeek lane instead of silently switching to another third party; reallocate work under the global Astra-first Pareto routing policy.
 
 ## Repo-specific agent roles
 
