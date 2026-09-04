@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
 python3 - <<'PY'
@@ -53,10 +53,10 @@ if actual_profile_paths != expected_profile_paths:
     )
 
 expected_profile = {
-    "model": "gpt-5.6-sol",
+    "model": "gpt-6-astra",
     "model_reasoning_effort": "high",
-    "model_context_window": 320000,
-    "model_auto_compact_token_limit": 272000,
+    "model_context_window": 602000,
+    "model_auto_compact_token_limit": 512000,
 }
 for role, relative_path in expected_roles.items():
     configured_path = agents[role].get("config_file")
@@ -83,6 +83,6 @@ for role, relative_path in expected_roles.items():
 
 print(
     "Repo-specific Codex guards verified: root model/context selection is picker/catalog-owned; "
-    "named Sol/high roles use 320k context and 272k compaction."
+    "named Astra/high roles use 602k context and 512k compaction."
 )
 PY

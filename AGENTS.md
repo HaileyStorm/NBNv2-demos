@@ -63,10 +63,9 @@
 
 ## Codex model policy
 
-- Never use `ultra`. Sol is valid only at `high`, `xhigh`, or `max`; Terra only at `xhigh` or `max`; Luna only at `high`, `xhigh`, or `max`.
-- Use Luna `high` instead of Terra `medium`, Luna `xhigh`/`max` instead of Terra `high`, and Terra `xhigh`/`max` instead of Sol `medium`. Coding defaults to Sol `high`.
-- Spark is a quota fallback only for definitely bounded, Spark-suitable work. Every subagent-launching agent treats `⚠ Selected model is at capacity. Please try a different model.` as quota: retry after 5 minutes, then 10, then 20/40 minutes with a reasonable cap, preserving state unless a definitely suitable Spark fallback can run.
-- Keep repo-local context-window and automatic-compaction overrides at 480,000 tokens.
+- Never use `ultra`. Astra `low` is the primary controller; use Astra `high` only for the three project guard roles or consequential review.
+- Interactive tasks inherit Astra `low` and 602,000/512,000 context policy from the global harness. Demo guards use Astra `high` with the same context policy; inherited Luna/Terra profiles own their bounded role contexts.
+- Explicit user model, reasoning, or context selections override this policy. Spark remains a manual fallback only for definitely bounded, suitable work; preserve checkpoints and use the temporary-incident procedure when capacity is unavailable.
 - Before landing Codex agent model changes, run `tools/verify-codex-model-policy.sh`.
 
 ## DeepSeek / Nous repository routing
@@ -76,7 +75,7 @@
 - Keep `NOUS_API_KEY` environment-only. Never place credential values in prompts, commands, TOML, logs, screenshots, metadata, or tracked files.
 - Tool-free custom-provider use may take the Responses route only in a disposable isolated `CODEX_HOME`; tool-using runs must use the Chat Completions MCP bridge and obey the global one-tool-call, replay, turn-budget, and proof gates.
 - Limit filesystem access to explicit approved roots and keep it read-only unless the owner explicitly opts into the global guarded-write protocol. Treat all DeepSeek findings as provisional evidence; they cannot decide architecture, privacy/security, disputed requirements, irreversible actions, or release gates.
-- On confirmed credit exhaustion, quota/payment failure, model unavailability, or owner direction, stop the DeepSeek lane instead of silently switching to another third party; reallocate work under the Sol/Terra/Luna policy.
+- On confirmed credit exhaustion, quota/payment failure, model unavailability, or owner direction, stop the DeepSeek lane instead of silently switching to another third party; reallocate work under the Astra/Luna/Terra routing envelope.
 
 ## Repo-specific agent roles
 

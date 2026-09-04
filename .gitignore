@@ -1,5 +1,7 @@
 # bv (beads viewer) local config and caches
 .bv/
+.working
+.working.registry.lock
 **/bin/
 **/obj/
 TestResults/
