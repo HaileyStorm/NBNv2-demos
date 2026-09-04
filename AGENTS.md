@@ -58,7 +58,7 @@
 ## Codex model policy
 
 - Never use `ultra`. New unpinned interactive tasks inherit GPT-6 Astra `low` and the 602,000/512,000 context policy from the global harness. An explicit user, picker, task, or project model, reasoning, or context choice wins.
-- Demo guards explicitly use Astra `high` with the same context policy. Use the global Pareto envelope for other specialists: Luna for bounded read-heavy work, Sol for consequential implementation, invariants, architecture, and review, and Terra where its configured role is the better fit. Select agents for the actual risk; the controlling thread owns synthesis and final judgment.
+- Demo guards explicitly use Sol `high` with 320,000-token context and 272,000-token compaction. Use the global Pareto envelope for other specialists: Luna for bounded read-heavy work, Sol for consequential implementation, invariants, architecture, and review, and Terra where its configured role is the better fit. Select agents for the actual risk; the controlling thread owns synthesis and final judgment.
 - Spark remains a manual fallback only for definitely bounded, suitable work. Preserve checkpoints and use the temporary-incident procedure when capacity is unavailable; do not silently change model, provider, effort, or route.
 - Before landing Codex agent model changes, run `tools/verify-codex-model-policy.sh`.
 
