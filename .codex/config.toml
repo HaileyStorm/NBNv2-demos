@@ -4,6 +4,9 @@
 # interactive tasks. New unpinned tasks inherit global Astra `medium`; named
 # roles below pin Sol and their own noninteractive context policy.
 
+[features.context_management]
+experimental_mode = true
+
 [agents.nbn_demo_spec_guard]
 description = "Demo spec scout that reads ../NBNv2 canonical docs and nearby Design.md files before non-trivial External World behavior work."
 config_file = "agents/nbn_demo_spec_guard.toml"
