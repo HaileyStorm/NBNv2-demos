@@ -58,18 +58,29 @@
 ## Codex model policy
 
 - Never use `ultra`. New unpinned interactive tasks inherit GPT-6 Astra `medium` and the 602,000/512,000 context policy from the global harness. An explicit user, picker, task, or project model, reasoning, or context choice wins.
-- Demo guards explicitly use Sol `high` with 320,000-token context and 272,000-token compaction. Use the global Pareto envelope for other specialists: Luna for bounded read-heavy work, Sol for consequential implementation, invariants, architecture, and review, and Terra where its configured role is the better fit. Select agents for the actual risk; the controlling thread owns synthesis and final judgment.
+- Demo guards use GPT-5.6 Luna max with 320,000-token context and
+  272,000-token compaction as the native fallback for bounded specification,
+  I/O-invariant, and documentation review. Eligible public or sanitized
+  packets may prefer exact Nous deepseek/deepseek-v4.1-flash at max;
+  never send private demo source or implicit parent history to Nous. Select
+  agents for the actual risk; the controlling thread owns synthesis and final
+  judgment.
 - Spark remains a manual fallback only for definitely bounded, suitable work. Preserve checkpoints and use the temporary-incident procedure when capacity is unavailable; do not silently change model, provider, effort, or route.
 - Before landing Codex agent model changes, run `tools/verify-codex-model-policy.sh`.
 
 ## DeepSeek / Nous repository routing
 
-- DeepSeek is an optional third-party breadth lane, never the default or a release authority. The only approved supplemental target is `deepseek/deepseek-v4-flash-0731` at requested `max`, and only while the live catalog, credits, privacy gate, and transport checks pass.
-- Before giving DeepSeek filesystem or source access, disclose the third-party destination and outbound data class. Do not send private source, unreleased demo writing or artifacts, personal data, credentials, privileged records, private prompts/jobs, media, or run logs without explicit owner approval.
-- Keep `NOUS_API_KEY` environment-only. Never place credential values in prompts, commands, TOML, logs, screenshots, metadata, or tracked files.
-- Tool-free custom-provider use may take the Responses route only in a disposable isolated `CODEX_HOME`; tool-using runs must use the Chat Completions MCP bridge and obey the global one-tool-call, replay, turn-budget, and proof gates.
-- Limit filesystem access to explicit approved roots and keep it read-only unless the owner explicitly opts into the global guarded-write protocol. Treat all DeepSeek findings as provisional evidence; they cannot decide architecture, privacy/security, disputed requirements, irreversible actions, or release gates.
-- On confirmed credit exhaustion, quota/payment failure, model unavailability, or owner direction, stop the DeepSeek lane instead of silently switching to another third party; reallocate work under the global Astra-first Pareto routing policy.
+Follow the shared provider policy (`providers.md`) beside the active global
+`AGENTS.md` for the exact DeepSeek identity, privacy disclosure, adapter/replay acceptance, scoped write,
+and terminal-failure contract. DeepSeek is optional provisional breadth
+evidence, never a release authority; use Luna Max for private,
+privacy-ineligible, unavailable, or tool-incompatible work. Keep
+`NOUS_API_KEY` environment-only and never send private source, unreleased demo
+writing or artifacts, personal data, credentials, privileged records, private
+prompts/jobs, media, or run logs without explicit owner approval. Do not add a
+project-local credit, proof, confirmation, persistent stop-flag, or
+route-preflight gate. A native Direct facade is allowed only when its
+translation to reviewed Nous Chat behavior has its own acceptance evidence.
 
 ## Repo-specific agent roles
 

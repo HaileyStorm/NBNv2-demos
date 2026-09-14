@@ -66,8 +66,9 @@ if actual_profile_paths != expected_profile_paths:
     )
 
 expected_profile = {
-    "model": "gpt-5.6-sol",
-    "model_reasoning_effort": "high",
+    "model_provider": "openai",
+    "model": "gpt-5.6-luna",
+    "model_reasoning_effort": "max",
     "model_context_window": 320000,
     "model_auto_compact_token_limit": 272000,
 }
@@ -96,6 +97,6 @@ for role, relative_path in expected_roles.items():
 
 print(
     "Repo-specific Codex routing verified: the unpinned controller inherits Astra/medium; "
-    "named Sol/high roles use 320k context and 272k compaction."
+    "named OpenAI Luna/max roles use 320k context and 272k compaction."
 )
 PY
