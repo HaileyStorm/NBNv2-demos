@@ -57,19 +57,17 @@
 
 ## Codex model policy
 
-- Never use `ultra`. New unpinned interactive tasks inherit GPT-6 Astra `medium` and the 602,000/512,000 context policy from the global harness. An explicit user, picker, task, or project model, reasoning, or context choice wins.
-- Demo guards explicitly use Sol `high` with 320,000-token context and 272,000-token compaction. Use the global Pareto envelope for other specialists: Luna for bounded read-heavy work, Sol for consequential implementation, invariants, architecture, and review, and Terra where its configured role is the better fit. Select agents for the actual risk; the controlling thread owns synthesis and final judgment.
-- Spark remains a manual fallback only for definitely bounded, suitable work. Preserve checkpoints and use the temporary-incident procedure when capacity is unavailable; do not silently change model, provider, effort, or route.
-- Before landing Codex agent model changes, run `tools/verify-codex-model-policy.sh`.
+- New unpinned interactive tasks inherit GPT-6 Astra at medium; preserve explicit model, reasoning, context, provider, and task choices.
+- Demo guards remain explicit gpt-5.6-sol at high with 320000 context and 272000 compaction. Use Sol for sparse consequential review; Terra is targeted refinement only.
+- Routine well-specified implementation support, minor bugs, monitoring, basic facts, and bounded invariant checks prefer exact deepseek/deepseek-v4.1-flash through the approved approved shared route when supported and privacy-gated; otherwise use gpt-5.6-luna at max.
+- Preserve checkpoints on capacity or provider failure, and do not silently change model, provider, effort, context, or route.
 
 ## DeepSeek / Nous repository routing
 
-- DeepSeek is an optional third-party breadth lane, never the default or a release authority. The only approved supplemental target is `deepseek/deepseek-v4-flash-0731` at requested `max`, and only while the live catalog, credits, privacy gate, and transport checks pass.
-- Before giving DeepSeek filesystem or source access, disclose the third-party destination and outbound data class. Do not send private source, unreleased demo writing or artifacts, personal data, credentials, privileged records, private prompts/jobs, media, or run logs without explicit owner approval.
-- Keep `NOUS_API_KEY` environment-only. Never place credential values in prompts, commands, TOML, logs, screenshots, metadata, or tracked files.
-- Tool-free custom-provider use may take the Responses route only in a disposable isolated `CODEX_HOME`; tool-using runs must use the Chat Completions MCP bridge and obey the global one-tool-call, replay, turn-budget, and proof gates.
-- Limit filesystem access to explicit approved roots and keep it read-only unless the owner explicitly opts into the global guarded-write protocol. Treat all DeepSeek findings as provisional evidence; they cannot decide architecture, privacy/security, disputed requirements, irreversible actions, or release gates.
-- On confirmed credit exhaustion, quota/payment failure, model unavailability, or owner direction, stop the DeepSeek lane instead of silently switching to another third party; reallocate work under the global Astra-first Pareto routing policy.
+- Exact deepseek/deepseek-v4.1-flash is an optional third-party routine lane through the approved approved shared route when supported and gated; output remains provisional and cannot authorize architecture, privacy or security, disputed requirements, irreversible actions, or release.
+- Before any outbound context, disclose the third-party destination and exact data class. Do not send private source, unreleased demo writing or artifacts, personal data, credentials, privileged records, private prompts or jobs, media, or run logs without explicit owner approval.
+- Filesystem access defaults to source-only read-only; any accepted scoped write requires the global guarded-write contract, exact roots and files, canonical containment, ancestry, link, and reparse checks, and native acceptance. Do not expose an unverified raw/custom-provider Responses role; use Nous Direct for native children and writes only under the shared native-route and privacy requirements in `<CODEX_HOME>/HARNESS_OPERATIONS.md`; otherwise use `gpt-5.6-luna` at `max`.
+- On confirmed credit exhaustion, quota or payment failure, model unavailability, or owner direction, stop the lane and use gpt-5.6-luna at max or the explicitly selected local route without silently switching to another third party.
 
 ## Repo-specific agent roles
 
@@ -83,7 +81,7 @@
 - Demo agents may inspect `../NBNv2` freely.
 - If a demo exposes an NBNv2 bug, missing contract, docs drift, or runtime gap, stop and summarize the issue.
 - Do not edit `../NBNv2` until the user explicitly approves that cross-repo change in the active session.
-- After approval, create a `.working` sentinel in `../NBNv2`, follow `../NBNv2/AGENTS.md`, and keep demo-repo and runtime-repo changes clearly separated.
+- After approval, acquire a structured claim for the exact runtime paths in the host-local .working file through <CODEX_HOME>/tools/working_sentinel.py for workspace ../NBNv2; follow ../NBNv2/AGENTS.md and keep demo-repo and runtime-repo changes clearly separated.
 
 ## Demo repo layout
 
@@ -407,7 +405,7 @@
   - `dotnet test ../NBNv2/tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~InputCoordinatorActorTests`
   - `dotnet test ../NBNv2/tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~OutputCoordinatorActorTests`
   - `dotnet test ../NBNv2/NBNv2.sln -c Release --disable-build-servers`
-- If file locks occur, use the runtime repo’s `.artifacts-temp` guidance from `../NBNv2/AGENTS.md`.
+- If file locks occur, use the runtime repoâ€™s `.artifacts-temp` guidance from `../NBNv2/AGENTS.md`.
 
 ## Landing the work
 
