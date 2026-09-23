@@ -58,16 +58,16 @@
 ## Codex model policy
 
 - New unpinned interactive tasks inherit GPT-6 Astra at medium; preserve explicit model, reasoning, context, provider, and task choices.
-- Demo guards remain explicit gpt-5.6-sol at high with 320000 context and 272000 compaction. Use Sol for sparse consequential review; Terra is targeted refinement only.
-- Routine well-specified implementation support, minor bugs, monitoring, basic facts, and bounded invariant checks prefer exact deepseek/deepseek-v4.1-flash through the approved approved shared route when supported and privacy-gated; otherwise use gpt-5.6-luna at max.
+- Demo guards remain explicit gpt-6-luna at max with 320000 context and 272000 compaction. Use gpt-6-sol at xhigh for sparse consequential review.
+- Routine well-specified implementation support, minor bugs, monitoring, basic facts, and bounded invariant checks prefer exact deepseek/deepseek-v4.1-flash through the approved approved shared route when supported and privacy-gated; otherwise use gpt-6-luna at max.
 - Preserve checkpoints on capacity or provider failure, and do not silently change model, provider, effort, context, or route.
 
 ## DeepSeek / Nous repository routing
 
 - Exact deepseek/deepseek-v4.1-flash is an optional third-party routine lane through the approved approved shared route when supported and gated; output remains provisional and cannot authorize architecture, privacy or security, disputed requirements, irreversible actions, or release.
 - Before any outbound context, disclose the third-party destination and exact data class. Do not send private source, unreleased demo writing or artifacts, personal data, credentials, privileged records, private prompts or jobs, media, or run logs without explicit owner approval.
-- Filesystem access defaults to source-only read-only; any accepted scoped write requires the global guarded-write contract, exact roots and files, canonical containment, ancestry, link, and reparse checks, and native acceptance. Do not expose an unverified raw/custom-provider Responses role; use Nous Direct for native children and writes only under the shared native-route and privacy requirements in `<CODEX_HOME>/HARNESS_OPERATIONS.md`; otherwise use `gpt-5.6-luna` at `max`.
-- On confirmed credit exhaustion, quota or payment failure, model unavailability, or owner direction, stop the lane and use gpt-5.6-luna at max or the explicitly selected local route without silently switching to another third party.
+- Filesystem access defaults to source-only read-only; any accepted scoped write requires the global guarded-write contract, exact roots and files, canonical containment, ancestry, link, and reparse checks, and native acceptance. Do not expose an unverified raw/custom-provider Responses role; use Nous Direct for native children and writes only under the shared native-route and privacy requirements in `<CODEX_HOME>/HARNESS_OPERATIONS.md`; otherwise use `gpt-6-luna` at `max`.
+- On confirmed credit exhaustion, quota or payment failure, model unavailability, or owner direction, stop the lane and use gpt-6-luna at max or the explicitly selected local route without silently switching to another third party.
 
 ## Repo-specific agent roles
 
