@@ -57,17 +57,14 @@
 
 ## Codex model policy
 
-- Use GPT-6.1 Sol at high for the controller and default of every existing project, including ordinary implementation, planning, interaction, and consequential review; never lower or raise this route's effort.
-- Use GPT-6 Astra only at high or xhigh for detailed planning, very complex or intricate code, stubborn problems, or exceptional synthesis; never use lower or higher effort.
-- Set every GPT model, including child roles, to a 291000-token context limit and 208000-token auto-compaction threshold. The explicitly named `native-profile/gpt-6-astra-1m` picker entry is the sole exception and keeps its separately validated values.
-- For monitor/classify-only child tasks, prefer native Direct DeepSeek v4.1 Flash at max; otherwise use GPT-6 Luna at max. DeepSeek has the same task-scoped data and permissions as GPT, with no extra privacy/disclosure/root-approval gates. Spec, correctness, and invariant judgments are not monitor/classify-only and remain Sol/high unless the Astra criteria above genuinely apply.
-- Preserve compatible explicit user/task choices. Do not silently change model, provider, effort, context, or route; on capacity or provider failure preserve a durable checkpoint before an allowed fallback.
+- Inherit the global model routing, adaptive-effort, cache-aware switching, context defaults, and multi-agent workflow. Scalar role efforts are strong startup preferences; preserve explicit user/task choices and frozen experiment requirements.
+- Spec, correctness, and invariant judgments remain consequential review; monitor/classify output does not establish them. Preserve the provider-failure checkpoint and approved fallback rules below.
 
 ## DeepSeek / Nous repository routing
 
 - Use exact DeepSeek v4.1 Flash through native Direct for eligible monitor/classify-only child tasks; do not send raw Responses requests. Necessary data, files, history, and tool permissions are authorized on the same basis as GPT, without DeepSeek-only privacy/disclosure/root-approval or fresh-history gates.
 - Preserve normal task scope, ownership, secrets handling, zero-spend, and no ambiguous resends for every model. Other external services still need authority for their destination/data scope; do not expose unrelated credentials or private data.
-- Monitor/classify output is evidence, not authority for architecture, privacy/security, disputed requirements, irreversible actions, or release. Use GPT-6.1 Sol/high for consequential review; escalate to Astra only under the model policy above.
+- Monitor/classify output is evidence, not authority for architecture, privacy/security, disputed requirements, irreversible actions, or release. Use the global controller/review route and adaptive-effort policy for consequential review.
 - If the native route is unavailable, use GPT-6 Luna/max only for an eligible monitor/classify task, or retain the Sol/high controller route; never silently substitute another third party or retry an ambiguous contact.
 
 ## Beads v1.3.1 and durable work

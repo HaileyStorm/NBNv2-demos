@@ -6,10 +6,10 @@ cd "$repo_root"
 
 python3 - <<'PY'
 from pathlib import Path
+import os
 import tomllib
 
 root_path = Path(".codex/config.toml")
-root_text = root_path.read_text(encoding="utf-8")
 with root_path.open("rb") as stream:
     root = tomllib.load(stream)
 
@@ -31,21 +31,12 @@ if isinstance(models, dict) and "new_thread" in models:
         f"{root_path} must omit models.new_thread so the native picker controls interactive tasks."
     )
 
-if "global GPT-6.1 Sol `high`" not in root_text:
-    raise SystemExit(f"{root_path} must document the inherited GPT-6.1 Sol/high controller.")
-
-policy_path = Path("AGENTS.md")
-policy = policy_path.read_text(encoding="utf-8")
-expected_controller = "Use GPT-6.1 Sol at high for the controller and default of every existing project"
-stale_controllers = (
-    "New unpinned interactive tasks inherit GPT-6 Astra",
-    "global Astra `medium`",
-    "gpt-6-sol at xhigh",
-)
-if expected_controller not in policy or any(value in policy for value in stale_controllers):
-    raise SystemExit(
-        f"{policy_path} must set GPT-6.1 Sol/high as default and remove stale routing."
-    )
+# Validate inherited startup behavior through configuration, not policy wording.
+global_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+with (global_home / "config.toml").open("rb") as stream:
+    global_config = tomllib.load(stream)
+if global_config.get("model") != "gpt-6.1-sol" or global_config.get("model_reasoning_effort") != "high":
+    raise SystemExit("Global new-task startup defaults must be GPT-6.1 Sol/high; active effort may adapt.")
 
 expected_roles = {
     "nbn_demo_spec_guard": "agents/nbn_demo_spec_guard.toml",
@@ -99,7 +90,8 @@ for role, relative_path in expected_roles.items():
         raise SystemExit(f"{profile_path} must retain the no-edit guard instruction")
 
 print(
-    "Repo-specific Codex routing verified: GPT-6.1 Sol/high is inherited; "
-    "correctness/spec/docs guard roles use Sol/high with 291k context and 208k compaction."
+    "Repo-specific Codex startup verified: global Sol/high is inherited; "
+    "guard roles retain Sol/high defaults with 291k context and 208k compaction. "
+    "Active effort follows the global adaptive policy."
 )
 PY
