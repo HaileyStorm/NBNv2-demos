@@ -1,8 +1,9 @@
 # Project-specific NBNv2-demos guards. Generic roles and their routing are
 # inherited from the global Codex harness. Keep top-level model, effort, context,
 # and compaction unset so the native picker and selected route catalog control
-# interactive tasks. New unpinned tasks inherit global Astra `medium`; named
-# roles below pin Sol and their own noninteractive context policy.
+# interactive tasks. New unpinned tasks inherit global GPT-6.1 Sol `high`;
+# the three correctness/spec/docs guard profiles pin Sol/high and shared
+# context limits in their own files.
 
 [features.context_management]
 experimental_mode = true

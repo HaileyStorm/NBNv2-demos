@@ -11,7 +11,7 @@
 
 - Inherit the global operating posture, multi-agent workflow, generic agent roles, model routing, context hygiene, Beads/BV lifecycle, workspace-sentinel rules, verification honesty, compression/obsolescence audit, and landing requirements unless this guide explicitly overrides them.
 - Generic roles such as `explorer`, `ownership_mapper`, `invariant_mapper`, `test_mapper`, `packetizer`, and `docs_researcher` come from the global harness. Repo-local agent profiles are reserved for NBN demo guards that encode behavior not present globally.
-- The repo-root `.beads/` tracker is canonical. Run lifecycle commands from this root with explicit issue IDs and follow the global close/sync rules.
+- Keep the repo-root `.beads/` tracker canonical. Before a Beads write, verify current backend/version and read the migration checkpoint. Once it confirms native Beads v1.3.1 embedded Dolt, Dolt is source of truth; `.beads/issues.jsonl` is explicit export/interchange, not a complete backup. Use `bd export --all -o .beads/issues.jsonl` for manual export and the checkpoint-approved `bd backup init` / `bd backup sync` flow for full backups. In v1.3.1, `bd sync` is remote pull/push, not JSONL flush; do not use it as routine export or absent an authorized remote. Until migration is verified, preserve the tracker and do not blindly initialize, import, migrate, or sync it.
 
 ## Purpose
 
@@ -57,17 +57,28 @@
 
 ## Codex model policy
 
-- New unpinned interactive tasks inherit GPT-6 Astra at medium; preserve explicit model, reasoning, context, provider, and task choices.
-- Demo guards remain explicit gpt-6-luna at max with 320000 context and 272000 compaction. Use gpt-6-sol at xhigh for sparse consequential review.
-- Routine well-specified implementation support, minor bugs, monitoring, basic facts, and bounded invariant checks prefer exact deepseek/deepseek-v4.1-flash through the approved approved shared route when supported and privacy-gated; otherwise use gpt-6-luna at max.
-- Preserve checkpoints on capacity or provider failure, and do not silently change model, provider, effort, context, or route.
+- Use GPT-6.1 Sol at high for the controller and default of every existing project, including ordinary implementation, planning, interaction, and consequential review; never lower or raise this route's effort.
+- Use GPT-6 Astra only at high or xhigh for detailed planning, very complex or intricate code, stubborn problems, or exceptional synthesis; never use lower or higher effort.
+- Set every GPT model, including child roles, to a 291000-token context limit and 208000-token auto-compaction threshold. The explicitly named `native-profile/gpt-6-astra-1m` picker entry is the sole exception and keeps its separately validated values.
+- For monitor/classify-only child tasks, prefer native Direct DeepSeek v4.1 Flash at max; otherwise use GPT-6 Luna at max. DeepSeek has the same task-scoped data and permissions as GPT, with no extra privacy/disclosure/root-approval gates. Spec, correctness, and invariant judgments are not monitor/classify-only and remain Sol/high unless the Astra criteria above genuinely apply.
+- Preserve compatible explicit user/task choices. Do not silently change model, provider, effort, context, or route; on capacity or provider failure preserve a durable checkpoint before an allowed fallback.
 
 ## DeepSeek / Nous repository routing
 
-- Exact deepseek/deepseek-v4.1-flash is an optional third-party routine lane through the approved approved shared route when supported and gated; output remains provisional and cannot authorize architecture, privacy or security, disputed requirements, irreversible actions, or release.
-- Before any outbound context, disclose the third-party destination and exact data class. Do not send private source, unreleased demo writing or artifacts, personal data, credentials, privileged records, private prompts or jobs, media, or run logs without explicit owner approval.
-- Filesystem access defaults to source-only read-only; any accepted scoped write requires the global guarded-write contract, exact roots and files, canonical containment, ancestry, link, and reparse checks, and native acceptance. Do not expose an unverified raw/custom-provider Responses role; use Nous Direct for native children and writes only under the shared native-route and privacy requirements in `<CODEX_HOME>/HARNESS_OPERATIONS.md`; otherwise use `gpt-6-luna` at `max`.
-- On confirmed credit exhaustion, quota or payment failure, model unavailability, or owner direction, stop the lane and use gpt-6-luna at max or the explicitly selected local route without silently switching to another third party.
+- Use exact DeepSeek v4.1 Flash through native Direct for eligible monitor/classify-only child tasks; do not send raw Responses requests. Necessary data, files, history, and tool permissions are authorized on the same basis as GPT, without DeepSeek-only privacy/disclosure/root-approval or fresh-history gates.
+- Preserve normal task scope, ownership, secrets handling, zero-spend, and no ambiguous resends for every model. Other external services still need authority for their destination/data scope; do not expose unrelated credentials or private data.
+- Monitor/classify output is evidence, not authority for architecture, privacy/security, disputed requirements, irreversible actions, or release. Use GPT-6.1 Sol/high for consequential review; escalate to Astra only under the model policy above.
+- If the native route is unavailable, use GPT-6 Luna/max only for an eligible monitor/classify task, or retain the Sol/high controller route; never silently substitute another third party or retry an ambiguous contact.
+
+## Beads v1.3.1 and durable work
+
+- Before Beads operations, read the current migration checkpoint and verify repository root, backend, and version. Use native embedded Dolt only after the checkpoint confirms migration and fidelity gates; otherwise preserve the current tracker and do not blindly initialize, import, migrate, or sync it.
+- On verified v1.3.1, Dolt is canonical. `bd export --all -o .beads/issues.jsonl` is explicit manual export, not a complete backup. Use checkpoint-approved `bd backup init` / `bd backup sync` for full backup. `bd sync` means configured remote pull/push, not JSONL export; do not invoke absent an authorized remote.
+- Keep a compact durable checkpoint: objective/acceptance; owner/host; exact checkout, root, branch/base and HEAD; claims; changed/staged/untracked paths; tests/evidence; unresolved risks; next action.
+- After unexpected auto-compaction or rollover, reread the request, checkpoint, current checkout/Git/Beads state, and recent deterministic evidence. A successor may start without a manual chat handoff, but reconstruct status from durable artifacts and read-only checks; never infer progress, completion, or permission from history or summary.
+- Before worktree creation or takeover writes, verify cwd/root, worktree list, branch/HEAD/base, dirty/staged/untracked files, permissions, active task, and claims. Reuse a suitable checkout; worktrees are not permission boundaries. Serialize repository-global Git index/ref mutations even for disjoint file claims.
+- Use the structured host-local sentinel contract; never hand-edit, copy, commit, or delete `.working`. Only the owning task/host releases its claim. Before blocking/archiving a predecessor, persist the checkpoint, start the authorized successor, release the predecessor's claim, and verify fresh successor acquisition. On binding/setup drift, preserve both checkouts/evidence, stop writes and blind retries, and use supported recovery.
+- Keep writes within authorized project and exact claimed scope. Cross-repo edits still require the explicit approval below; child routing does not expand authority.
 
 ## Repo-specific agent roles
 
@@ -409,8 +420,9 @@
 
 ## Landing the work
 
-- Demo work is not complete until intended local commits are created and pushed.
-- Keep commit history scoped: demo repo commits here, runtime repo commits there.
+- Meet acceptance criteria and record gaps in the durable checkpoint or canonical tracker when authorized. Keep demo and runtime changes in their respective repositories.
+- Before Git mutation, recheck repository root, branch/HEAD, remotes, and dirty/staged/untracked state; serialize index/ref operations. Commit or push only when authorized by the user and project policy.
+- Do not blindly rebase, retry an ambiguous push/write, delete stashes, or prune branches. Preserve evidence and use supported recovery. A clear local handoff is valid when pushing is not authorized or cannot safely complete.
 - Hand off open gaps clearly, especially any runtime issues discovered but not yet approved for `../NBNv2` changes.
 
 <!-- codex-project-policy:compression-v1 -->

@@ -31,16 +31,20 @@ if isinstance(models, dict) and "new_thread" in models:
         f"{root_path} must omit models.new_thread so the native picker controls interactive tasks."
     )
 
-if "global Astra `medium`" not in root_text:
-    raise SystemExit(f"{root_path} must document the inherited Astra medium controller.")
+if "global GPT-6.1 Sol `high`" not in root_text:
+    raise SystemExit(f"{root_path} must document the inherited GPT-6.1 Sol/high controller.")
 
 policy_path = Path("AGENTS.md")
 policy = policy_path.read_text(encoding="utf-8")
-expected_controller = "New unpinned interactive tasks inherit GPT-6 Astra `medium`"
-stale_controller = "New unpinned interactive tasks inherit GPT-6 Astra `low`"
-if expected_controller not in policy or stale_controller in policy:
+expected_controller = "Use GPT-6.1 Sol at high for the controller and default of every existing project"
+stale_controllers = (
+    "New unpinned interactive tasks inherit GPT-6 Astra",
+    "global Astra `medium`",
+    "gpt-6-sol at xhigh",
+)
+if expected_controller not in policy or any(value in policy for value in stale_controllers):
     raise SystemExit(
-        f"{policy_path} must set the unpinned Astra controller to medium."
+        f"{policy_path} must set GPT-6.1 Sol/high as default and remove stale routing."
     )
 
 expected_roles = {
@@ -66,10 +70,10 @@ if actual_profile_paths != expected_profile_paths:
     )
 
 expected_profile = {
-    "model": "gpt-5.6-sol",
+    "model": "gpt-6.1-sol",
     "model_reasoning_effort": "high",
-    "model_context_window": 320000,
-    "model_auto_compact_token_limit": 272000,
+    "model_context_window": 291000,
+    "model_auto_compact_token_limit": 208000,
 }
 for role, relative_path in expected_roles.items():
     configured_path = agents[role].get("config_file")
@@ -95,7 +99,7 @@ for role, relative_path in expected_roles.items():
         raise SystemExit(f"{profile_path} must retain the no-edit guard instruction")
 
 print(
-    "Repo-specific Codex routing verified: the unpinned controller inherits Astra/medium; "
-    "named Sol/high roles use 320k context and 272k compaction."
+    "Repo-specific Codex routing verified: GPT-6.1 Sol/high is inherited; "
+    "correctness/spec/docs guard roles use Sol/high with 291k context and 208k compaction."
 )
 PY

@@ -5,3 +5,8 @@
 **/bin/
 **/obj/
 TestResults/
+
+# Host-local Beads gate and coordination claims.
+.beads.gate.lock
+.working
+.working.*
